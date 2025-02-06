@@ -1,16 +1,30 @@
-import {Organization} from 'sentry-fixture/organization';
+import {DashboardFixture} from 'sentry-fixture/dashboard';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {UserFixture} from 'sentry-fixture/user';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
-import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
+import {
+  makeAllTheProviders,
+  render,
+  screen,
+  userEvent,
+} from 'sentry-test/reactTestingLibrary';
 
 import MemberListStore from 'sentry/stores/memberListStore';
-import {DisplayType, Widget, WidgetType} from 'sentry/views/dashboards/types';
+import {MEPSettingProvider} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
+import type {Widget} from 'sentry/views/dashboards/types';
+import {DisplayType, WidgetType} from 'sentry/views/dashboards/types';
 import WidgetCard from 'sentry/views/dashboards/widgetCard';
 import {IssueSortOptions} from 'sentry/views/issueList/utils';
 
+import WidgetLegendSelectionState from '../widgetLegendSelectionState';
+
+import {DashboardsMEPProvider} from './dashboardsMEPContext';
+
 describe('Dashboards > IssueWidgetCard', function () {
-  const {router, organization, routerContext} = initializeOrg({
-    organization: Organization({
+  const {router, organization} = initializeOrg({
+    organization: OrganizationFixture({
       features: ['dashboards-edit'],
     }),
     router: {orgId: 'orgId'},
@@ -43,7 +57,26 @@ describe('Dashboards > IssueWidgetCard', function () {
     },
   };
 
+  const BasicProvidersWrapper = makeAllTheProviders({organization, router});
+  function Wrapper({children}: {children: React.ReactNode}) {
+    return (
+      <BasicProvidersWrapper>
+        <DashboardsMEPProvider>
+          <MEPSettingProvider forceTransactions={false}>{children}</MEPSettingProvider>
+        </DashboardsMEPProvider>
+      </BasicProvidersWrapper>
+    );
+  }
+
+  const user = UserFixture();
   const api = new MockApiClient();
+
+  const widgetLegendState = new WidgetLegendSelectionState({
+    location: LocationFixture(),
+    dashboard: DashboardFixture([widget]),
+    organization,
+    router,
+  });
 
   beforeEach(function () {
     MockApiClient.addMockResponse({
@@ -55,9 +88,9 @@ describe('Dashboards > IssueWidgetCard', function () {
           shortId: 'ISSUE',
           assignedTo: {
             type: 'user',
-            id: '2222222',
-            name: 'dashboard user',
-            email: 'dashboarduser@sentry.io',
+            id: user.id,
+            name: user.name,
+            email: user.email,
           },
           lifetime: {count: 10, userCount: 5},
           count: 6,
@@ -69,7 +102,7 @@ describe('Dashboards > IssueWidgetCard', function () {
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/users/',
       method: 'GET',
-      body: [],
+      body: [user],
     });
   });
 
@@ -78,34 +111,36 @@ describe('Dashboards > IssueWidgetCard', function () {
   });
 
   it('renders with title and issues chart', async function () {
-    MemberListStore.loadInitialData([]);
+    MemberListStore.loadInitialData([user]);
     render(
       <WidgetCard
         api={api}
         organization={organization}
         widget={widget}
         selection={selection}
-        isEditing={false}
+        isEditingDashboard={false}
         onDelete={() => undefined}
         onEdit={() => undefined}
         onDuplicate={() => undefined}
         renderErrorMessage={() => undefined}
         showContextMenu
         widgetLimitReached={false}
-      />
+        widgetLegendState={widgetLegendState}
+      />,
+      {wrapper: Wrapper}
     );
 
     expect(await screen.findByText('Issues')).toBeInTheDocument();
-    expect(screen.getByText('assignee')).toBeInTheDocument();
+    expect(await screen.findByText('assignee')).toBeInTheDocument();
     expect(screen.getByText('title')).toBeInTheDocument();
     expect(screen.getByText('issue')).toBeInTheDocument();
-    expect(screen.getByText('DU')).toBeInTheDocument();
+    expect(screen.getByText('FB')).toBeInTheDocument();
     expect(screen.getByText('ISSUE')).toBeInTheDocument();
     expect(
       screen.getByText('ChunkLoadError: Loading chunk app_bootstrap_index_tsx failed.')
     ).toBeInTheDocument();
-    await userEvent.hover(screen.getByTitle('dashboard user'));
-    expect(await screen.findByText('Assigned to dashboard user')).toBeInTheDocument();
+    await userEvent.hover(screen.getByTitle(user.name));
+    expect(await screen.findByText(`Assigned to ${user.name}`)).toBeInTheDocument();
   });
 
   it('opens in issues page', async function () {
@@ -115,23 +150,23 @@ describe('Dashboards > IssueWidgetCard', function () {
         organization={organization}
         widget={widget}
         selection={selection}
-        isEditing={false}
+        isEditingDashboard={false}
         onDelete={() => undefined}
         onEdit={() => undefined}
         onDuplicate={() => undefined}
         renderErrorMessage={() => undefined}
         showContextMenu
         widgetLimitReached={false}
+        widgetLegendState={widgetLegendState}
       />,
-      {context: routerContext}
+      {wrapper: Wrapper}
     );
 
     await userEvent.click(await screen.findByLabelText('Widget actions'));
     expect(screen.getByText('Duplicate Widget')).toBeInTheDocument();
 
-    expect(screen.getByText('Open in Issues')).toBeInTheDocument();
-    await userEvent.click(screen.getByText('Open in Issues'));
-    expect(router.push).toHaveBeenCalledWith(
+    expect(screen.getByRole('link', {name: 'Open in Issues'})).toHaveAttribute(
+      'href',
       '/organizations/org-slug/issues/?environment=prod&project=1&query=event.type%3Adefault&sort=freq&statsPeriod=14d'
     );
   });
@@ -144,14 +179,16 @@ describe('Dashboards > IssueWidgetCard', function () {
         organization={organization}
         widget={widget}
         selection={selection}
-        isEditing={false}
+        isEditingDashboard={false}
         onDelete={() => undefined}
         onEdit={() => undefined}
         onDuplicate={mock}
         renderErrorMessage={() => undefined}
         showContextMenu
         widgetLimitReached={false}
-      />
+        widgetLegendState={widgetLegendState}
+      />,
+      {wrapper: Wrapper}
     );
 
     await userEvent.click(await screen.findByLabelText('Widget actions'));
@@ -168,14 +205,16 @@ describe('Dashboards > IssueWidgetCard', function () {
         organization={organization}
         widget={widget}
         selection={selection}
-        isEditing={false}
+        isEditingDashboard={false}
         onDelete={() => undefined}
         onEdit={() => undefined}
         onDuplicate={mock}
         renderErrorMessage={() => undefined}
         showContextMenu
         widgetLimitReached
-      />
+        widgetLegendState={widgetLegendState}
+      />,
+      {wrapper: Wrapper}
     );
 
     await userEvent.click(await screen.findByLabelText('Widget actions'));
@@ -185,7 +224,7 @@ describe('Dashboards > IssueWidgetCard', function () {
   });
 
   it('maps lifetimeEvents and lifetimeUsers headers to more human readable', async function () {
-    MemberListStore.loadInitialData([]);
+    MemberListStore.loadInitialData([user]);
     render(
       <WidgetCard
         api={api}
@@ -194,20 +233,22 @@ describe('Dashboards > IssueWidgetCard', function () {
           ...widget,
           queries: [
             {
-              ...widget.queries[0],
+              ...widget.queries[0]!,
               fields: ['issue', 'assignee', 'title', 'lifetimeEvents', 'lifetimeUsers'],
             },
           ],
         }}
         selection={selection}
-        isEditing={false}
+        isEditingDashboard={false}
         onDelete={() => undefined}
         onEdit={() => undefined}
         onDuplicate={() => undefined}
         renderErrorMessage={() => undefined}
         showContextMenu
         widgetLimitReached={false}
-      />
+        widgetLegendState={widgetLegendState}
+      />,
+      {wrapper: Wrapper}
     );
 
     expect(await screen.findByText('Lifetime Events')).toBeInTheDocument();

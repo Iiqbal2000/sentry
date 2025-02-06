@@ -1,11 +1,14 @@
-from functools import cached_property
+from __future__ import annotations
+
 from time import time
+from typing import Any
 from unittest.mock import patch
 
+import orjson
 import pytest
 import responses
-from django.test import RequestFactory, override_settings
-from responses.matchers import query_string_matcher
+from django.test import override_settings
+from responses import matchers
 
 from fixtures.vsts import (
     GET_PROJECTS_RESPONSE,
@@ -14,27 +17,37 @@ from fixtures.vsts import (
     WORK_ITEM_STATES,
 )
 from sentry.integrations.mixins import ResolveSyncAction
+from sentry.integrations.models.external_issue import ExternalIssue
+from sentry.integrations.models.integration_external_project import IntegrationExternalProject
+from sentry.integrations.services.integration import integration_service
 from sentry.integrations.vsts.integration import VstsIntegration
-from sentry.models.identity import Identity, IdentityProvider
-from sentry.models.integrations.external_issue import ExternalIssue
-from sentry.models.integrations.integration import Integration
-from sentry.models.integrations.integration_external_project import IntegrationExternalProject
-from sentry.services.hybrid_cloud.integration import integration_service
-from sentry.services.hybrid_cloud.user.service import user_service
 from sentry.shared_integrations.exceptions import IntegrationError
 from sentry.silo.base import SiloMode
+from sentry.silo.util import PROXY_PATH
 from sentry.testutils.cases import TestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.testutils.helpers.datetime import before_now
 from sentry.testutils.silo import assume_test_silo_mode, region_silo_test
 from sentry.testutils.skips import requires_snuba
-from sentry.utils import json
+from sentry.users.models.identity import Identity
+from sentry.users.services.user.service import user_service
 
 pytestmark = [requires_snuba]
 
 
-def generate_mock_response(*, method: str, region_url: str, non_region_url: str, **kwargs):
+def generate_mock_response(*, method: str, non_region_url: str, path: str, **kwargs):
     if SiloMode.get_current_mode() == SiloMode.REGION:
-        responses.add(method=method, url=region_url, **kwargs)
+        match: list[Any] | None = kwargs.pop("match", None)
+        if match is None:
+            match = [matchers.header_matcher({PROXY_PATH: path})]
+        else:
+            match.append(matchers.header_matcher({PROXY_PATH: path}))
+
+        responses.add(
+            method=method,
+            url="http://controlserver/api/0/internal/integration-proxy/",
+            match=match,
+            **kwargs,
+        )
     else:
         responses.add(method=method, url=non_region_url, **kwargs)
 
@@ -42,23 +55,24 @@ def generate_mock_response(*, method: str, region_url: str, non_region_url: str,
 def assert_response_calls(expected_region_response, expected_non_region_response):
     assert len(expected_region_response) == len(expected_non_region_response)
     if SiloMode.get_current_mode() == SiloMode.REGION:
-        for index, url in enumerate(expected_region_response):
-            assert responses.calls[index].request.url == url
+        for index, path in enumerate(expected_region_response):
+            assert (
+                responses.calls[index].request.url
+                == "http://controlserver/api/0/internal/integration-proxy/"
+            )
+            assert responses.calls[index].request.headers[PROXY_PATH] == path
+
             assert responses.calls[index].response.status_code == 200
     else:
-        for index, url in enumerate(expected_non_region_response):
-            assert responses.calls[index].request.url == url
+        for index, path in enumerate(expected_non_region_response):
+            assert responses.calls[index].request.url == path
             assert responses.calls[index].response.status_code == 200
 
 
 class VstsIssueBase(TestCase):
-    @cached_property
-    def request(self):
-        return RequestFactory()
-
     def setUp(self):
         with assume_test_silo_mode(SiloMode.CONTROL):
-            model = Integration.objects.create(
+            model = self.create_provider_integration(
                 provider="vsts",
                 external_id="vsts_external_id",
                 name="fabrikam-fiber-inc",
@@ -68,7 +82,7 @@ class VstsIssueBase(TestCase):
                 },
             )
             identity = Identity.objects.create(
-                idp=IdentityProvider.objects.create(type="vsts", config={}),
+                idp=self.create_identity_provider(type="vsts"),
                 user=self.user,
                 external_id="vsts",
                 data={"access_token": "123456789", "expires": time() + 1234567},
@@ -142,7 +156,7 @@ class VstsIssueBase(TestCase):
     SENTRY_SUBNET_SECRET="hush-hush-im-invisible",
     SENTRY_CONTROL_ADDRESS="http://controlserver",
 )
-@region_silo_test(stable=True)
+@region_silo_test(include_monolith_run=True)
 class VstsIssueSyncTest(VstsIssueBase):
     def tearDown(self):
         responses.reset()
@@ -170,7 +184,7 @@ class VstsIssueSyncTest(VstsIssueBase):
         }
         request = responses.calls[-1].request
         assert request.headers["Content-Type"] == "application/json-patch+json"
-        payload = json.loads(request.body)
+        payload = orjson.loads(request.body)
         assert payload == [
             {"op": "add", "path": "/fields/System.Title", "value": "Hello"},
             # Adds both a comment and a description.
@@ -178,6 +192,16 @@ class VstsIssueSyncTest(VstsIssueBase):
             {"op": "add", "path": "/fields/System.Description", "value": "<p>Fix this.</p>\n"},
             {"op": "add", "path": "/fields/System.History", "value": "<p>Fix this.</p>\n"},
         ]
+
+    @responses.activate
+    def test_create_issue_failure(self):
+        form_data = {
+            "title": "rip",
+            "description": "Goodnight, sweet prince",
+        }
+
+        with pytest.raises(ValueError):
+            self.integration.create_issue(form_data)
 
     @responses.activate
     def test_get_issue(self):
@@ -205,14 +229,14 @@ class VstsIssueSyncTest(VstsIssueBase):
             method=responses.PATCH,
             body=WORK_ITEM_RESPONSE,
             content_type="application/json",
-            region_url=f"http://controlserver/api/0/internal/integration-proxy/_apis/wit/workitems/{vsts_work_item_id}",
+            path=f"_apis/wit/workitems/{vsts_work_item_id}",
             non_region_url=f"https://fabrikam-fiber-inc.visualstudio.com/_apis/wit/workitems/{vsts_work_item_id}",
         )
         generate_mock_response(
             method=responses.GET,
             body=GET_USERS_RESPONSE,
             content_type="application/json",
-            region_url="http://controlserver/api/0/internal/integration-proxy/_apis/graph/users",
+            path="_apis/graph/users",
             non_region_url="https://fabrikam-fiber-inc.vssps.visualstudio.com/_apis/graph/users",
         )
 
@@ -228,8 +252,8 @@ class VstsIssueSyncTest(VstsIssueBase):
         assert len(responses.calls) == 2
         assert_response_calls(
             expected_region_response=[
-                "http://controlserver/api/0/internal/integration-proxy/_apis/graph/users",
-                f"http://controlserver/api/0/internal/integration-proxy/_apis/wit/workitems/{vsts_work_item_id}",
+                "_apis/graph/users",
+                f"_apis/wit/workitems/{vsts_work_item_id}",
             ],
             expected_non_region_response=[
                 "https://fabrikam-fiber-inc.vssps.visualstudio.com/_apis/graph/users",
@@ -237,7 +261,7 @@ class VstsIssueSyncTest(VstsIssueBase):
             ],
         )
 
-        request_body = json.loads(responses.calls[1].request.body)
+        request_body = orjson.loads(responses.calls[1].request.body)
         assert len(request_body) == 1
         assert request_body[0]["path"] == "/fields/System.AssignedTo"
         assert request_body[0]["value"] == "ftotten@vscsi.us"
@@ -253,7 +277,7 @@ class VstsIssueSyncTest(VstsIssueBase):
             method=responses.PATCH,
             body=WORK_ITEM_RESPONSE,
             content_type="application/json",
-            region_url=f"http://controlserver/api/0/internal/integration-proxy/_apis/wit/workitems/{vsts_work_item_id}",
+            path=f"_apis/wit/workitems/{vsts_work_item_id}",
             non_region_url=f"https://fabrikam-fiber-inc.visualstudio.com/_apis/wit/workitems/{vsts_work_item_id}",
         )
         generate_mock_response(
@@ -266,15 +290,14 @@ class VstsIssueSyncTest(VstsIssueBase):
                 ]
             },
             headers={"X-MS-ContinuationToken": "continuation-token"},
-            region_url="http://controlserver/api/0/internal/integration-proxy/_apis/graph/users",
+            path="_apis/graph/users",
             non_region_url="https://fabrikam-fiber-inc.vssps.visualstudio.com/_apis/graph/users",
         )
         generate_mock_response(
             method=responses.GET,
-            match=[query_string_matcher("continuationToken=continuation-token")],
             body=GET_USERS_RESPONSE,
             content_type="application/json",
-            region_url="http://controlserver/api/0/internal/integration-proxy/_apis/graph/users",
+            path="_apis/graph/users?continuationToken=continuation-token",
             non_region_url="https://fabrikam-fiber-inc.vssps.visualstudio.com/_apis/graph/users",
         )
 
@@ -290,9 +313,9 @@ class VstsIssueSyncTest(VstsIssueBase):
         assert len(responses.calls) == 3
         assert_response_calls(
             expected_region_response=[
-                "http://controlserver/api/0/internal/integration-proxy/_apis/graph/users",
-                "http://controlserver/api/0/internal/integration-proxy/_apis/graph/users?continuationToken=continuation-token",
-                f"http://controlserver/api/0/internal/integration-proxy/_apis/wit/workitems/{vsts_work_item_id}",
+                "_apis/graph/users",
+                "_apis/graph/users?continuationToken=continuation-token",
+                f"_apis/wit/workitems/{vsts_work_item_id}",
             ],
             expected_non_region_response=[
                 "https://fabrikam-fiber-inc.vssps.visualstudio.com/_apis/graph/users",
@@ -301,7 +324,7 @@ class VstsIssueSyncTest(VstsIssueBase):
             ],
         )
 
-        request_body = json.loads(responses.calls[2].request.body)
+        request_body = orjson.loads(responses.calls[2].request.body)
         assert len(request_body) == 1
         assert request_body[0]["path"] == "/fields/System.AssignedTo"
         assert request_body[0]["value"] == "ftotten@vscsi.us"
@@ -358,7 +381,7 @@ class VstsIssueSyncTest(VstsIssueBase):
             req.url
             == f"https://fabrikam-fiber-inc.visualstudio.com/_apis/wit/workitems/{vsts_work_item_id}"
         )
-        assert json.loads(req.body) == [
+        assert orjson.loads(req.body) == [
             {"path": "/fields/System.State", "value": "Resolved", "op": "replace"}
         ]
         assert responses.calls[2].response.status_code == 200
@@ -441,7 +464,7 @@ class VstsIssueSyncTest(VstsIssueBase):
         )
 
 
-@region_silo_test(stable=True)
+@region_silo_test(include_monolith_run=True)
 class VstsIssueFormTest(VstsIssueBase):
     def setUp(self):
         super().setUp()
@@ -456,7 +479,7 @@ class VstsIssueFormTest(VstsIssueBase):
                 "count": 2,
             },
         )
-        min_ago = iso_format(before_now(minutes=1))
+        min_ago = before_now(minutes=1).isoformat()
         event = self.store_event(
             data={"fingerprint": ["group1"], "timestamp": min_ago}, project_id=self.project.id
         )

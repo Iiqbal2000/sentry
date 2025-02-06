@@ -1,20 +1,20 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from django.db import router, transaction
 
+from sentry.hybridcloud.models.outbox import outbox_context
 from sentry.models.organizationslugreservation import (
     OrganizationSlugReservation,
     OrganizationSlugReservationType,
 )
 from sentry.models.organizationslugreservationreplica import OrganizationSlugReservationReplica
-from sentry.models.outbox import outbox_context
-from sentry.silo import SiloMode
+from sentry.silo.base import SiloMode
 from sentry.testutils.cases import TestCase
 from sentry.testutils.outbox import outbox_runner
-from sentry.testutils.silo import assume_test_silo_mode, control_silo_test
+from sentry.testutils.silo import assume_test_silo_mode, control_silo_test, create_test_regions
 
 
-@control_silo_test(stable=True)
+@control_silo_test(regions=create_test_regions("us"))
 class TestOrganizationSlugReservationReplication(TestCase):
     def does_replica_match_original_reservation(
         self,
@@ -28,25 +28,25 @@ class TestOrganizationSlugReservationReplication(TestCase):
         return matches
 
     def assert_all_replicas_match_slug_reservations(self):
-        org_slug_reservations: Dict[str, OrganizationSlugReservation] = {
+        org_slug_reservations: dict[str, OrganizationSlugReservation] = {
             org_slug.slug: org_slug for org_slug in list(OrganizationSlugReservation.objects.all())
         }
 
         with assume_test_silo_mode(SiloMode.REGION):
-            org_slug_replicas: Dict[str, OrganizationSlugReservationReplica] = {
+            org_slug_replicas: dict[str, OrganizationSlugReservationReplica] = {
                 org_slug_r.slug: org_slug_r
                 for org_slug_r in list(OrganizationSlugReservationReplica.objects.all())
             }
 
-        slug_reservations_missing_replicas: List[OrganizationSlugReservation] = []
-        mismatched_slug_res_replicas: List[OrganizationSlugReservationReplica] = []
+        slug_reservations_missing_replicas: list[OrganizationSlugReservation] = []
+        mismatched_slug_res_replicas: list[OrganizationSlugReservationReplica] = []
         for slug in org_slug_reservations:
             slug_res = org_slug_reservations.get(slug)
             assert slug_res is not None
 
-            org_slug_reservation_replica: Optional[
-                OrganizationSlugReservationReplica
-            ] = org_slug_replicas.pop(slug, None)
+            org_slug_reservation_replica: None | (OrganizationSlugReservationReplica) = (
+                org_slug_replicas.pop(slug, None)
+            )
 
             if org_slug_reservation_replica is None:
                 slug_reservations_missing_replicas.append(slug_res)
@@ -69,7 +69,7 @@ class TestOrganizationSlugReservationReplication(TestCase):
             or len(slug_reservations_missing_replicas) > 0
             or len(extraneous_replicas) > 0
         ):
-            raise Exception(
+            raise AssertionError(
                 "One or more org slug replicas did not match\n"
                 + f"mismatched replicas: {mismatched_slug_res_replicas}\n"
                 + f"extraneous replicas: {extraneous_replicas}\n"

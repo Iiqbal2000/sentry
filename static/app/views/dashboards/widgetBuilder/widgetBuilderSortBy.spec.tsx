@@ -1,20 +1,27 @@
-import selectEvent from 'react-select-event';
-import {urlEncode} from '@sentry/utils';
-import {MetricsField} from 'sentry-fixture/metrics';
-import {SessionsField} from 'sentry-fixture/sessions';
-import {Tags} from 'sentry-fixture/tags';
+import {DashboardFixture} from 'sentry-fixture/dashboard';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {MetricsFieldFixture} from 'sentry-fixture/metrics';
+import {SessionsFieldFixture} from 'sentry-fixture/sessions';
+import {TagsFixture} from 'sentry-fixture/tags';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
+import ProjectsStore from 'sentry/stores/projectsStore';
 import TagStore from 'sentry/stores/tagStore';
+import {urlEncode} from 'sentry/utils';
+import type {DashboardDetails, Widget} from 'sentry/views/dashboards/types';
 import {
-  DashboardDetails,
   DashboardWidgetSource,
   DisplayType,
-  Widget,
+  WidgetType,
 } from 'sentry/views/dashboards/types';
-import WidgetBuilder, {WidgetBuilderProps} from 'sentry/views/dashboards/widgetBuilder';
+import WidgetBuilder, {
+  type WidgetBuilderProps,
+} from 'sentry/views/dashboards/widgetBuilder';
+
+import WidgetLegendSelectionState from '../widgetLegendSelectionState';
 
 const defaultOrgFeatures = [
   'performance-view',
@@ -49,7 +56,7 @@ function renderTestComponent({
   params?: Partial<WidgetBuilderProps['params']>;
   query?: Record<string, any>;
 } = {}) {
-  const {organization, router, routerContext} = initializeOrg({
+  const {organization, projects, router} = initializeOrg({
     organization: {
       features: orgFeatures ?? defaultOrgFeatures,
     },
@@ -61,6 +68,15 @@ function renderTestComponent({
         },
       },
     },
+  });
+
+  ProjectsStore.loadInitialData(projects);
+
+  const widgetLegendState = new WidgetLegendSelectionState({
+    location: LocationFixture(),
+    dashboard: DashboardFixture([], {id: 'new', title: 'Dashboard', ...dashboard}),
+    organization,
+    router,
   });
 
   render(
@@ -86,9 +102,10 @@ function renderTestComponent({
         dashboardId: dashboard?.id ?? 'new',
         ...params,
       }}
+      widgetLegendState={widgetLegendState}
     />,
     {
-      context: routerContext,
+      router,
       organization,
     }
   );
@@ -188,19 +205,19 @@ describe('WidgetBuilder', function () {
     MockApiClient.addMockResponse({
       method: 'GET',
       url: '/organizations/org-slug/sessions/',
-      body: SessionsField(`sum(session)`),
+      body: SessionsFieldFixture(`sum(session)`),
     });
 
     MockApiClient.addMockResponse({
       method: 'GET',
       url: '/organizations/org-slug/metrics/data/',
-      body: MetricsField('sum(sentry.sessions.session)'),
+      body: MetricsFieldFixture('session.all'),
     });
 
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/tags/',
       method: 'GET',
-      body: Tags(),
+      body: TagsFixture(),
     });
 
     MockApiClient.addMockResponse({
@@ -217,6 +234,14 @@ describe('WidgetBuilder', function () {
 
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/releases/',
+      body: [],
+    });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/releases/stats/',
+      body: [],
+    });
+    MockApiClient.addMockResponse({
+      url: `/organizations/org-slug/spans/fields/`,
       body: [],
     });
 
@@ -241,7 +266,9 @@ describe('WidgetBuilder', function () {
       // Selector "sortDirection"
       expect(screen.getByText('High to low')).toBeInTheDocument();
       // Selector "sortBy"
-      expect(screen.getAllByText('count()')).toHaveLength(3);
+      await waitFor(() => {
+        expect(screen.getAllByText('count()')).toHaveLength(3);
+      });
     });
 
     it('sortBy defaults to the first field value when changing display type to table', async function () {
@@ -332,7 +359,7 @@ describe('WidgetBuilder', function () {
       // Selector "sortBy"
       expect(screen.getAllByText('count()')).toHaveLength(3);
 
-      await selectEvent.select(screen.getAllByText('count()')[2], 'count_unique(id)');
+      await selectEvent.select(screen.getAllByText('count()')[2]!, 'count_unique(id)');
 
       // Wait for the Builder update the widget values
       await waitFor(() => {
@@ -378,10 +405,12 @@ describe('WidgetBuilder', function () {
       expect(await screen.findByText('Sort by a column')).toBeInTheDocument();
 
       // Selector "sortDirection"
-      expect(screen.getByText('Low to high')).toBeInTheDocument();
+      expect(await screen.findByText('Low to high')).toBeInTheDocument();
 
       // Selector "sortBy"
-      expect(screen.getAllByText('title')).toHaveLength(2);
+      await waitFor(() => {
+        expect(screen.getAllByText('title')).toHaveLength(2);
+      });
 
       // Saves the widget
       await userEvent.click(screen.getByText('Add Widget'));
@@ -416,13 +445,13 @@ describe('WidgetBuilder', function () {
       expect(screen.queryByText('Sort by a y-axis')).not.toBeInTheDocument();
 
       // Select GroupBy value
-      await selectEvent.select(screen.getAllByText('Select group')[0], 'project');
+      await selectEvent.select(screen.getAllByText('Select group')[0]!, 'project');
 
       // Now that at least one groupBy value is selected, the SortBy step shall be visible
       expect(screen.getByText('Sort by a y-axis')).toBeInTheDocument();
 
       // Remove selected GroupBy value
-      await userEvent.click(screen.getAllByLabelText('Remove group')[0]);
+      await userEvent.click(screen.getAllByLabelText('Remove group')[0]!);
 
       // SortBy step shall no longer be visible
       expect(screen.queryByText('Sort by a y-axis')).not.toBeInTheDocument();
@@ -438,7 +467,7 @@ describe('WidgetBuilder', function () {
 
       await selectEvent.select(await screen.findByText('Select group'), 'project');
       expect(screen.getAllByText('count()')).toHaveLength(2);
-      await selectEvent.select(screen.getAllByText('count()')[1], 'Custom Equation');
+      await selectEvent.select(screen.getAllByText('count()')[1]!, 'Custom Equation');
       await userEvent.click(screen.getByPlaceholderText('Enter Equation'));
       await userEvent.paste('count_unique(user) * 2');
       await userEvent.keyboard('{Enter}');
@@ -466,7 +495,7 @@ describe('WidgetBuilder', function () {
 
       await selectEvent.select(await screen.findByText('Select group'), 'project');
       expect(screen.getAllByText('count()')).toHaveLength(2);
-      await selectEvent.select(screen.getAllByText('count()')[1], 'Custom Equation');
+      await selectEvent.select(screen.getAllByText('count()')[1]!, 'Custom Equation');
       await userEvent.click(screen.getByPlaceholderText('Enter Equation'));
       await userEvent.paste('count_unique(user) * 2');
       await userEvent.keyboard('{Enter}');
@@ -477,7 +506,7 @@ describe('WidgetBuilder', function () {
       expect(screen.getAllByText('project')).toHaveLength(2);
 
       // Switch back, the equation should still be visible
-      await selectEvent.select(screen.getAllByText('project')[1], 'Custom Equation');
+      await selectEvent.select(screen.getAllByText('project')[1]!, 'Custom Equation');
       expect(screen.getByPlaceholderText('Enter Equation')).toHaveValue(
         'count_unique(user) * 2'
       );
@@ -493,13 +522,13 @@ describe('WidgetBuilder', function () {
 
       await selectEvent.select(await screen.findByText('Select group'), 'project');
       expect(screen.getAllByText('count()')).toHaveLength(2);
-      await selectEvent.select(screen.getAllByText('count()')[1], 'Custom Equation');
+      await selectEvent.select(screen.getAllByText('count()')[1]!, 'Custom Equation');
       await userEvent.click(screen.getByPlaceholderText('Enter Equation'));
       await userEvent.paste('count_unique(user) * 2');
       await userEvent.keyboard('{Enter}');
 
       // Add a y-axis
-      await userEvent.click(screen.getByText('Add Overlay'));
+      await userEvent.click(screen.getByText('Add Series'));
 
       // The equation should still be visible
       expect(screen.getByPlaceholderText('Enter Equation')).toHaveValue(
@@ -552,8 +581,8 @@ describe('WidgetBuilder', function () {
 
       await selectEvent.select(await screen.findByText('Select group'), 'project');
       expect(screen.getAllByText('count()')).toHaveLength(2);
-      await selectEvent.select(screen.getAllByText('count()')[1], 'Custom Equation');
-      selectEvent.openMenu(screen.getByPlaceholderText('Enter Equation'));
+      await selectEvent.select(screen.getAllByText('count()')[1]!, 'Custom Equation');
+      await selectEvent.openMenu(screen.getByPlaceholderText('Enter Equation'));
 
       await userEvent.click(screen.getByPlaceholderText('Enter Equation'));
 
@@ -571,7 +600,7 @@ describe('WidgetBuilder', function () {
 
       await selectEvent.select(await screen.findByText('Select group'), 'project');
       expect(screen.getAllByText('count()')).toHaveLength(2);
-      await selectEvent.select(screen.getAllByText('count()')[1], 'Custom Equation');
+      await selectEvent.select(screen.getAllByText('count()')[1]!, 'Custom Equation');
       await userEvent.click(screen.getByPlaceholderText('Enter Equation'));
       await userEvent.paste('count_unique(user) * 2');
       await userEvent.keyboard('{Enter}');
@@ -605,7 +634,7 @@ describe('WidgetBuilder', function () {
 
       await selectEvent.select(await screen.findByText('Select group'), 'project');
       await userEvent.click(screen.getByText('Add an Equation'));
-      await userEvent.click(screen.getAllByLabelText('Remove this Y-Axis')[0]);
+      await userEvent.click(screen.getAllByLabelText('Remove this Y-Axis')[0]!);
 
       expect(screen.queryByPlaceholderText('Enter Equation')).not.toBeInTheDocument();
     });
@@ -622,8 +651,8 @@ describe('WidgetBuilder', function () {
       expect(screen.getAllByText('count()')).toHaveLength(2);
 
       // Change the sort option to a grouping field, and then change a y-axis
-      await selectEvent.select(screen.getAllByText('count()')[1], 'project');
-      await selectEvent.select(screen.getAllByText('count()')[0], /count_unique/);
+      await selectEvent.select(screen.getAllByText('count()')[1]!, 'project');
+      await selectEvent.select(screen.getAllByText('count()')[0]!, /count_unique/);
 
       // project should appear in the group by field, as well as the sort field
       expect(screen.getAllByText('project')).toHaveLength(2);
@@ -637,11 +666,11 @@ describe('WidgetBuilder', function () {
         },
       });
 
-      await userEvent.click(await screen.findByText('Add Overlay'));
+      await userEvent.click(await screen.findByText('Add Series'));
       await selectEvent.select(screen.getByText('Select group'), 'project');
 
       // Change the sort by to count_unique
-      await selectEvent.select(screen.getAllByText('count()')[1], /count_unique/);
+      await selectEvent.select(screen.getAllByText('count()')[1]!, /count_unique/);
 
       // Change the grouping
       await selectEvent.select(screen.getByText('project'), 'environment');
@@ -660,7 +689,7 @@ describe('WidgetBuilder', function () {
       });
 
       await selectEvent.select(await screen.findByText('Select group'), 'project');
-      await selectEvent.select(screen.getAllByText('count()')[1], 'Custom Equation');
+      await selectEvent.select(screen.getAllByText('count()')[1]!, 'Custom Equation');
       await userEvent.click(screen.getByPlaceholderText('Enter Equation'));
       await userEvent.paste('count_unique(user) * 2');
       await userEvent.keyboard('{Enter}');
@@ -759,7 +788,7 @@ describe('WidgetBuilder', function () {
 
       await selectEvent.select(await screen.findByText('Select group'), 'project');
       expect(screen.getAllByText('count()')).toHaveLength(2);
-      await selectEvent.select(screen.getAllByText('count()')[1], /count_unique/);
+      await selectEvent.select(screen.getAllByText('count()')[1]!, /count_unique/);
 
       await userEvent.click(screen.getByText('Line Chart'));
       await userEvent.click(screen.getByText('Table'));
@@ -784,7 +813,7 @@ describe('WidgetBuilder', function () {
 
       await selectEvent.select(screen.getByText('Select group'), 'project');
       expect(screen.getAllByText('count()')).toHaveLength(2);
-      await selectEvent.select(screen.getAllByText('count()')[1], 'count() * 100');
+      await selectEvent.select(screen.getAllByText('count()')[1]!, 'count() * 100');
     });
 
     it('does not reset the orderby when ordered by an equation in table', async function () {
@@ -858,7 +887,7 @@ describe('WidgetBuilder', function () {
     });
 
     const projectElements = screen.getAllByText('project');
-    await selectEvent.select(projectElements[projectElements.length - 1], 'count()');
+    await selectEvent.select(projectElements[projectElements.length - 1]!, 'count()');
 
     await waitFor(() => {
       expect(eventsMock).toHaveBeenCalledWith(
@@ -883,7 +912,7 @@ describe('WidgetBuilder', function () {
 
     await selectEvent.select(await screen.findByText('Select group'), 'project');
     expect(screen.getAllByText('count()')).toHaveLength(2);
-    await selectEvent.select(screen.getAllByText('count()')[1], 'Custom Equation');
+    await selectEvent.select(screen.getAllByText('count()')[1]!, 'Custom Equation');
     await userEvent.click(screen.getByPlaceholderText('Enter Equation'));
     await userEvent.paste('count_unique(user) * 2');
     await userEvent.keyboard('{Enter}');
@@ -904,6 +933,53 @@ describe('WidgetBuilder', function () {
           }),
         })
       );
+    });
+  });
+
+  describe('spans dataset timeseries', function () {
+    it('returns group by and aggregate as primary options', async function () {
+      const widget: Widget = {
+        id: '1',
+        title: 'Test Widget',
+        interval: '5m',
+        displayType: DisplayType.LINE,
+        widgetType: WidgetType.SPANS,
+        queries: [
+          {
+            name: '',
+            conditions: '',
+            fields: ['count(span.duration)', 'avg(span.duration)', 'transaction'],
+            aggregates: ['count(span.duration)', 'avg(span.duration)'],
+            columns: ['transaction'],
+            orderby: '-count(span.duration)',
+          },
+        ],
+      };
+
+      const dashboard = mockDashboard({widgets: [widget]});
+
+      renderTestComponent({
+        dashboard,
+        params: {
+          widgetIndex: '0',
+        },
+        orgFeatures: [...defaultOrgFeatures, 'dashboards-eap'],
+      });
+
+      await screen.findByText('Sort by a y-axis');
+      await selectEvent.openMenu(screen.getAllByText('count(\u2026)')[1]!);
+
+      // 12 options in the dropdown
+      expect(screen.queryAllByTestId('menu-list-item-label')).toHaveLength(12);
+
+      // Appears once in the y-axis section, dropdown, and in the sort by field
+      expect(await screen.findAllByText('count(\u2026)')).toHaveLength(3);
+
+      // Appears once in the y-axis section and in the dropdown
+      expect(await screen.findAllByText('avg(\u2026)')).toHaveLength(2);
+
+      // Appears once in the dropdown and once in the group by field
+      expect(await screen.findAllByText('transaction')).toHaveLength(2);
     });
   });
 });

@@ -1,14 +1,14 @@
 import {Fragment} from 'react';
 
-import Breadcrumbs from 'sentry/components/breadcrumbs';
+import {Breadcrumbs} from 'sentry/components/breadcrumbs';
 import ProjectBadge from 'sentry/components/idBadge/projectBadge';
-import HeaderPlaceholder from 'sentry/components/replays/header/headerPlaceholder';
+import Placeholder from 'sentry/components/placeholder';
 import {t} from 'sentry/locale';
 import EventView from 'sentry/utils/discover/eventView';
 import {getShortEventId} from 'sentry/utils/events';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 import {useLocation} from 'sentry/utils/useLocation';
 import useProjects from 'sentry/utils/useProjects';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import type {ReplayRecord} from 'sentry/views/replays/types';
 
 type Props = {
@@ -26,7 +26,7 @@ function DetailsPageBreadcrumbs({orgSlug, replayRecord}: Props) {
   const labelTitle = replayRecord ? (
     <Fragment>{getShortEventId(replayRecord?.id)}</Fragment>
   ) : (
-    <HeaderPlaceholder width="100%" height="16px" />
+    <Placeholder width="100%" height="16px" />
   );
 
   return (

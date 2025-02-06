@@ -1,14 +1,15 @@
 import {useCallback, useMemo} from 'react';
 import styled from '@emotion/styled';
 
-import {CompactSelect, SelectOption} from 'sentry/components/compactSelect';
+import type {SelectOption} from 'sentry/components/compactSelect';
+import {CompactSelect} from 'sentry/components/compactSelect';
 import {IconList} from 'sentry/icons';
 import {t, tn} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {defined} from 'sentry/utils';
-import {FlamegraphState} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/flamegraphContext';
-import {ProfileGroup} from 'sentry/utils/profiling/profile/importProfile';
-import {Profile} from 'sentry/utils/profiling/profile/profile';
+import type {FlamegraphState} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/flamegraphContext';
+import type {ProfileGroup} from 'sentry/utils/profiling/profile/importProfile';
+import type {Profile} from 'sentry/utils/profiling/profile/profile';
 import {makeFormatter} from 'sentry/utils/profiling/units/units';
 
 export interface FlamegraphThreadSelectorProps {
@@ -23,11 +24,11 @@ function FlamegraphThreadSelector({
   profileGroup,
 }: FlamegraphThreadSelectorProps) {
   const [profileOptions, emptyProfileOptions]: [
-    SelectOption<number>[],
-    SelectOption<number>[],
+    Array<SelectOption<number>>,
+    Array<SelectOption<number>>,
   ] = useMemo(() => {
-    const profiles: SelectOption<number>[] = [];
-    const emptyProfiles: SelectOption<number>[] = [];
+    const profiles: Array<SelectOption<number>> = [];
+    const emptyProfiles: Array<SelectOption<number>> = [];
     const activeThreadId =
       typeof profileGroup.activeProfileIndex === 'number'
         ? profileGroup.profiles[profileGroup.activeProfileIndex]?.threadId
@@ -73,7 +74,7 @@ function FlamegraphThreadSelector({
   return (
     <StyledCompactSelect
       triggerProps={{
-        icon: <IconList size="xs" />,
+        icon: <IconList />,
         size: 'xs',
       }}
       options={[

@@ -10,20 +10,28 @@ exceptions being thrown by ClickHouse and 500 errors being returned to our custo
 must parse to the data type of its source even if its later transformed into another type.  This
 acts as a validation step as must as a type coercion step.
 """
+
 from __future__ import annotations
 
-from typing import Union
-
-from sentry.replays.lib.new_query.conditions import IntegerScalar, StringScalar
+from sentry.replays.lib.new_query.conditions import IntegerScalar, UUIDScalar
 from sentry.replays.lib.new_query.fields import (
     ColumnField,
     CountField,
+    FieldProtocol,
+    IntegerColumnField,
+    NullableStringColumnField,
     StringColumnField,
     SumField,
     SumLengthField,
     UUIDColumnField,
 )
-from sentry.replays.lib.new_query.parsers import parse_int, parse_str, parse_uuid
+from sentry.replays.lib.new_query.parsers import (
+    parse_duration,
+    parse_int,
+    parse_ipv4,
+    parse_str,
+    parse_uuid,
+)
 from sentry.replays.lib.selector.parse import parse_selector
 from sentry.replays.usecases.query.conditions import (
     AggregateActivityScalar,
@@ -32,7 +40,7 @@ from sentry.replays.usecases.query.conditions import (
     SumOfClickScalar,
     SumOfClickSelectorComposite,
     SumOfDeadClickSelectorComposite,
-    SumOfErrorIdsArray,
+    SumOfIntegerIdScalar,
     SumOfIPv4Scalar,
     SumOfRageClickSelectorComposite,
     SumOfStringArray,
@@ -41,6 +49,7 @@ from sentry.replays.usecases.query.conditions import (
 )
 from sentry.replays.usecases.query.conditions.aggregate import SumOfUUIDScalar
 from sentry.replays.usecases.query.conditions.event_ids import SumOfErrorIdScalar, SumOfInfoIdScalar
+from sentry.replays.usecases.query.conditions.tags import SumOfTagAggregate
 from sentry.replays.usecases.query.fields import ComputedField, TagField
 
 
@@ -72,12 +81,13 @@ def array_string_field(column_name: str) -> StringColumnField:
     return StringColumnField(column_name, parse_str, SumOfStringArray)
 
 
-search_config: dict[str, Union[ColumnField, ComputedField, TagField]] = {
+search_config: dict[str, FieldProtocol] = {
     "activity": ComputedField(parse_int, AggregateActivityScalar),
     "browser.name": string_field("browser_name"),
     "browser.version": string_field("browser_version"),
     "click.alt": click_field("click_alt"),
     "click.class": array_click_field("click_class"),
+    "click.component_name": click_field("click_component_name"),
     "click.id": click_field("click_id"),
     "click.label": click_field("click_aria_label"),
     "click.role": click_field("click_role"),
@@ -87,28 +97,25 @@ search_config: dict[str, Union[ColumnField, ComputedField, TagField]] = {
     "click.textContent": click_field("click_text"),
     "click.title": click_field("click_title"),
     "count_dead_clicks": sum_field("click_is_dead"),
-    "count_errors": sum_field("count_errors"),
+    "count_errors": sum_field("count_error_events"),
     "count_infos": sum_field("count_info_events"),
-    "count_warnings": sum_field("count_warning_events"),
-    "new_count_errors": sum_field("count_error_events"),
     "count_rage_clicks": sum_field("click_is_rage"),
     "count_segments": count_field("segment_id"),
     "count_urls": sum_field("count_urls"),
+    "count_warnings": sum_field("count_warning_events"),
     "dead.selector": ComputedField(parse_selector, SumOfDeadClickSelectorComposite),
     "device.brand": string_field("device_brand"),
     "device.family": string_field("device_family"),
     "device.model": string_field("device_model"),
     "device.name": string_field("device_name"),
     "dist": string_field("dist"),
-    "duration": ComputedField(parse_int, SimpleAggregateDurationScalar),
+    "duration": ComputedField(parse_duration, SimpleAggregateDurationScalar),
     "environment": string_field("environment"),
-    "error_ids": ComputedField(parse_uuid, SumOfErrorIdsArray),
-    "new_error_ids": ComputedField(parse_uuid, SumOfErrorIdScalar),
-    "warning_ids": UUIDColumnField("warning_id", parse_uuid, SumOfUUIDScalar),
-    "info_ids": ComputedField(parse_uuid, SumOfInfoIdScalar),
+    "error_ids": ComputedField(parse_uuid, SumOfErrorIdScalar),
     # Backwards Compat: We pass a simple string to the UUID column. Older versions of ClickHouse
     # do not understand the UUID type.
-    "id": ColumnField("replay_id", lambda x: str(parse_uuid(x)), StringScalar),
+    "id": ColumnField("replay_id", parse_uuid, UUIDScalar),
+    "info_ids": ComputedField(parse_uuid, SumOfInfoIdScalar),
     "os.name": string_field("os_name"),
     "os.version": string_field("os_version"),
     "platform": string_field("platform"),
@@ -121,8 +128,10 @@ search_config: dict[str, Union[ColumnField, ComputedField, TagField]] = {
     "urls": array_string_field("urls"),
     "user.email": string_field("user_email"),
     "user.id": string_field("user_id"),
-    "user.ip_address": StringColumnField("ip_address_v4", parse_str, SumOfIPv4Scalar),
+    "user.ip_address": NullableStringColumnField("ip_address_v4", parse_ipv4, SumOfIPv4Scalar),
     "user.username": string_field("user_name"),
+    "viewed_by_id": IntegerColumnField("viewed_by_id", parse_int, SumOfIntegerIdScalar),
+    "warning_ids": UUIDColumnField("warning_id", parse_uuid, SumOfUUIDScalar),
 }
 
 
@@ -139,12 +148,12 @@ search_config["user"] = search_config["user.username"]
 # Fields which have multiple names that represent the same search operation are defined here.
 # QQ:JFERG: why dont we have these on the scalar search
 search_config["error_id"] = search_config["error_ids"]
-search_config["new_error_id"] = search_config["new_error_ids"]
-search_config["warning_id"] = search_config["warning_ids"]
 search_config["info_id"] = search_config["info_ids"]
+search_config["warning_id"] = search_config["warning_ids"]
 
 
 search_config["release"] = search_config["releases"]
+search_config["seen_by_id"] = search_config["viewed_by_id"]
 search_config["trace_id"] = search_config["trace_ids"]
 search_config["trace"] = search_config["trace_ids"]
 search_config["url"] = search_config["urls"]
@@ -153,4 +162,4 @@ search_config["user.ip"] = search_config["user.ip_address"]
 
 # Field-names which could not be found in the set are tag-keys and will, by default, look for
 # the `*` key to find their search instructions. If this is not defined an error is returned.
-search_config["*"] = TagField()
+search_config["*"] = TagField(query=SumOfTagAggregate)

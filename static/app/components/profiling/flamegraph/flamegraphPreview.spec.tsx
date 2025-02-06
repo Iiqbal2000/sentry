@@ -26,7 +26,7 @@ describe('computePreviewConfigView', function () {
       {type: 'flamechart'}
     );
 
-    const flamegraph = new Flamegraph(profile, 1, {});
+    const flamegraph = new Flamegraph(profile, {});
 
     // the view should be taller than the flamegraph
     const configView = new Rect(0, 0, 2, 3);
@@ -41,7 +41,7 @@ describe('computePreviewConfigView', function () {
 
     // y is 0 here because the config view is taller than the flamegraph
     expect(previewConfigView).toEqual(new Rect(0, 0, 2, 3));
-    expect(mode).toEqual('anchorTop');
+    expect(mode).toBe('anchorTop');
   });
 
   it('uses max depth', function () {
@@ -65,7 +65,7 @@ describe('computePreviewConfigView', function () {
       {type: 'flamechart'}
     );
 
-    const flamegraph = new Flamegraph(profile, 1, {});
+    const flamegraph = new Flamegraph(profile, {});
 
     // limit the view to 2 rows tall
     const configView = new Rect(0, 0, 2, 2);
@@ -81,7 +81,7 @@ describe('computePreviewConfigView', function () {
     // y is 1 here because the config view has height 2 so it can only
     // show 2 frames and we show the inner most frames
     expect(previewConfigView).toEqual(new Rect(0, 1, 2, 2));
-    expect(mode).toEqual('anchorBottom');
+    expect(mode).toBe('anchorBottom');
   });
 
   it('uses max depth in window', function () {
@@ -106,7 +106,7 @@ describe('computePreviewConfigView', function () {
       {type: 'flamechart'}
     );
 
-    const flamegraph = new Flamegraph(profile, 1, {});
+    const flamegraph = new Flamegraph(profile, {});
 
     // limit the view to 2 rows talls
     const configView = new Rect(0, 0, 3, 2);
@@ -122,7 +122,7 @@ describe('computePreviewConfigView', function () {
     // y is 1 here because the config view has height 2 so it can only
     // show 2 frames and we show the inner most frames
     expect(previewConfigView).toEqual(new Rect(1, 1, 2, 2));
-    expect(mode).toEqual('anchorBottom');
+    expect(mode).toBe('anchorBottom');
   });
 
   it('uses 0 when view is taller than profile', function () {
@@ -146,7 +146,7 @@ describe('computePreviewConfigView', function () {
       {type: 'flamechart'}
     );
 
-    const flamegraph = new Flamegraph(profile, 1, {});
+    const flamegraph = new Flamegraph(profile, {});
 
     // make taller than profile's deepest stack
     const configView = new Rect(0, 0, 2, 3);
@@ -161,7 +161,7 @@ describe('computePreviewConfigView', function () {
     // y is 0 here because the config view has height 3
     // so the whole flamechart fits
     expect(previewConfigView).toEqual(new Rect(0, 0, 2, 3));
-    expect(mode).toEqual('anchorTop');
+    expect(mode).toBe('anchorTop');
   });
 
   it('uses parent frame depth', function () {
@@ -185,7 +185,7 @@ describe('computePreviewConfigView', function () {
       {type: 'flamechart'}
     );
 
-    const flamegraph = new Flamegraph(profile, 1, {});
+    const flamegraph = new Flamegraph(profile, {});
 
     const configView = new Rect(0, 0, 4, 2);
 
@@ -199,7 +199,7 @@ describe('computePreviewConfigView', function () {
     // y is 1 here because we found a frame `f1` that is wraps
     // around the window at depth 1
     expect(previewConfigView).toEqual(new Rect(1, 1, 2, 2));
-    expect(mode).toEqual('anchorTop');
+    expect(mode).toBe('anchorTop');
   });
 
   it('uses max depth because there is room above parent to show more', function () {
@@ -223,7 +223,7 @@ describe('computePreviewConfigView', function () {
       {type: 'flamechart'}
     );
 
-    const flamegraph = new Flamegraph(profile, 1, {});
+    const flamegraph = new Flamegraph(profile, {});
 
     const configView = new Rect(0, 0, 4, 3);
 
@@ -238,6 +238,6 @@ describe('computePreviewConfigView', function () {
     // so the whole flamechart fits even though the parent
     // is at depth 1
     expect(previewConfigView).toEqual(new Rect(1, 0, 2, 3));
-    expect(mode).toEqual('anchorTop');
+    expect(mode).toBe('anchorTop');
   });
 });

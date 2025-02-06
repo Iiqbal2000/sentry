@@ -1,4 +1,5 @@
-import {CSSProperties, memo, useCallback} from 'react';
+import type {CSSProperties} from 'react';
+import {useCallback} from 'react';
 import styled from '@emotion/styled';
 import classNames from 'classnames';
 
@@ -11,20 +12,23 @@ import type useCrumbHandlers from 'sentry/utils/replays/hooks/useCrumbHandlers';
 import type {BreadcrumbFrame, ConsoleFrame} from 'sentry/utils/replays/types';
 import MessageFormatter from 'sentry/views/replays/detail/console/messageFormatter';
 import TimestampButton from 'sentry/views/replays/detail/timestampButton';
-import type {OnDimensionChange} from 'sentry/views/replays/detail/useVirtualizedInspector';
 
 interface Props extends ReturnType<typeof useCrumbHandlers> {
   currentHoverTime: number | undefined;
   currentTime: number;
   frame: BreadcrumbFrame;
   index: number;
+  onDimensionChange: (
+    index: number,
+    path: string,
+    expandedState: Record<string, boolean>
+  ) => void;
   startTimestampMs: number;
   style: CSSProperties;
   expandPaths?: string[];
-  onDimensionChange?: OnDimensionChange;
 }
 
-function UnmemoizedConsoleLogRow({
+export default function ConsoleLogRow({
   currentHoverTime,
   currentTime,
   expandPaths,
@@ -38,8 +42,7 @@ function UnmemoizedConsoleLogRow({
   style,
 }: Props) {
   const handleDimensionChange = useCallback(
-    (path, expandedState, e) =>
-      onDimensionChange && onDimensionChange(index, path, expandedState, e),
+    (path: any, expandedState: any) => onDimensionChange?.(index, path, expandedState),
     [onDimensionChange, index]
   );
 
@@ -96,19 +99,11 @@ const ConsoleLog = styled('div')<{
 
   background-color: ${p =>
     ['warning', 'error'].includes(String(p.level))
-      ? p.theme.alert[String(p.level)].backgroundLight
+      ? // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+        p.theme.alert[String(p.level)].backgroundLight
       : 'inherit'};
 
-  /* Overridden in TabItemContainer, depending on *CurrentTime and *HoverTime classes */
-  border-top: 1px solid transparent;
-  border-bottom: 1px solid transparent;
-
-  color: ${p =>
-    ['warning', 'error'].includes(String(p.level))
-      ? p.theme.alert[String(p.level)].iconColor
-      : p.hasOccurred
-      ? 'inherit'
-      : p.theme.gray300};
+  color: ${p => p.theme.gray400};
 
   /*
   Show the timestamp button "Play" icon when we hover the row.
@@ -123,17 +118,17 @@ const ConsoleLog = styled('div')<{
 const ICONS = {
   [BreadcrumbLevelType.ERROR]: (
     <Tooltip title={BreadcrumbLevelType.ERROR}>
-      <IconClose size="xs" isCircled />
+      <IconClose size="xs" color="red400" isCircled />
     </Tooltip>
   ),
   [BreadcrumbLevelType.WARNING]: (
     <Tooltip title={BreadcrumbLevelType.WARNING}>
-      <IconWarning size="xs" />
+      <IconWarning color="yellow400" size="xs" />
     </Tooltip>
   ),
   [BreadcrumbLevelType.INFO]: (
     <Tooltip title={BreadcrumbLevelType.INFO}>
-      <IconInfo size="xs" />
+      <IconInfo color="gray400" size="xs" />
     </Tooltip>
   ),
 };
@@ -144,6 +139,7 @@ const MediumFontSize = styled('span')`
 
 function ConsoleLevelIcon({level}: {level: string | undefined}) {
   return level && level in ICONS ? (
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     <MediumFontSize>{ICONS[level]}</MediumFontSize>
   ) : (
     <i />
@@ -156,6 +152,3 @@ const Message = styled('div')`
   white-space: pre-wrap;
   word-break: break-word;
 `;
-
-const ConsoleLogRow = memo(UnmemoizedConsoleLogRow);
-export default ConsoleLogRow;

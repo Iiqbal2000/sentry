@@ -1,4 +1,7 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {TeamFixture} from 'sentry-fixture/team';
+import {UserFixture} from 'sentry-fixture/user';
 
 import {act, render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
@@ -16,24 +19,24 @@ async function clickTeamKeyTransactionDropdown() {
 }
 
 describe('TeamKeyTransactionButton', function () {
-  const organization = Organization({features: ['performance-view']});
+  const organization = OrganizationFixture({features: ['performance-view']});
   const teams = [
-    TestStubs.Team({id: '1', slug: 'team1', name: 'Team 1'}),
-    TestStubs.Team({id: '2', slug: 'team2', name: 'Team 2'}),
+    TeamFixture({id: '1', slug: 'team1', name: 'Team 1'}),
+    TeamFixture({id: '2', slug: 'team2', name: 'Team 2'}),
   ];
-  const project = TestStubs.Project({teams});
+  const project = ProjectFixture({teams});
   const eventView = new EventView({
     id: '1',
     name: 'my query',
     fields: [{field: 'count()'}],
     sorts: [{field: 'count', kind: 'desc'}],
     query: '',
-    project: [project.id],
+    project: [parseInt(project.id, 10)],
     start: '2019-10-01T00:00:00',
     end: '2019-10-02T00:00:00',
     statsPeriod: '14d',
     environment: [],
-    createdBy: TestStubs.User(),
+    createdBy: UserFixture(),
     display: 'line',
     team: ['myteams'],
     topEvents: '5',
@@ -45,7 +48,7 @@ describe('TeamKeyTransactionButton', function () {
     act(() => void TeamStore.loadInitialData(teams, false, null));
   });
 
-  it('fetches key transactions with project param', function () {
+  it('fetches key transactions with project param', async function () {
     const getTeamKeyTransactionsMock = MockApiClient.addMockResponse({
       method: 'GET',
       url: '/organizations/org-slug/key-transactions-list/',
@@ -65,7 +68,9 @@ describe('TeamKeyTransactionButton', function () {
       />
     );
 
-    expect(getTeamKeyTransactionsMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(getTeamKeyTransactionsMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('renders with all teams checked', async function () {
@@ -90,11 +95,11 @@ describe('TeamKeyTransactionButton', function () {
     await clickTeamKeyTransactionDropdown();
 
     // all teams should be checked
-    expect(screen.getByRole('option', {name: `#${teams[0].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[0]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'true'
     );
-    expect(screen.getByRole('option', {name: `#${teams[1].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[1]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'true'
     );
@@ -106,9 +111,9 @@ describe('TeamKeyTransactionButton', function () {
       url: '/organizations/org-slug/key-transactions-list/',
       body: teams.map(({id}) => ({
         team: id,
-        count: id === teams[0].id ? 1 : 0,
+        count: id === teams[0]!.id ? 1 : 0,
         keyed:
-          id === teams[0].id
+          id === teams[0]!.id
             ? [{project_id: String(project.id), transaction: 'transaction'}]
             : [],
       })),
@@ -125,11 +130,11 @@ describe('TeamKeyTransactionButton', function () {
     await clickTeamKeyTransactionDropdown();
 
     // only team 1 should be checked
-    expect(screen.getByRole('option', {name: `#${teams[0].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[0]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'true'
     );
-    expect(screen.getByRole('option', {name: `#${teams[1].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[1]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'false'
     );
@@ -157,11 +162,11 @@ describe('TeamKeyTransactionButton', function () {
     await clickTeamKeyTransactionDropdown();
 
     // all teams should be unchecked
-    expect(screen.getByRole('option', {name: `#${teams[0].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[0]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'false'
     );
-    expect(screen.getByRole('option', {name: `#${teams[1].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[1]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'false'
     );
@@ -184,7 +189,7 @@ describe('TeamKeyTransactionButton', function () {
       body: [],
       match: [
         MockApiClient.matchQuery({project: [project.id]}),
-        MockApiClient.matchData({team: [teams[0].id], transaction: 'transaction'}),
+        MockApiClient.matchData({team: [teams[0]!.id], transaction: 'transaction'}),
       ],
     });
 
@@ -198,7 +203,7 @@ describe('TeamKeyTransactionButton', function () {
 
     await clickTeamKeyTransactionDropdown();
 
-    await userEvent.click(screen.getByRole('option', {name: `#${teams[0].slug}`}));
+    await userEvent.click(screen.getByRole('option', {name: `#${teams[0]!.slug}`}));
     expect(postTeamKeyTransactionsMock).toHaveBeenCalledTimes(1);
   });
 
@@ -219,7 +224,7 @@ describe('TeamKeyTransactionButton', function () {
       body: [],
       match: [
         MockApiClient.matchQuery({project: [project.id]}),
-        MockApiClient.matchData({team: [teams[0].id], transaction: 'transaction'}),
+        MockApiClient.matchData({team: [teams[0]!.id], transaction: 'transaction'}),
       ],
     });
 
@@ -233,7 +238,7 @@ describe('TeamKeyTransactionButton', function () {
 
     await clickTeamKeyTransactionDropdown();
 
-    await userEvent.click(screen.getByRole('option', {name: `#${teams[0].slug}`}));
+    await userEvent.click(screen.getByRole('option', {name: `#${teams[0]!.slug}`}));
     expect(deleteTeamKeyTransactionsMock).toHaveBeenCalledTimes(1);
   });
 
@@ -255,7 +260,7 @@ describe('TeamKeyTransactionButton', function () {
       match: [
         MockApiClient.matchQuery({project: [project.id]}),
         MockApiClient.matchData({
-          team: [teams[0].id, teams[1].id],
+          team: [teams[0]!.id, teams[1]!.id],
           transaction: 'transaction',
         }),
       ],
@@ -274,11 +279,11 @@ describe('TeamKeyTransactionButton', function () {
     await userEvent.click(screen.getByRole('button', {name: 'Select All in My Teams'}));
 
     // all teams should be checked now
-    expect(screen.getByRole('option', {name: `#${teams[0].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[0]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'true'
     );
-    expect(screen.getByRole('option', {name: `#${teams[1].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[1]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'true'
     );
@@ -304,7 +309,7 @@ describe('TeamKeyTransactionButton', function () {
       match: [
         MockApiClient.matchQuery({project: [project.id]}),
         MockApiClient.matchData({
-          team: [teams[0].id, teams[1].id],
+          team: [teams[0]!.id, teams[1]!.id],
           transaction: 'transaction',
         }),
       ],
@@ -323,11 +328,11 @@ describe('TeamKeyTransactionButton', function () {
     await userEvent.click(screen.getByRole('button', {name: 'Unselect All in My Teams'}));
 
     // all teams should be checked now
-    expect(screen.getByRole('option', {name: `#${teams[0].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[0]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'false'
     );
-    expect(screen.getByRole('option', {name: `#${teams[1].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[1]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'false'
     );
@@ -359,12 +364,12 @@ describe('TeamKeyTransactionButton', function () {
 
     await clickTeamKeyTransactionDropdown();
 
-    expect(screen.getByRole('option', {name: `#${teams[0].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[0]!.slug}`})).toHaveAttribute(
       'aria-disabled',
       'true'
     );
 
-    expect(screen.getByRole('option', {name: `#${teams[1].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[1]!.slug}`})).toHaveAttribute(
       'aria-disabled',
       'true'
     );
@@ -397,12 +402,12 @@ describe('TeamKeyTransactionButton', function () {
 
     await clickTeamKeyTransactionDropdown();
 
-    expect(screen.getByRole('option', {name: `#${teams[0].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[0]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'true'
     );
 
-    expect(screen.getByRole('option', {name: `#${teams[1].slug}`})).toHaveAttribute(
+    expect(screen.getByRole('option', {name: `#${teams[1]!.slug}`})).toHaveAttribute(
       'aria-selected',
       'true'
     );

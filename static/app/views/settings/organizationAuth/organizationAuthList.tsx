@@ -5,7 +5,8 @@ import PanelAlert from 'sentry/components/panels/panelAlert';
 import PanelBody from 'sentry/components/panels/panelBody';
 import PanelHeader from 'sentry/components/panels/panelHeader';
 import {t, tct} from 'sentry/locale';
-import {AuthProvider, Organization} from 'sentry/types';
+import type {AuthProvider} from 'sentry/types/auth';
+import type {Organization} from 'sentry/types/organization';
 import {descopeFeatureName} from 'sentry/utils';
 import getCsrfToken from 'sentry/utils/getCsrfToken';
 import withOrganization from 'sentry/utils/withOrganization';
@@ -47,7 +48,7 @@ function OrganizationAuthList({organization, providerList, activeProvider}: Prop
     if (PROVIDER_POPULARITY[a.key] === PROVIDER_POPULARITY[b.key]) {
       return 0;
     }
-    return PROVIDER_POPULARITY[a.key] > PROVIDER_POPULARITY[b.key] ? 1 : -1;
+    return PROVIDER_POPULARITY[a.key]! > PROVIDER_POPULARITY[b.key]! ? 1 : -1;
   });
 
   const list = sortedByPopularity.sort((a, b) => {

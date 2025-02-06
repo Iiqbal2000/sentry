@@ -1,7 +1,7 @@
 import {Fragment, useMemo, useState} from 'react';
 import styled from '@emotion/styled';
 import startCase from 'lodash/startCase';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
 import {Button} from 'sentry/components/button';
 import KeyValueList from 'sentry/components/events/interfaces/keyValueList';
@@ -73,6 +73,7 @@ export function ErrorItem({error, meta}: ErrorItemProps) {
       .map(([key, value]) => ({
         key,
         value,
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         subject: keyMapping[key] || startCase(key),
         meta: key === 'image_name' ? meta?.image_path?.[''] : meta?.[key]?.[''],
       }))
@@ -138,7 +139,7 @@ export function ErrorItem({error, meta}: ErrorItemProps) {
 
 const ToggleButton = styled(Button)`
   margin-left: ${space(1.5)};
-  font-weight: 700;
+  font-weight: ${p => p.theme.fontWeightBold};
   color: ${p => p.theme.subText};
   :hover,
   :focus {

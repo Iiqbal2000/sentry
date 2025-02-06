@@ -1,9 +1,11 @@
-import selectEvent from 'react-select-event';
-import {Organization} from 'sentry-fixture/organization';
-import {Repository} from 'sentry-fixture/repository';
-import {RepositoryProjectPathConfig} from 'sentry-fixture/repositoryProjectPathConfig';
+import {GitHubIntegrationFixture} from 'sentry-fixture/githubIntegration';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {RepositoryFixture} from 'sentry-fixture/repository';
+import {RepositoryProjectPathConfigFixture} from 'sentry-fixture/repositoryProjectPathConfig';
 
 import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
 import {
   makeClosableHeader,
@@ -11,19 +13,19 @@ import {
   ModalBody,
   ModalFooter,
 } from 'sentry/components/globalModal/components';
-import {AddCodeOwnerModal} from 'sentry/views/settings/project/projectOwnership/addCodeOwnerModal';
+import AddCodeOwnerModal from 'sentry/views/settings/project/projectOwnership/addCodeOwnerModal';
 
 describe('AddCodeOwnerModal', function () {
-  const org = Organization({features: ['integrations-codeowners']});
-  const project = TestStubs.Project();
-  const integration = TestStubs.GitHubIntegration();
-  const repo = Repository({
+  const org = OrganizationFixture({features: ['integrations-codeowners']});
+  const project = ProjectFixture();
+  const integration = GitHubIntegrationFixture();
+  const repo = RepositoryFixture({
     integrationId: integration.id,
     id: '5',
     name: 'example/hello-there',
   });
 
-  const codeMapping = RepositoryProjectPathConfig({
+  const codeMapping = RepositoryProjectPathConfigFixture({
     project,
     repo,
     integration,
@@ -45,7 +47,7 @@ describe('AddCodeOwnerModal', function () {
     });
   });
 
-  it('renders', function () {
+  it('renders', async function () {
     render(
       <AddCodeOwnerModal
         Body={ModalBody}
@@ -57,8 +59,9 @@ describe('AddCodeOwnerModal', function () {
         project={project}
       />
     );
-
-    expect(screen.getByRole('button', {name: 'Add File'})).toBeDisabled();
+    await waitFor(() =>
+      expect(screen.getByRole('button', {name: 'Add File'})).toBeDisabled()
+    );
   });
 
   it('renders codeowner file', async function () {
@@ -80,8 +83,12 @@ describe('AddCodeOwnerModal', function () {
       />
     );
 
-    await selectEvent.select(screen.getByText('--'), 'example/hello-there');
-
+    await waitFor(() =>
+      selectEvent.select(
+        screen.getByText('--'),
+        `Repo Name: ${codeMapping.repoName}, Stack Trace Root: ${codeMapping.stackRoot}, Source Code Root: ${codeMapping.sourceRoot}`
+      )
+    );
     expect(screen.getByTestId('icon-check-mark')).toBeInTheDocument();
 
     expect(screen.getByRole('button', {name: 'Preview File'})).toHaveAttribute(
@@ -94,7 +101,7 @@ describe('AddCodeOwnerModal', function () {
     MockApiClient.addMockResponse({
       url: `/organizations/${org.slug}/code-mappings/${codeMapping.id}/codeowners/`,
       method: 'GET',
-      statusCode: 404,
+      statusCode: 200,
     });
 
     render(
@@ -109,7 +116,12 @@ describe('AddCodeOwnerModal', function () {
       />
     );
 
-    await selectEvent.select(screen.getByText('--'), 'example/hello-there');
+    await waitFor(() =>
+      selectEvent.select(
+        screen.getByText('--'),
+        `Repo Name: ${codeMapping.repoName}, Stack Trace Root: ${codeMapping.stackRoot}, Source Code Root: ${codeMapping.sourceRoot}`
+      )
+    );
 
     expect(screen.getByText('No codeowner file found.')).toBeInTheDocument();
   });
@@ -140,8 +152,12 @@ describe('AddCodeOwnerModal', function () {
         project={project}
       />
     );
-
-    await selectEvent.select(screen.getByText('--'), 'example/hello-there');
+    await waitFor(() =>
+      selectEvent.select(
+        screen.getByText('--'),
+        `Repo Name: ${codeMapping.repoName}, Stack Trace Root: ${codeMapping.stackRoot}, Source Code Root: ${codeMapping.sourceRoot}`
+      )
+    );
 
     await userEvent.click(screen.getByRole('button', {name: 'Add File'}));
 

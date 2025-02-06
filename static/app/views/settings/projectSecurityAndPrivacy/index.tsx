@@ -9,7 +9,8 @@ import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import projectSecurityAndPrivacyGroups from 'sentry/data/forms/projectSecurityAndPrivacyGroups';
 import {t, tct} from 'sentry/locale';
 import ProjectsStore from 'sentry/stores/projectsStore';
-import {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import PermissionAlert from 'sentry/views/settings/project/permissionAlert';
 
@@ -52,7 +53,7 @@ export default function ProjectSecurityAndPrivacy({organization, project}: Props
         onSubmitError={() => addErrorMessage('Unable to save change')}
       >
         <JsonForm
-          additionalFieldProps={{organization}}
+          additionalFieldProps={{organization, project}}
           features={features}
           disabled={!hasAccess}
           forms={projectSecurityAndPrivacyGroups}
@@ -62,7 +63,7 @@ export default function ProjectSecurityAndPrivacy({organization, project}: Props
         additionalContext={
           <span>
             {tct(
-              'These rules can be configured at the organization level in [linkToOrganizationSecurityAndPrivacy].',
+              'Advanced data scrubbing rules can be configured for each project. These rules will be applied in addition to any organization-level rules configured in [linkToOrganizationSecurityAndPrivacy].',
               {
                 linkToOrganizationSecurityAndPrivacy: (
                   <Link to={`/settings/${organization.slug}/security-and-privacy/`}>

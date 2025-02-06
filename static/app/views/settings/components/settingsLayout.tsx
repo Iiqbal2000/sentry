@@ -1,5 +1,4 @@
-import {isValidElement, useEffect, useRef, useState} from 'react';
-import {browserHistory, RouteComponentProps} from 'react-router';
+import {isValidElement, useCallback, useEffect, useRef, useState} from 'react';
 import styled from '@emotion/styled';
 
 import {Button} from 'sentry/components/button';
@@ -8,6 +7,8 @@ import {IconClose, IconMenu} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {fadeIn, slideInLeft} from 'sentry/styles/animations';
 import {space} from 'sentry/styles/space';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import {useLocation} from 'sentry/utils/useLocation';
 
 import SettingsBreadcrumb from './settingsBreadcrumb';
 import SettingsHeader from './settingsHeader';
@@ -31,18 +32,20 @@ function SettingsLayout(props: Props) {
 
   const headerRef = useRef<HTMLDivElement>(null);
 
-  function toggleNav(visible: boolean) {
-    const bodyElement = document.getElementsByTagName('body')[0];
+  const location = useLocation();
+
+  const toggleNav = useCallback((visible: boolean) => {
+    const bodyElement = document.getElementsByTagName('body')[0]!;
 
     window.scrollTo?.(0, 0);
     bodyElement.classList[visible ? 'add' : 'remove']('scroll-lock');
 
     setMobileNavVisible(visible);
     setNavOffsetTop(headerRef.current?.getBoundingClientRect().bottom ?? 0);
-  }
+  }, []);
 
   // Close menu when navigating away
-  useEffect(() => browserHistory.listen(() => toggleNav(false)), []);
+  useEffect(() => toggleNav(false), [toggleNav, location.pathname]);
 
   const {renderNavigation, children, params, routes, route} = props;
 
@@ -129,13 +132,15 @@ const StyledSettingsBreadcrumb = styled(SettingsBreadcrumb)`
 
 const MaxWidthContainer = styled('div')`
   display: flex;
-  max-width: ${p => p.theme.settings.containerWidth};
+  /* @TODO(jonasbadalic) 1440px used to be defined as theme.settings.containerWidth and only used here */
+  max-width: 1440px;
   flex: 1;
 `;
 
 const SidebarWrapper = styled('nav')<{isVisible: boolean; offsetTop: number}>`
   flex-shrink: 0;
-  width: ${p => p.theme.settings.sidebarWidth};
+  /* @TODO(jonasbadalic) 220px used to be defined as theme.settings.sidebarWidth and only used here */
+  width: 220px;
   background: ${p => p.theme.background};
   border-right: 1px solid ${p => p.theme.border};
 

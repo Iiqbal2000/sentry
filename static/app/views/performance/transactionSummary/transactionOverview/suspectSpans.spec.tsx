@@ -1,4 +1,4 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {generateSuspectSpansResponse} from 'sentry-test/performance/initializePerformanceData';
@@ -16,11 +16,8 @@ import {OrganizationContext} from 'sentry/views/organizationContext';
 import SuspectSpans from 'sentry/views/performance/transactionSummary/transactionOverview/suspectSpans';
 
 function initializeData({query} = {query: {}}) {
-  const features = ['performance-view', 'performance-suspect-spans-view'];
-  const organization = Organization({
-    features,
-    projects: [TestStubs.Project()],
-  });
+  const features = ['performance-view'];
+  const organization = OrganizationFixture({features});
   const initialData = initializeOrg({
     organization,
     router: {
@@ -35,7 +32,7 @@ function initializeData({query} = {query: {}}) {
     projects: [],
   });
 
-  act(() => void ProjectsStore.loadInitialData(initialData.organization.projects));
+  act(() => void ProjectsStore.loadInitialData(initialData.projects));
   return {
     ...initialData,
     eventView: EventView.fromLocation(initialData.router.location),
@@ -82,29 +79,5 @@ describe('SuspectSpans', function () {
       expect(await screen.findByText('P75 Self Time')).toBeInTheDocument();
       expect(await screen.findByText('Total Self Time')).toBeInTheDocument();
     });
-
-    // Due to the createHref being stubbed out (see link below),
-    // the anchors all have an empty href so we can't actually
-    // test this.
-    //
-    // https://github.com/getsentry/sentry/blob/28a2337ae902785d4d3e914c0ba484fa883cc17a/tests/js/setup.ts#L162
-    //
-    // it('allows sorting by some columns', async function () {
-    //   const initialData = initializeData();
-    //   render(
-    //     <SuspectSpans
-    //       organization={initialData.organization}
-    //       location={initialData.router.location}
-    //       eventView={initialData.eventView}
-    //       projectId="1"
-    //       transactionName="Test Transaction"
-    //     />,
-    //   );
-
-    //   await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
-    //   expect(screen.getByText('P75 Self Time')).toHaveAttribute('href', null);
-    //   expect(screen.getByText('Total Occurrences')).toHaveAttribute('href', null);
-    //   expect(screen.getByText('Total Self Time')).toHaveAttribute('href', null);
-    // });
   });
 });

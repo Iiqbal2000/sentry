@@ -12,11 +12,9 @@ from sentry.event_manager import EventManager, set_tag
 from sentry.interfaces.user import User as UserInterface
 from sentry.spans.grouping.utils import hash_values
 from sentry.utils import json
-from sentry.utils.canonical import CanonicalKeyDict
-from sentry.utils.dates import to_timestamp
 
 logger = logging.getLogger(__name__)
-epoch = datetime.utcfromtimestamp(0)
+epoch = datetime.fromtimestamp(0)
 
 
 def random_normal(mu, sigma, minimum, maximum=None):
@@ -177,7 +175,6 @@ def load_data(
     if data is None:
         return
 
-    data = CanonicalKeyDict(data)
     if platform in ("csp", "hkpk", "expectct", "expectstaple"):
         return data
 
@@ -186,14 +183,14 @@ def load_data(
         timestamp = datetime.utcnow() - timedelta(minutes=1)
         timestamp = timestamp - timedelta(microseconds=timestamp.microsecond % 1000)
     timestamp = timestamp.replace(tzinfo=timezone.utc)
-    data.setdefault("timestamp", to_timestamp(timestamp))
+    data.setdefault("timestamp", timestamp.timestamp())
 
     if data.get("type") == "transaction":
         if start_timestamp is None:
             start_timestamp = timestamp - timedelta(seconds=3)
         else:
             start_timestamp = start_timestamp.replace(tzinfo=timezone.utc)
-        data["start_timestamp"] = to_timestamp(start_timestamp)
+        data["start_timestamp"] = start_timestamp.timestamp()
 
         if trace is None:
             trace = uuid4().hex
@@ -262,9 +259,9 @@ def load_data(
         data["event_id"] = event_id
 
     data["platform"] = platform
-    # XXX: Message is a legacy alias for logentry. Do not overwrite if set.
-    if "message" not in data:
-        data["message"] = f"This is an example {sample_name or platform} exception"
+    data.setdefault(
+        "logentry", {"formatted": f"This is an example {sample_name or platform} exception"}
+    )
     data.setdefault(
         "user",
         generate_user(ip_address="127.0.0.1", username="sentry", id=1, email="sentry@example.com"),
@@ -410,15 +407,6 @@ def create_sample_event(
         spans,
     )
 
-    if not data:
-        logger.info(
-            "create_sample_event: no data loaded",
-            extra={
-                "project_id": project.id,
-                "sample_event": True,
-            },
-        )
-        return
     for key in ["parent_span_id", "hash", "exclusive_time"]:
         if key in kwargs:
             data["contexts"]["trace"][key] = kwargs.pop(key)

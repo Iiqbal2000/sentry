@@ -1,20 +1,21 @@
 import invert from 'lodash/invert';
 
-import {
-  SelectValue,
+import type {SelectValue} from 'sentry/types/core';
+import {SessionStatus} from 'sentry/types/organization';
+import type {
   SessionAggregationColumn,
-  SessionField,
   SessionsMeta,
   SessionsOperation,
-  SessionStatus,
-} from 'sentry/types';
+} from 'sentry/types/sessions';
+import {SessionField} from 'sentry/types/sessions';
 import {defined} from 'sentry/utils';
-import {FieldValue, FieldValueKind} from 'sentry/views/discover/table/types';
+import type {FieldValue} from 'sentry/views/discover/table/types';
+import {FieldValueKind} from 'sentry/views/discover/table/types';
 
 enum SessionMetric {
   ANR_RATE = 'session.anr_rate',
   FOREGROUND_ANR_RATE = 'session.foreground_anr_rate',
-  SESSION = 'sentry.sessions.session',
+  SESSION_COUNT = 'session.all',
   SESSION_DURATION = 'sentry.sessions.session.duration',
   SESSION_ERROR = 'sentry.sessions.session.error',
   SESSION_CRASH_FREE_RATE = 'session.crash_free_rate',
@@ -58,7 +59,7 @@ export const FIELD_TO_METRICS_EXPRESSION = {
   'count_errored(session)': SessionMetric.SESSION_ERRORED,
   'count_errored(user)': SessionMetric.USER_ERRORED,
   'count_unique(user)': `count_unique(${SessionMetric.USER})`,
-  'sum(session)': `sum(${SessionMetric.SESSION})`,
+  'sum(session)': SessionMetric.SESSION_COUNT,
   'crash_free_rate(session)': SessionMetric.SESSION_CRASH_FREE_RATE,
   'crash_free_rate(user)': SessionMetric.USER_CRASH_FREE_RATE,
   'crash_rate(session)': SessionMetric.SESSION_CRASH_RATE,

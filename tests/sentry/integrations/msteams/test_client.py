@@ -6,15 +6,22 @@ import pytest
 import responses
 from django.test import override_settings
 
+from sentry.integrations.models.integration import Integration
 from sentry.integrations.msteams.client import MsTeamsClient
-from sentry.models.integrations.integration import Integration
 from sentry.silo.base import SiloMode
-from sentry.silo.util import PROXY_BASE_PATH, PROXY_OI_HEADER, PROXY_SIGNATURE_HEADER
+from sentry.silo.util import (
+    PROXY_BASE_PATH,
+    PROXY_BASE_URL_HEADER,
+    PROXY_OI_HEADER,
+    PROXY_PATH,
+    PROXY_SIGNATURE_HEADER,
+)
 from sentry.testutils.cases import TestCase
 from sentry.testutils.silo import control_silo_test
+from tests.sentry.integrations.test_helpers import add_control_silo_proxy_response
 
 
-@control_silo_test(stable=True)
+@control_silo_test
 class MsTeamsClientTest(TestCase):
     @pytest.fixture(autouse=True)
     def _setup_metric_patch(self):
@@ -23,8 +30,11 @@ class MsTeamsClientTest(TestCase):
 
     def setUp(self):
         self.expires_at = 1594768808
-        self.integration = Integration.objects.create(
+        self.organization = self.create_organization(owner=self.user)
+        self.integration = self.create_integration(
+            organization=self.organization,
             provider="msteams",
+            external_id="foobar",
             name="my_team",
             metadata={
                 "access_token": "my_token",
@@ -35,7 +45,7 @@ class MsTeamsClientTest(TestCase):
 
         responses.add(
             responses.GET,
-            "https://smba.trafficmanager.net/amer/v3/teams/foobar",
+            "https://smba.trafficmanager.net/amer/v3/teams/foobar/conversations",
             json={},
         )
 
@@ -89,7 +99,7 @@ class MsTeamsClientTest(TestCase):
 
     @responses.activate
     def test_simple(self):
-        self.msteams_client.get_team_info("foobar")
+        self.msteams_client.get_channel_list("foobar")
         assert len(responses.calls) == 2
         token_request = responses.calls[0].request
 
@@ -101,7 +111,43 @@ class MsTeamsClientTest(TestCase):
 
         # API request to service url
         request = responses.calls[1].request
-        assert "https://smba.trafficmanager.net/amer/v3/teams/foobar" == request.url
+        assert "https://smba.trafficmanager.net/amer/v3/teams/foobar/conversations" == request.url
+        assert self.msteams_client.base_url in request.url
+
+        # Check if metrics is generated properly
+        calls = [
+            call(
+                "integrations.http_response",
+                sample_rate=1.0,
+                tags={"integration": "msteams", "status": 200},
+            ),
+            call(
+                "integrations.http_response",
+                sample_rate=1.0,
+                tags={"integration": "msteams", "status": 200},
+            ),
+        ]
+        assert self.metrics.incr.mock_calls == calls
+
+    @responses.activate
+    def test_api_client_from_integration_installation(self):
+        installation = self.integration.get_installation(organization_id=self.organization.id)
+        client = installation.get_client()
+        assert isinstance(client, MsTeamsClient)
+
+        client.get_channel_list("foobar")
+        assert len(responses.calls) == 2
+        token_request = responses.calls[0].request
+
+        # Token request
+        assert (
+            "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
+            == token_request.url
+        )
+
+        # API request to service url
+        request = responses.calls[1].request
+        assert "https://smba.trafficmanager.net/amer/v3/teams/foobar/conversations" == request.url
         assert self.msteams_client.base_url in request.url
 
         # Check if metrics is generated properly
@@ -136,8 +182,11 @@ def assert_proxy_request(request, is_proxy=True):
 class MsTeamsProxyApiClientTest(TestCase):
     def setUp(self):
         self.expires_at = 1594768808
-        self.integration = Integration.objects.create(
+        self.organization = self.create_organization(owner=self.user)
+        self.integration = self.create_integration(
+            organization=self.organization,
             provider="msteams",
+            external_id="foobar",
             name="my_team",
             metadata={
                 "access_token": "my_token",
@@ -154,12 +203,12 @@ class MsTeamsProxyApiClientTest(TestCase):
         )
         responses.add(
             responses.GET,
-            "https://smba.trafficmanager.net/amer/v3/teams/foobar",
+            "https://smba.trafficmanager.net/amer/v3/teams/foobar/conversations",
             json={},
         )
-        responses.add(
-            responses.GET,
-            "http://controlserver/api/0/internal/integration-proxy/v3/teams/foobar",
+        self.control_proxy_response = add_control_silo_proxy_response(
+            method=responses.GET,
+            path="v3/teams/foobar/conversations",
             json={},
         )
 
@@ -170,7 +219,7 @@ class MsTeamsProxyApiClientTest(TestCase):
 
         with override_settings(SILO_MODE=SiloMode.MONOLITH):
             client = MsTeamsProxyApiTestClient(self.integration)
-            client.get_team_info("foobar")
+            client.get_channel_list("foobar")
             assert len(responses.calls) == 2
             token_request = responses.calls[0].request
 
@@ -182,14 +231,16 @@ class MsTeamsProxyApiClientTest(TestCase):
 
             # API request to service url
             request = responses.calls[1].request
-            assert "https://smba.trafficmanager.net/amer/v3/teams/foobar" == request.url
+            assert (
+                "https://smba.trafficmanager.net/amer/v3/teams/foobar/conversations" == request.url
+            )
             assert client.base_url in request.url
             assert_proxy_request(request, is_proxy=False)
 
         responses.calls.reset()
         with override_settings(SILO_MODE=SiloMode.CONTROL):
             client = MsTeamsProxyApiTestClient(self.integration)
-            client.get_team_info("foobar")
+            client.get_channel_list("foobar")
             assert len(responses.calls) == 2
             token_request = responses.calls[0].request
 
@@ -201,21 +252,22 @@ class MsTeamsProxyApiClientTest(TestCase):
 
             # API request to service url
             request = responses.calls[1].request
-            assert "https://smba.trafficmanager.net/amer/v3/teams/foobar" == request.url
+            assert (
+                "https://smba.trafficmanager.net/amer/v3/teams/foobar/conversations" == request.url
+            )
             assert client.base_url in request.url
             assert_proxy_request(request, is_proxy=False)
 
         responses.calls.reset()
         with override_settings(SILO_MODE=SiloMode.REGION):
             client = MsTeamsProxyApiTestClient(self.integration)
-            client.get_team_info("foobar")
+            client.get_channel_list("foobar")
             assert len(responses.calls) == 1
 
             # API request to service url
             request = responses.calls[0].request
-            assert (
-                "http://controlserver/api/0/internal/integration-proxy/v3/teams/foobar"
-                == request.url
-            )
+            assert self.control_proxy_response.call_count == 1
+            assert request.headers[PROXY_PATH] == "v3/teams/foobar/conversations"
+            assert request.headers[PROXY_BASE_URL_HEADER] == "https://smba.trafficmanager.net/amer"
             assert client.base_url not in request.url
             assert_proxy_request(request, is_proxy=True)

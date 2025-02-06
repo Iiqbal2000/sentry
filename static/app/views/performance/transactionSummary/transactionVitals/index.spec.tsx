@@ -1,6 +1,7 @@
-import {browserHistory} from 'react-router';
-import {Location, Query} from 'history';
-import {Organization} from 'sentry-fixture/organization';
+import type {Query} from 'history';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {
@@ -12,13 +13,21 @@ import {
 } from 'sentry-test/reactTestingLibrary';
 
 import ProjectsStore from 'sentry/stores/projectsStore';
-import type {Organization as TOrganization, Project} from 'sentry/types';
-import {OrganizationContext} from 'sentry/views/organizationContext';
+import type {Project} from 'sentry/types/project';
+import {useLocation} from 'sentry/utils/useLocation';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import TransactionVitals from 'sentry/views/performance/transactionSummary/transactionVitals';
 import {
   VITAL_GROUPS,
   ZOOM_KEYS,
 } from 'sentry/views/performance/transactionSummary/transactionVitals/constants';
+
+jest.mock('sentry/utils/useLocation');
+
+const mockUseLocation = jest.mocked(useLocation);
+jest.mock('sentry/utils/useNavigate');
+
+const mockUseNavigate = jest.mocked(useNavigate);
 
 interface HistogramData {
   count: number;
@@ -37,12 +46,11 @@ function initialize({
   transaction?: string;
 } = {}) {
   features = features || ['performance-view'];
-  project = project || TestStubs.Project();
+  project = project || ProjectFixture();
   query = query || {};
   const data = initializeOrg({
-    organization: Organization({
+    organization: OrganizationFixture({
       features,
-      projects: project ? [project] : [],
     }),
     router: {
       location: {
@@ -54,22 +62,8 @@ function initialize({
       },
     },
   });
-  act(() => ProjectsStore.loadInitialData(data.organization.projects));
+  act(() => ProjectsStore.loadInitialData(data.projects));
   return data;
-}
-
-function WrappedComponent({
-  location,
-  organization,
-}: {
-  location: Location;
-  organization: TOrganization;
-}) {
-  return (
-    <OrganizationContext.Provider value={organization}>
-      <TransactionVitals location={location} organization={organization} />
-    </OrganizationContext.Provider>
-  );
 }
 
 /**
@@ -106,7 +100,10 @@ const vitals = [
 
 describe('Performance > Web Vitals', function () {
   beforeEach(function () {
-    // eslint-disable-next-line no-console
+    mockUseLocation.mockReturnValue(
+      LocationFixture({pathname: '/organizations/org-slug/performance/summary'})
+    );
+
     jest.spyOn(console, 'error').mockImplementation(jest.fn());
 
     MockApiClient.addMockResponse({
@@ -169,7 +166,7 @@ describe('Performance > Web Vitals', function () {
     });
 
     MockApiClient.addMockResponse({
-      url: '/prompts-activity/',
+      url: '/organizations/org-slug/prompts-activity/',
       body: {},
     });
 
@@ -177,35 +174,43 @@ describe('Performance > Web Vitals', function () {
       url: '/organizations/org-slug/sdk-updates/',
       body: [],
     });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/replay-count/',
+      body: {},
+    });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/recent-searches/',
+      body: [],
+    });
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    jest.clearAllMocks();
   });
 
   it('render no access without feature', function () {
-    const {organization, router, routerContext} = initialize({
+    const {organization, router} = initialize({
       features: [],
     });
 
-    render(<WrappedComponent organization={organization} location={router.location} />, {
-      context: routerContext,
+    render(<TransactionVitals organization={organization} location={router.location} />, {
+      router,
+      organization,
     });
     expect(screen.getByText("You don't have access to this feature")).toBeInTheDocument();
   });
 
   it('renders the basic UI components', function () {
-    const {organization, router, routerContext} = initialize({
+    const {organization, router} = initialize({
       transaction: '/organizations/:orgId/',
     });
 
-    render(<WrappedComponent organization={organization} location={router.location} />, {
-      context: routerContext,
+    render(<TransactionVitals organization={organization} location={router.location} />, {
+      router,
+      organization,
     });
 
-    expect(
-      screen.getByRole('heading', {name: '/organizations/:orgId/'})
-    ).toBeInTheDocument();
+    expect(screen.getByText('/organizations/:orgId/')).toBeInTheDocument();
 
     ['navigation', 'main'].forEach(role => {
       expect(screen.getByRole(role)).toBeInTheDocument();
@@ -213,75 +218,75 @@ describe('Performance > Web Vitals', function () {
   });
 
   it('renders the correct bread crumbs', function () {
-    const {organization, router, routerContext} = initialize();
+    const {organization, router} = initialize();
 
-    render(<WrappedComponent organization={organization} location={router.location} />, {
-      context: routerContext,
+    render(<TransactionVitals organization={organization} location={router.location} />, {
+      router,
+      organization,
     });
 
-    expect(screen.getByRole('navigation')).toHaveTextContent('PerformanceWeb Vitals');
+    expect(screen.getByRole('navigation')).toHaveTextContent(
+      'PerformanceTransaction Summary'
+    );
   });
 
   describe('renders all vitals cards correctly', function () {
-    const {organization, router, routerContext} = initialize();
+    const {organization, router} = initialize();
 
-    beforeEach(() => {
+    it.each(vitals)('Renders %s', async function (vital) {
       render(
-        <WrappedComponent organization={organization} location={router.location} />,
-        {context: routerContext}
+        <TransactionVitals organization={organization} location={router.location} />,
+        {router, organization}
       );
-    });
-
-    it.each(vitals)('Renders %s', function (vital) {
-      expect(screen.getByText(vital.heading)).toBeInTheDocument();
-      expect(screen.getByText(vital.baseline)).toBeInTheDocument();
+      expect(await screen.findByText(vital.heading)).toBeInTheDocument();
+      expect(await screen.findByText(vital.baseline)).toBeInTheDocument();
     });
   });
 
   describe('reset view', function () {
     it('disables button on default view', function () {
-      const {organization, router, routerContext} = initialize();
+      const {organization, router} = initialize();
 
       render(
-        <WrappedComponent organization={organization} location={router.location} />,
-        {context: routerContext}
+        <TransactionVitals organization={organization} location={router.location} />,
+        {router, organization}
       );
 
       expect(screen.getByRole('button', {name: 'Reset View'})).toBeDisabled();
     });
 
     it('enables button on left zoom', function () {
-      const {organization, router, routerContext} = initialize({
+      const {organization, router} = initialize({
         query: {
           lcpStart: '20',
         },
       });
 
       render(
-        <WrappedComponent organization={organization} location={router.location} />,
-        {context: routerContext}
+        <TransactionVitals organization={organization} location={router.location} />,
+        {router, organization}
       );
 
       expect(screen.getByRole('button', {name: 'Reset View'})).toBeEnabled();
     });
 
     it('enables button on right zoom', function () {
-      const {organization, router, routerContext} = initialize({
+      const {organization, router} = initialize({
         query: {
           fpEnd: '20',
         },
       });
 
       render(
-        <WrappedComponent organization={organization} location={router.location} />,
-        {context: routerContext}
+        <TransactionVitals organization={organization} location={router.location} />,
+        {router, organization}
       );
 
       expect(screen.getByRole('button', {name: 'Reset View'})).toBeEnabled();
     });
 
     it('enables button on left and right zoom', function () {
-      const {organization, router, routerContext} = initialize({
+      const {organization, router} = initialize({
         query: {
           fcpStart: '20',
           fcpEnd: '20',
@@ -289,15 +294,17 @@ describe('Performance > Web Vitals', function () {
       });
 
       render(
-        <WrappedComponent organization={organization} location={router.location} />,
-        {context: routerContext}
+        <TransactionVitals organization={organization} location={router.location} />,
+        {router, organization}
       );
 
       expect(screen.getByRole('button', {name: 'Reset View'})).toBeEnabled();
     });
 
     it('resets view properly', async function () {
-      const {organization, router, routerContext} = initialize({
+      const mockNavigate = jest.fn();
+      mockUseNavigate.mockReturnValue(mockNavigate);
+      const {organization, router} = initialize({
         query: {
           fidStart: '20',
           lcpEnd: '20',
@@ -305,18 +312,21 @@ describe('Performance > Web Vitals', function () {
       });
 
       render(
-        <WrappedComponent organization={organization} location={router.location} />,
-        {context: routerContext}
+        <TransactionVitals organization={organization} location={router.location} />,
+        {router, organization}
       );
 
       await userEvent.click(screen.getByRole('button', {name: 'Reset View'}));
 
-      expect(browserHistory.push).toHaveBeenCalledWith({
+      expect(mockNavigate).toHaveBeenCalledWith({
         query: expect.not.objectContaining(
-          ZOOM_KEYS.reduce((obj, key) => {
-            obj[key] = expect.anything();
-            return obj;
-          }, {})
+          ZOOM_KEYS.reduce(
+            (obj, key) => {
+              obj[key] = expect.anything();
+              return obj;
+            },
+            {} as Record<string, unknown>
+          )
         ),
       });
     });
@@ -330,15 +340,15 @@ describe('Performance > Web Vitals', function () {
         },
       });
 
-      const {organization, router, routerContext} = initialize({
+      const {organization, router} = initialize({
         query: {
           lcpStart: '20',
         },
       });
 
       render(
-        <WrappedComponent organization={organization} location={router.location} />,
-        {context: routerContext}
+        <TransactionVitals organization={organization} location={router.location} />,
+        {router, organization}
       );
 
       await waitForElementToBeRemoved(() =>
@@ -353,15 +363,15 @@ describe('Performance > Web Vitals', function () {
     });
 
     it('does not render an info alert when data from all web vitals is present', async function () {
-      const {organization, router, routerContext} = initialize({
+      const {organization, router} = initialize({
         query: {
           lcpStart: '20',
         },
       });
 
       render(
-        <WrappedComponent organization={organization} location={router.location} />,
-        {context: routerContext}
+        <TransactionVitals organization={organization} location={router.location} />,
+        {router, organization}
       );
 
       await waitForElementToBeRemoved(() =>
@@ -388,14 +398,15 @@ describe('Performance > Web Vitals', function () {
       },
     });
 
-    const {organization, router, routerContext} = initialize({
+    const {organization, router} = initialize({
       query: {
         lcpStart: '20',
       },
     });
 
-    render(<WrappedComponent organization={organization} location={router.location} />, {
-      context: routerContext,
+    render(<TransactionVitals organization={organization} location={router.location} />, {
+      router,
+      organization,
     });
 
     await waitForElementToBeRemoved(() => screen.queryAllByTestId('loading-placeholder'));

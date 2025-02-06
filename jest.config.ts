@@ -1,9 +1,6 @@
-/* eslint-env node */
-/* eslint import/no-nodejs-modules:0 */
-import path from 'path';
-import process from 'process';
-
 import type {Config} from '@jest/types';
+import path from 'node:path';
+import process from 'node:process';
 
 import babelConfig from './babel.config';
 
@@ -99,16 +96,6 @@ function getTestsForGroup(
   // We sort files by path so that we try and improve the transformer cache hit rate.
   // Colocated domain specific files are likely to require other domain specific files.
   const testsSortedByPath = Array.from(tests.entries()).sort((a, b) => {
-    // WidgetBuilder tests are a special case as they can sometimes take a long time to run (3-5 minutes)
-    // As such, we want to ensure that they are ran in the same group as other widget builder tests.
-    // We do this by sorting them by the path of the widget builder test which ensures they are started by the first job
-    // in the CI group and that all of the tests actually run in the same group.
-    if (a[0].includes('widgetBuilder')) {
-      return -1;
-    }
-    if (b[0].includes('widgetBuilder')) {
-      return 1;
-    }
     return a[0].localeCompare(b[0]);
   });
 
@@ -205,7 +192,7 @@ if (
  * node_modules, but some packages which use ES6 syntax only NEED to be
  * transformed.
  */
-const ESM_NODE_MODULES = [];
+const ESM_NODE_MODULES = ['screenfull'];
 
 const config: Config.InitialOptions = {
   verbose: false,
@@ -217,12 +204,11 @@ const config: Config.InitialOptions = {
   coverageDirectory: '.artifacts/coverage',
   moduleNameMapper: {
     '^sentry/(.*)': '<rootDir>/static/app/$1',
-    '^sentry-fixture/(.*)': '<rootDir>/fixtures/js-stubs/$1',
+    '^sentry-fixture/(.*)': '<rootDir>/tests/js/fixtures/$1',
     '^sentry-test/(.*)': '<rootDir>/tests/js/sentry-test/$1',
     '^sentry-locale/(.*)': '<rootDir>/src/sentry/locale/$1',
     '\\.(css|less|png|jpg|mp4)$': '<rootDir>/tests/js/sentry-test/importStyleMock.js',
     '\\.(svg)$': '<rootDir>/tests/js/sentry-test/svgMock.js',
-    'integration-docs-platforms': '<rootDir>/fixtures/integration-docs/_platforms.json',
 
     // Disable echarts in test, since they're very slow and take time to
     // transform
@@ -236,9 +222,8 @@ const config: Config.InitialOptions = {
   setupFilesAfterEnv: [
     '<rootDir>/tests/js/setup.ts',
     '<rootDir>/tests/js/setupFramework.ts',
-    '@testing-library/jest-dom/extend-expect',
   ],
-  testMatch: testMatch || ['<rootDir>/static/**/?(*.)+(spec|test).[jt]s?(x)'],
+  testMatch: testMatch || ['<rootDir>/(static|tests/js)/**/?(*.)+(spec|test).[jt]s?(x)'],
   testPathIgnorePatterns: ['<rootDir>/tests/sentry/lang/javascript/'],
 
   unmockedModulePathPatterns: [
@@ -256,7 +241,7 @@ const config: Config.InitialOptions = {
       : '/node_modules/',
   ],
 
-  moduleFileExtensions: ['js', 'ts', 'jsx', 'tsx'],
+  moduleFileExtensions: ['js', 'ts', 'jsx', 'tsx', 'pegjs'],
   globals: {},
 
   testResultsProcessor: JEST_TEST_BALANCER
@@ -278,16 +263,19 @@ const config: Config.InitialOptions = {
    */
   clearMocks: true,
 
-  testEnvironment: 'jsdom',
+  // To disable the sentry jest integration, set this to 'jsdom'
+  testEnvironment: '@sentry/jest-environment/jsdom',
   testEnvironmentOptions: {
     sentryConfig: {
       init: {
         // jest project under Sentry organization (dev productivity team)
-        dsn: 'https://3fe1dce93e3a4267979ebad67f3de327@sentry.io/4857230',
+        dsn: CI
+          ? 'https://3fe1dce93e3a4267979ebad67f3de327@o1.ingest.us.sentry.io/4857230'
+          : false,
         // Use production env to reduce sampling of commits on master
         environment: CI ? (IS_MASTER_BRANCH ? 'ci:master' : 'ci:pull_request') : 'local',
-        tracesSampleRate: CI ? 1 : 0.5,
-        profilesSampleRate: 0.1,
+        tracesSampleRate: CI ? 0.75 : 0,
+        profilesSampleRate: 0,
         transportOptions: {keepAlive: true},
       },
       transactionOptions: {

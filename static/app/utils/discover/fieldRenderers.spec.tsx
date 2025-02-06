@@ -1,5 +1,8 @@
+import {ConfigFixture} from 'sentry-fixture/config';
+import {UserFixture} from 'sentry-fixture/user';
+
 import {initializeOrg} from 'sentry-test/initializeOrg';
-import {act, render, screen} from 'sentry-test/reactTestingLibrary';
+import {act, render, screen, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import ConfigStore from 'sentry/stores/configStore';
 import ProjectsStore from 'sentry/stores/projectsStore';
@@ -8,12 +11,10 @@ import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
 import {SPAN_OP_RELATIVE_BREAKDOWN_FIELD} from 'sentry/utils/discover/fields';
 
 describe('getFieldRenderer', function () {
-  let location, context, project, organization, data, user;
+  let location: any, context: any, project: any, organization: any, data: any, user: any;
 
   beforeEach(function () {
-    context = initializeOrg({
-      project: TestStubs.Project(),
-    });
+    context = initializeOrg();
     organization = context.organization;
     project = context.project;
     act(() => ProjectsStore.loadInitialData([project]));
@@ -45,6 +46,8 @@ describe('getFieldRenderer', function () {
       'transaction.duration': 75,
       'timestamp.to_day': '2021-09-05T00:00:00+00:00',
       'issue.id': '123214',
+      'http_response_rate(3)': 0.012,
+      'http_response_rate(5)': 0.000021,
       lifetimeCount: 10000,
       filteredCount: 3000,
       count: 6000,
@@ -101,13 +104,41 @@ describe('getFieldRenderer', function () {
     expect(screen.getByText(data.numeric)).toBeInTheDocument();
   });
 
+  describe('percentage', function () {
+    it('can render percentage fields', function () {
+      const renderer = getFieldRenderer(
+        'http_response_rate(3)',
+        {
+          'http_response_rate(3)': 'percentage',
+        },
+        false
+      );
+
+      render(renderer(data, {location, organization}) as React.ReactElement<any, any>);
+      expect(screen.getByText('1.2%')).toBeInTheDocument();
+    });
+
+    it('can render very small percentages', function () {
+      const renderer = getFieldRenderer(
+        'http_response_rate(5)',
+        {
+          'http_response_rate(5)': 'percentage',
+        },
+        false
+      );
+
+      render(renderer(data, {location, organization}) as React.ReactElement<any, any>);
+      expect(screen.getByText('<0.01%')).toBeInTheDocument();
+    });
+  });
+
   describe('date', function () {
     beforeEach(function () {
       ConfigStore.loadInitialData(
-        TestStubs.Config({
-          user: TestStubs.User({
+        ConfigFixture({
+          user: UserFixture({
             options: {
-              ...TestStubs.User().options,
+              ...UserFixture().options,
               timezone: 'America/Los_Angeles',
             },
           }),
@@ -115,14 +146,14 @@ describe('getFieldRenderer', function () {
       );
     });
 
-    it('can render date fields', function () {
+    it('can render date fields', async function () {
       const renderer = getFieldRenderer('createdAt', {createdAt: 'date'});
       render(renderer(data, {location, organization}) as React.ReactElement<any, any>);
 
-      expect(screen.getByText('Oct 3, 2019 9:13:14 AM PDT')).toBeInTheDocument();
+      await screen.findByText('Oct 3, 2019 9:13:14 AM PDT');
     });
 
-    it('can render date fields using utc when query string has utc set to true', function () {
+    it('can render date fields using utc when query string has utc set to true', async function () {
       const renderer = getFieldRenderer('createdAt', {createdAt: 'date'});
       render(
         renderer(data, {
@@ -131,7 +162,7 @@ describe('getFieldRenderer', function () {
         }) as React.ReactElement<any, any>
       );
 
-      expect(screen.getByText('Oct 3, 2019 4:13:14 PM UTC')).toBeInTheDocument();
+      await screen.findByText('Oct 3, 2019 4:13:14 PM UTC');
     });
   });
 
@@ -145,10 +176,10 @@ describe('getFieldRenderer', function () {
   it('can render timestamp.to_day', function () {
     // Set timezone
     ConfigStore.loadInitialData(
-      TestStubs.Config({
-        user: TestStubs.User({
+      ConfigFixture({
+        user: UserFixture({
           options: {
-            ...TestStubs.User().options,
+            ...UserFixture().options,
             timezone: 'America/Los_Angeles',
           },
         }),
@@ -164,7 +195,7 @@ describe('getFieldRenderer', function () {
   it('can render error.handled values', function () {
     const renderer = getFieldRenderer('error.handled', {'error.handled': 'boolean'});
 
-    function validate(value, expectText) {
+    function validate(value: any, expectText: any) {
       const {unmount} = render(
         renderer(
           {'error.handled': value},
@@ -226,7 +257,7 @@ describe('getFieldRenderer', function () {
     const renderer = getFieldRenderer('release', {release: 'string'});
 
     render(renderer(data, {location, organization}) as React.ReactElement<any, any>, {
-      context: context.routerContext,
+      router: context.router,
     });
 
     expect(screen.queryByRole('link')).toHaveAttribute(
@@ -240,7 +271,7 @@ describe('getFieldRenderer', function () {
     const renderer = getFieldRenderer('issue', {issue: 'string'});
 
     render(renderer(data, {location, organization}) as React.ReactElement<any, any>, {
-      context: context.routerContext,
+      router: context.router,
     });
 
     expect(screen.queryByRole('link')).toHaveAttribute(
@@ -254,7 +285,7 @@ describe('getFieldRenderer', function () {
     const renderer = getFieldRenderer('project', {project: 'string'});
 
     render(renderer(data, {location, organization}) as React.ReactElement<any, any>, {
-      context: context.routerContext,
+      router: context.router,
     });
 
     expect(screen.queryByTestId('letter_avatar-avatar')).not.toBeInTheDocument();
@@ -267,27 +298,27 @@ describe('getFieldRenderer', function () {
     data = {...data, project: parseInt(project.id, 10)};
 
     render(renderer(data, {location, organization}) as React.ReactElement<any, any>, {
-      context: context.routerContext,
+      router: context.router,
     });
 
     expect(screen.queryByTestId('letter_avatar-avatar')).not.toBeInTheDocument();
     expect(screen.getByText(project.slug)).toBeInTheDocument();
   });
 
-  it('can render team key transaction as a star with the dropdown', function () {
+  it('can render team key transaction as a star with the dropdown', async function () {
     const renderer = getFieldRenderer('team_key_transaction', {
       team_key_transaction: 'boolean',
     });
 
     render(renderer(data, {location, organization}) as React.ReactElement<any, any>, {
-      context: context.routerContext,
+      router: context.router,
     });
 
     const star = screen.getByRole('button', {name: 'Toggle star for team'});
 
     // Enabled, can't open the menu in the test without setting up the
     // TeamKeyTransactionManager
-    expect(star).toBeEnabled();
+    await waitFor(() => expect(star).toBeEnabled());
   });
 
   it('can render team key transaction as a star without the dropdown', function () {
@@ -297,7 +328,7 @@ describe('getFieldRenderer', function () {
     delete data.project;
 
     render(renderer(data, {location, organization}) as React.ReactElement<any, any>, {
-      context: context.routerContext,
+      router: context.router,
     });
 
     const star = screen.getByRole('button', {name: 'Toggle star for team'});
@@ -318,7 +349,7 @@ describe('getFieldRenderer', function () {
       });
 
       render(renderer(data, {location, organization}) as React.ReactElement<any, any>, {
-        context: context.routerContext,
+        router: context.router,
       });
 
       expect(getWidths()).toEqual(['13.333%', '40.000%', '20.000%', '26.667%', '0.000%']);
@@ -335,7 +366,7 @@ describe('getFieldRenderer', function () {
           organization,
           eventView: new EventView({
             sorts: [{field: 'spans.db', kind: 'desc'}],
-            createdBy: TestStubs.User(),
+            createdBy: UserFixture(),
             display: undefined,
             end: undefined,
             start: undefined,
@@ -350,7 +381,7 @@ describe('getFieldRenderer', function () {
             topEvents: undefined,
           }),
         }) as React.ReactElement<any, any>,
-        {context: context.routerContext}
+        {router: context.router}
       );
 
       expect(getWidths()).toEqual(['40.000%', '13.333%', '20.000%', '26.667%', '0.000%']);

@@ -1,8 +1,9 @@
-import {Dispatch, ReactNode, useCallback, useReducer} from 'react';
-import {browserHistory} from 'react-router';
-import {Location} from 'history';
+import type {Dispatch, ReactNode} from 'react';
+import {useCallback, useReducer} from 'react';
+import type {Location} from 'history';
 
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import localStorage from 'sentry/utils/localStorage';
 import {MEPDataProvider} from 'sentry/utils/performance/contexts/metricsEnhancedPerformanceDataContext';
 import {decodeScalar} from 'sentry/utils/queryString';
@@ -51,23 +52,24 @@ export const METRIC_SETTING_PARAM = 'metricSetting';
 export const METRIC_SEARCH_SETTING_PARAM = 'metricSearchSetting'; // TODO: Clean this up since we don't need multiple params in practice.
 
 const storageKey = 'performance.metrics-enhanced-setting';
-export class MEPSetting {
-  static get(): MEPState | null {
+export const MEPSetting = {
+  get(): MEPState | null {
     const value = localStorage.getItem(storageKey);
     if (value) {
       if (!(value in MEPState)) {
         localStorage.removeItem(storageKey);
         return null;
       }
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       return MEPState[value];
     }
     return null;
-  }
+  },
 
-  static set(value: MEPState) {
+  set(value: MEPState) {
     localStorage.setItem(storageKey, value);
-  }
-}
+  },
+};
 
 export function canUseMetricsDevUI(organization: Organization) {
   return organization.features.includes('performance-use-metrics');
@@ -82,7 +84,14 @@ export function canUseMetricsData(organization: Organization) {
   const isRollingOut =
     samplingFeatureFlag && organization.features.includes('mep-rollout-flag');
 
-  return isDevFlagOn || isInternalViewOn || isRollingOut;
+  // For plans transitioning from AM2 to AM3, we still want to show metrics
+  // until 90d after 100% transaction ingestion to avoid spikes in charts
+  // coming from old sampling rates.
+  const isTransitioningPlan = organization.features.includes(
+    'dashboards-metrics-transition'
+  );
+
+  return isDevFlagOn || isInternalViewOn || isRollingOut || isTransitioningPlan;
 }
 
 export function MEPSettingProvider({

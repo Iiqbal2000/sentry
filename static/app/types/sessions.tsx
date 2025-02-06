@@ -1,4 +1,4 @@
-import {
+import type {
   AggregateParameter,
   AggregationOutputType,
   ColumnType,
@@ -30,5 +30,5 @@ export type SessionsOperation =
 
 export type SessionAggregationColumn = {
   outputType: AggregationOutputType | null;
-  parameters: Readonly<AggregateParameter[]>;
+  parameters: readonly AggregateParameter[];
 };

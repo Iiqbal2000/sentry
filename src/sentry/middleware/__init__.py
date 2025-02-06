@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import inspect
-from typing import Callable, Union
+from collections.abc import Callable
+from typing import Union
 
 from django.views import View
 from rest_framework.request import Request
@@ -31,7 +32,7 @@ def is_frontend_request(request: Request) -> bool:
     belief is that that's a fraction of the total requests. Either way, this function should not be
     used expecting it to be 100% accurate. We are using it only for statistics.
     """
-    return bool(getattr(request, "COOKIES", {})) and getattr(request, "auth", None) is None
+    return bool(request.COOKIES) and request.auth is None
 
 
 __all__ = ("get_path", "is_frontend_request", "ViewFunc")

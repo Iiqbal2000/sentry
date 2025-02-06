@@ -1,7 +1,7 @@
 import {useMemo} from 'react';
 import styled from '@emotion/styled';
 
-import {
+import type {
   BasePlatformOptions,
   PlatformOption,
   SelectedPlatformOptions,
@@ -26,8 +26,8 @@ export function useUrlPlatformOptions<PlatformOptions extends BasePlatformOption
     }
 
     return Object.keys(platformOptions).reduce((acc, key) => {
-      const defaultValue = platformOptions[key].defaultValue;
-      const values = platformOptions[key].items.map(({value}) => value);
+      const defaultValue = platformOptions[key]!.defaultValue;
+      const values = platformOptions[key]!.items.map(({value}) => value);
       acc[key as keyof PlatformOptions] = values.includes(query[key])
         ? query[key]
         : defaultValue ?? values[0];
@@ -70,13 +70,21 @@ export type PlatformOptionsControlProps = {
    * Object with default value for each option
    */
   defaultOptions?: Record<string, string[]>;
+  /**
+   * Fired when the value changes
+   */
+  onChange?: (options: SelectedPlatformOptions) => void;
 };
 
-export function PlatformOptionsControl({platformOptions}: PlatformOptionsControlProps) {
+export function PlatformOptionsControl({
+  platformOptions,
+  onChange,
+}: PlatformOptionsControlProps) {
   const router = useRouter();
   const urlOptionValues = useUrlPlatformOptions(platformOptions);
 
   const handleChange = (key: string, value: string) => {
+    onChange?.({[key]: value});
     router.replace({
       ...router.location,
       query: {
@@ -92,7 +100,7 @@ export function PlatformOptionsControl({platformOptions}: PlatformOptionsControl
         <OptionControl
           key={key}
           option={platformOption}
-          value={urlOptionValues[key] ?? platformOption.items[0]?.value}
+          value={urlOptionValues[key] ?? (platformOption.items[0]?.value as string)}
           onChange={value => handleChange(key, value)}
         />
       ))}

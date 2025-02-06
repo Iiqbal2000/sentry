@@ -1,6 +1,6 @@
 import {t} from 'sentry/locale';
 
-import {Rule} from '../types';
+import type {Rule} from '../types';
 
 import ModalManager from './modalManager';
 
@@ -20,7 +20,7 @@ function Edit({savedRules, rule, ...props}: Props) {
         return updatedRule;
       }
       return savedRule;
-    }) as Array<Rule>;
+    }) as Rule[];
 
     return newRules;
   };

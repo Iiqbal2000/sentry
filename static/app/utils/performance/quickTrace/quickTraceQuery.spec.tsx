@@ -1,5 +1,5 @@
 import {Fragment} from 'react';
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
@@ -8,7 +8,7 @@ import QuickTraceQuery from 'sentry/utils/performance/quickTrace/quickTraceQuery
 const traceId = 'abcdef1234567890';
 const eventId = '0987654321fedcba';
 
-function renderQuickTrace({isLoading, error, trace, type}) {
+function renderQuickTrace({isLoading, error, trace, type}: any) {
   if (isLoading) {
     return 'loading';
   }
@@ -28,7 +28,11 @@ function renderQuickTrace({isLoading, error, trace, type}) {
 }
 
 describe('TraceLiteQuery', function () {
-  let location, event, traceLiteMock, traceFullMock, traceMetaMock;
+  let location: any,
+    event: any,
+    traceLiteMock: any,
+    traceFullMock: any,
+    traceMetaMock: any;
   beforeEach(function () {
     location = {
       pathname: '/',
@@ -62,7 +66,7 @@ describe('TraceLiteQuery', function () {
     });
   });
 
-  it('fetches data on mount and passes the event id', function () {
+  it('fetches data on mount and passes the event id', async function () {
     render(
       <QuickTraceQuery event={event} location={location} orgSlug="test-org">
         {renderQuickTrace}
@@ -71,9 +75,10 @@ describe('TraceLiteQuery', function () {
 
     expect(traceLiteMock).toHaveBeenCalledTimes(1);
     expect(traceFullMock).toHaveBeenCalledTimes(1);
+    expect(await screen.findByTestId('type')).toHaveTextContent('partial');
   });
 
-  it('doesnt fetch meta when not needed', function () {
+  it('doesnt fetch meta when not needed', async function () {
     render(
       <QuickTraceQuery event={event} location={location} orgSlug="test-org">
         {renderQuickTrace}
@@ -83,6 +88,7 @@ describe('TraceLiteQuery', function () {
     expect(traceLiteMock).toHaveBeenCalledTimes(1);
     expect(traceFullMock).toHaveBeenCalledTimes(1);
     expect(traceMetaMock).toHaveBeenCalledTimes(0);
+    expect(await screen.findByTestId('type')).toHaveTextContent('partial');
   });
 
   it('uses lite results when it cannot find current event in full results', async function () {
@@ -103,7 +109,10 @@ describe('TraceLiteQuery', function () {
     });
     traceFullMock = MockApiClient.addMockResponse({
       url: `/organizations/test-org/events-trace/0${traceId}/`,
-      body: [{event_id: eventId, children: []}],
+      body: {
+        transactions: [{event_id: eventId, children: []}],
+        orphan_errors: [],
+      },
     });
     traceMetaMock = MockApiClient.addMockResponse({
       url: `/organizations/test-org/events-trace-meta/0${traceId}/`,
@@ -147,7 +156,7 @@ describe('TraceLiteQuery', function () {
     });
     event.contexts.trace.trace_id = `0${traceId}`;
 
-    const organization = Organization();
+    const organization = OrganizationFixture();
     organization.features = ['performance-tracing-without-performance'];
 
     render(

@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import msgpack
 from arroyo.backends.kafka import KafkaPayload
 from arroyo.types import BrokerValue, Message, Partition, Topic
+from django.utils import timezone
 
 from sentry.profiles.consumers.process.factory import ProcessProfileStrategyFactory
 from sentry.profiles.task import _prepare_frames_from_profile
@@ -17,7 +18,13 @@ from sentry.utils import json
 class TestProcessProfileConsumerStrategy(TestCase):
     @staticmethod
     def processing_factory():
-        return ProcessProfileStrategyFactory()
+        return ProcessProfileStrategyFactory(
+            max_batch_size=1,
+            max_batch_time=1000,
+            num_processes=1,
+            input_block_size=None,
+            output_block_size=None,
+        )
 
     @patch("sentry.profiles.consumers.process.factory.process_profile_task.s")
     def test_basic_profile_to_celery(self, process_profile_task):
@@ -28,7 +35,7 @@ class TestProcessProfileConsumerStrategy(TestCase):
             "organization_id": 1,
             "project_id": 1,
             "key_id": 1,
-            "received": int(datetime.utcnow().timestamp()),
+            "received": int(timezone.now().timestamp()),
             "payload": json.dumps({"platform": "android", "profile": ""}),
         }
         payload = msgpack.packb(message_dict)
@@ -51,7 +58,7 @@ class TestProcessProfileConsumerStrategy(TestCase):
         processing_strategy.join(1)
         processing_strategy.terminate()
 
-        process_profile_task.assert_called_with(payload=payload)
+        process_profile_task.assert_called_with(payload=payload, sampled=True)
 
 
 def test_adjust_instruction_addr_sample_format():
@@ -70,15 +77,21 @@ def test_adjust_instruction_addr_sample_format():
         "debug_meta": {"images": []},
     }
 
-    _, stacktraces, _ = _prepare_frames_from_profile(profile)
+    _, stacktraces, _ = _prepare_frames_from_profile(profile, profile["platform"])
     assert profile["profile"]["stacks"] == [[3, 0], [4, 1, 2]]
     frames = stacktraces[0]["frames"]
 
     for i in range(3):
         assert frames[i] == original_frames[i]
 
-    assert frames[3] == {"instruction_addr": "0xbeefdead", "adjust_instruction_addr": False}
-    assert frames[4] == {"instruction_addr": "0xdeadbeef", "adjust_instruction_addr": False}
+    assert frames[3] == {
+        "instruction_addr": "0xbeefdead",
+        "adjust_instruction_addr": False,
+    }
+    assert frames[4] == {
+        "instruction_addr": "0xdeadbeef",
+        "adjust_instruction_addr": False,
+    }
 
 
 def test_adjust_instruction_addr_original_format():
@@ -97,7 +110,7 @@ def test_adjust_instruction_addr_original_format():
         "debug_meta": {"images": []},
     }
 
-    _, stacktraces, _ = _prepare_frames_from_profile(profile)
+    _, stacktraces, _ = _prepare_frames_from_profile(profile, str(profile["platform"]))
     frames = stacktraces[0]["frames"]
 
     assert not frames[0]["adjust_instruction_addr"]

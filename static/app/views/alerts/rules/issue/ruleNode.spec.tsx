@@ -1,14 +1,15 @@
-import selectEvent from 'react-select-event';
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
 import ModalStore from 'sentry/stores/modalStore';
 import RuleNode from 'sentry/views/alerts/rules/issue/ruleNode';
 
 describe('RuleNode', () => {
-  const project = TestStubs.Project();
-  const organization = Organization({projects: [project]});
+  const project = ProjectFixture();
+  const organization = OrganizationFixture();
   const index = 0;
   const onDelete = jest.fn();
   const onReset = jest.fn();
@@ -20,7 +21,7 @@ describe('RuleNode', () => {
     enabled: true,
   };
 
-  const formNode = label => ({
+  const formNode = (label: string) => ({
     label,
     id: 'sentry.rules.form_mock',
     enabled: true,
@@ -107,7 +108,7 @@ describe('RuleNode', () => {
     },
   };
 
-  const renderRuleNode = (node, data = {}, org = organization) => {
+  const renderRuleNode = (node: any, data = {}, org = organization) => {
     return render(
       <RuleNode
         index={index}
@@ -129,7 +130,7 @@ describe('RuleNode', () => {
     );
   };
 
-  const labelReplacer = (label, values) => {
+  const labelReplacer = (label: string, values: any) => {
     return label.replace(/{\w+}/gm, placeholder => values[placeholder]);
   };
 
@@ -181,7 +182,7 @@ describe('RuleNode', () => {
       screen.getByText('Here is a number choice field').parentElement
     ).toHaveTextContent(labelReplacer(label, {[`{${fieldName}}`]: 'label2'}));
 
-    selectEvent.openMenu(screen.getByText('label2'));
+    await selectEvent.openMenu(screen.getByText('label2'));
 
     await userEvent.click(screen.getByText('label3'));
     expect(onPropertyChange).toHaveBeenCalledWith(index, fieldName, '3');
@@ -243,7 +244,7 @@ describe('RuleNode', () => {
     renderRuleNode(formNode(label), {targetType: 'IssueOwners'});
 
     expect(screen.getByText('Send a notification to')).toBeInTheDocument();
-    await selectEvent.select(screen.getByText('Issue Owners'), 'Team');
+    await selectEvent.select(screen.getByText('Suggested Assignees'), 'Team');
     expect(onPropertyChange).toHaveBeenCalledTimes(2);
     expect(onPropertyChange).toHaveBeenCalledWith(index, 'targetType', 'Team');
     expect(onPropertyChange).toHaveBeenCalledWith(index, 'targetIdentifier', '');
@@ -252,11 +253,7 @@ describe('RuleNode', () => {
   it('renders mail action field with suggested assignees', async () => {
     const fieldName = 'exampleMailActionField';
     const label = `Send a notification to {${fieldName}}`;
-    const organizationWithFeat = {
-      ...organization,
-      features: ['streamline-targeting-context'],
-    };
-    renderRuleNode(formNode(label), {targetType: 'IssueOwners'}, organizationWithFeat);
+    renderRuleNode(formNode(label), {targetType: 'IssueOwners'}, organization);
 
     expect(screen.getByText('Send a notification to')).toBeInTheDocument();
     await selectEvent.select(screen.getByText('Suggested Assignees'), 'Team');

@@ -1,23 +1,29 @@
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import {joinQuery, parseSearch, Token} from 'sentry/components/searchSyntax/parser';
 import {t} from 'sentry/locale';
 import GroupStore from 'sentry/stores/groupStore';
-import {Group, Organization, PageFilters} from 'sentry/types';
+import type {PageFilters} from 'sentry/types/core';
+import type {Group} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
 import {getIssueFieldRenderer} from 'sentry/utils/dashboards/issueFieldRenderers';
 import {getUtcDateString} from 'sentry/utils/dates';
-import {TableData, TableDataRow} from 'sentry/utils/discover/discoverQuery';
+import type {TableData, TableDataRow} from 'sentry/utils/discover/discoverQuery';
+import type {QueryFieldValue} from 'sentry/utils/discover/fields';
+import type {OnDemandControlContext} from 'sentry/utils/performance/contexts/onDemandControl';
+import {FieldValueKind} from 'sentry/views/discover/table/types';
 import {
   DISCOVER_EXCLUSION_FIELDS,
   getSortLabel,
   IssueSortOptions,
 } from 'sentry/views/issueList/utils';
 
-import {DEFAULT_TABLE_LIMIT, DisplayType, WidgetQuery} from '../types';
+import type {Widget, WidgetQuery} from '../types';
+import {DEFAULT_TABLE_LIMIT, DisplayType} from '../types';
 import {IssuesSearchBar} from '../widgetBuilder/buildSteps/filterResultsStep/issuesSearchBar';
 import {ISSUE_FIELD_TO_HEADER_MAP} from '../widgetBuilder/issueWidget/fields';
 import {generateIssueWidgetFieldOptions} from '../widgetBuilder/issueWidget/utils';
 
-import {DatasetConfig} from './base';
+import type {DatasetConfig} from './base';
 
 const DEFAULT_WIDGET_QUERY: WidgetQuery = {
   name: '',
@@ -31,6 +37,11 @@ const DEFAULT_WIDGET_QUERY: WidgetQuery = {
 
 const DEFAULT_SORT = IssueSortOptions.DATE;
 const DEFAULT_EXPAND = ['owners'];
+
+const DEFAULT_FIELD: QueryFieldValue = {
+  field: 'issue',
+  kind: FieldValueKind.FIELD,
+};
 
 type EndpointParams = Partial<PageFilters['datetime']> & {
   environment: string[];
@@ -47,6 +58,7 @@ type EndpointParams = Partial<PageFilters['datetime']> & {
 };
 
 export const IssuesConfig: DatasetConfig<never, Group[]> = {
+  defaultField: DEFAULT_FIELD,
   defaultWidgetQuery: DEFAULT_WIDGET_QUERY,
   enableEquations: false,
   disableSortOptions,
@@ -56,7 +68,7 @@ export const IssuesConfig: DatasetConfig<never, Group[]> = {
   getTableSortOptions,
   getTableFieldOptions: (_organization: Organization) =>
     generateIssueWidgetFieldOptions(),
-  fieldHeaderMap: ISSUE_FIELD_TO_HEADER_MAP,
+  getFieldHeaderMap: () => ISSUE_FIELD_TO_HEADER_MAP,
   supportedDisplayTypes: [DisplayType.TABLE],
   transformTable: transformIssuesResponseToTable,
 };
@@ -73,7 +85,7 @@ function getTableSortOptions(_organization: Organization, _widgetQuery: WidgetQu
   const sortOptions = [
     IssueSortOptions.DATE,
     IssueSortOptions.NEW,
-    IssueSortOptions.PRIORITY,
+    IssueSortOptions.TRENDS,
     IssueSortOptions.FREQ,
     IssueSortOptions.USER,
   ];
@@ -106,8 +118,10 @@ export function transformIssuesResponseToTable(
     }) => {
       const transformedResultProps: Omit<TableDataRow, 'id'> = {};
       Object.keys(resultProps)
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         .filter(key => ['number', 'string'].includes(typeof resultProps[key]))
         .forEach(key => {
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           transformedResultProps[key] = resultProps[key];
         });
 
@@ -120,7 +134,7 @@ export function transformIssuesResponseToTable(
         issue: shortId,
         title,
         project: project.slug,
-        links: annotations?.join(', '),
+        links: (annotations ?? []) as any,
       };
 
       // Get lifetime stats
@@ -158,9 +172,11 @@ export function transformIssuesResponseToTable(
 
 function getTableRequest(
   api: Client,
+  _: Widget,
   query: WidgetQuery,
   organization: Organization,
   pageFilters: PageFilters,
+  __?: OnDemandControlContext,
   limit?: number,
   cursor?: string
 ) {

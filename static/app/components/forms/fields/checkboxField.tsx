@@ -44,8 +44,8 @@ function CheckboxField(props: Props) {
   const ariaLabel = typeof label === 'string' ? label : undefined;
 
   return (
-    <FormField name={name} inline={false} stacked={stacked}>
-      {({onChange, value, id}) => {
+    <FormField name={name} inline={false} stacked={stacked} required={required}>
+      {({onChange, value, id}: any) => {
         function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
           const newValue = e.target.checked;
           onChange?.(newValue, e);

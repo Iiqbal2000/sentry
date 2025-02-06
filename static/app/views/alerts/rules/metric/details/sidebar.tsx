@@ -1,35 +1,38 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
-import capitalize from 'lodash/capitalize';
 
-import AlertBadge from 'sentry/components/alertBadge';
 import {OnDemandWarningIcon} from 'sentry/components/alerts/onDemandMetricAlert';
 import ActorAvatar from 'sentry/components/avatar/actorAvatar';
+import AlertBadge from 'sentry/components/badge/alertBadge';
+import FeatureBadge from 'sentry/components/badge/featureBadge';
+import {Button} from 'sentry/components/button';
 import {SectionHeading} from 'sentry/components/charts/styles';
-import DateTime from 'sentry/components/dateTime';
+import {DateTime} from 'sentry/components/dateTime';
 import Duration from 'sentry/components/duration';
 import {KeyValueTable, KeyValueTableRow} from 'sentry/components/keyValueTable';
 import TimeSince from 'sentry/components/timeSince';
-import {IconDiamond} from 'sentry/icons';
+import {IconDiamond, IconMegaphone} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {Actor} from 'sentry/types';
+import type {Actor} from 'sentry/types/core';
 import getDynamicText from 'sentry/utils/getDynamicText';
 import {getSearchFilters, isOnDemandSearchKey} from 'sentry/utils/onDemandMetrics/index';
+import {capitalize} from 'sentry/utils/string/capitalize';
+import {useFeedbackForm} from 'sentry/utils/useFeedbackForm';
 import {COMPARISON_DELTA_OPTIONS} from 'sentry/views/alerts/rules/metric/constants';
+import type {Action, MetricRule} from 'sentry/views/alerts/rules/metric/types';
 import {
-  Action,
+  AlertRuleComparisonType,
   AlertRuleThresholdType,
   AlertRuleTriggerType,
-  MetricRule,
 } from 'sentry/views/alerts/rules/metric/types';
 import {IncidentStatus} from 'sentry/views/alerts/types';
 import {AlertWizardAlertNames} from 'sentry/views/alerts/wizard/options';
 import {getAlertTypeFromAggregateDataset} from 'sentry/views/alerts/wizard/utils';
 
 interface MetricDetailsSidebarProps {
-  isOnDemandMetricAlert: boolean;
   rule: MetricRule;
+  showOnDemandMetricAlertUI: boolean;
 }
 
 function TriggerDescription({
@@ -47,15 +50,15 @@ function TriggerDescription({
     label === AlertRuleTriggerType.CRITICAL
       ? t('Critical')
       : label === AlertRuleTriggerType.WARNING
-      ? t('Warning')
-      : t('Resolved');
+        ? t('Warning')
+        : t('Resolved');
 
   const statusIconColor =
     label === AlertRuleTriggerType.CRITICAL
       ? 'errorText'
       : label === AlertRuleTriggerType.WARNING
-      ? 'warningText'
-      : 'successText';
+        ? 'warningText'
+        : 'successText';
 
   const defaultAction = t('Change alert status to %s', status);
 
@@ -69,8 +72,8 @@ function TriggerDescription({
       ? t('higher')
       : t('above')
     : rule.comparisonDelta
-    ? t('lower')
-    : t('below');
+      ? t('lower')
+      : t('below');
   const timeWindow = <Duration seconds={rule.timeWindow * 60} />;
   const metricName = capitalize(
     AlertWizardAlertNames[getAlertTypeFromAggregateDataset(rule)]
@@ -86,15 +89,17 @@ function TriggerDescription({
           timeWindow,
           comparisonDelta: (
             COMPARISON_DELTA_OPTIONS.find(({value}) => value === rule.comparisonDelta) ??
-            COMPARISON_DELTA_OPTIONS[0]
+            COMPARISON_DELTA_OPTIONS[0]!
           ).label,
         }
       )
-    : tct('[metric] is [condition] in [timeWindow]', {
-        metric: metricName,
-        condition: `${thresholdTypeText} ${threshold}`,
-        timeWindow,
-      });
+    : rule.detectionType === AlertRuleComparisonType.DYNAMIC
+      ? 'Anomaly detection threshold is reached'
+      : tct('[metric] is [condition] in [timeWindow]', {
+          metric: metricName,
+          condition: `${thresholdTypeText} ${threshold}`,
+          timeWindow,
+        });
 
   return (
     <TriggerContainer>
@@ -105,7 +110,16 @@ function TriggerDescription({
       <TriggerStep>
         <TriggerTitleText>{t('When')}</TriggerTitleText>
         <TriggerActions>
-          <TriggerText>{thresholdText}</TriggerText>
+          <TriggerText>
+            {thresholdText}
+            {rule.detectionType === AlertRuleComparisonType.DYNAMIC ? (
+              <FeatureBadge
+                type="alpha"
+                title="Anomaly detection is in alpha and may produce inaccurate results"
+                tooltipProps={{isHoverable: true}}
+              />
+            ) : null}
+          </TriggerText>
         </TriggerActions>
       </TriggerStep>
       <TriggerStep>
@@ -123,7 +137,7 @@ function TriggerDescription({
 
 export function MetricDetailsSidebar({
   rule,
-  isOnDemandMetricAlert,
+  showOnDemandMetricAlertUI,
 }: MetricDetailsSidebarProps) {
   // get current status
   const latestIncident = rule.latestIncident;
@@ -141,6 +155,28 @@ export function MetricDetailsSidebar({
 
   const ownerId = rule.owner?.split(':')[1];
   const teamActor = ownerId && {type: 'team' as Actor['type'], id: ownerId, name: ''};
+  const openForm = useFeedbackForm();
+
+  const feedbackButton = openForm ? (
+    <Button
+      onClick={() => {
+        openForm({
+          formTitle: 'Anomaly Detection Feedback',
+          messagePlaceholder: t(
+            'How can we make alerts using anomaly detection more useful?'
+          ),
+          tags: {
+            ['feedback.source']: 'dynamic_thresholding',
+            ['feedback.owner']: 'ml-ai',
+          },
+        });
+      }}
+      size="xs"
+      icon={<IconMegaphone />}
+    >
+      Give Feedback
+    </Button>
+  ) : null;
 
   return (
     <Fragment>
@@ -184,7 +220,7 @@ export function MetricDetailsSidebar({
           />
         )}
       </SidebarGroup>
-      {isOnDemandMetricAlert && (
+      {showOnDemandMetricAlertUI && (
         <SidebarGroup>
           <Heading>{t('Filters Used')}</Heading>
           <KeyValueTable>
@@ -220,7 +256,7 @@ export function MetricDetailsSidebar({
           />
           {rule.createdBy && (
             <KeyValueTableRow
-              keyName={t('Created By')}
+              keyName={t('Created by')}
               value={
                 <OverflowTableValue>{rule.createdBy.name ?? '-'}</OverflowTableValue>
               }
@@ -228,7 +264,7 @@ export function MetricDetailsSidebar({
           )}
           {rule.dateModified && (
             <KeyValueTableRow
-              keyName={t('Last Modified')}
+              keyName={t('Last modified')}
               value={<TimeSince date={rule.dateModified} suffix={t('ago')} />}
             />
           )}
@@ -238,8 +274,33 @@ export function MetricDetailsSidebar({
               teamActor ? <ActorAvatar actor={teamActor} size={24} /> : t('Unassigned')
             }
           />
+          {rule.detectionType === AlertRuleComparisonType.DYNAMIC && (
+            <KeyValueTableRow
+              keyName={t('Responsiveness')}
+              value={
+                rule.sensitivity
+                  ? rule.sensitivity.charAt(0).toUpperCase() + rule.sensitivity.slice(1)
+                  : ''
+              } // NOTE: if the rule is dynamic, then there must be a sensitivity
+            />
+          )}
+          {rule.detectionType === AlertRuleComparisonType.DYNAMIC && (
+            <KeyValueTableRow
+              keyName={t('Direction')}
+              value={
+                <OverflowTableValue>
+                  {rule.thresholdType === AlertRuleThresholdType.ABOVE
+                    ? 'Above threshold'
+                    : rule.thresholdType === AlertRuleThresholdType.ABOVE_AND_BELOW
+                      ? 'Above and below threshold'
+                      : 'Below threshold'}
+                </OverflowTableValue>
+              }
+            />
+          )}
         </KeyValueTable>
       </SidebarGroup>
+      {rule.detectionType === AlertRuleComparisonType.DYNAMIC && feedbackButton}
     </Fragment>
   );
 }
@@ -370,5 +431,5 @@ const TriggerText = styled('span')`
   color: ${p => p.theme.textColor};
   font-size: ${p => p.theme.fontSizeSmall};
   width: 100%;
-  font-weight: 400;
+  font-weight: ${p => p.theme.fontWeightNormal};
 `;

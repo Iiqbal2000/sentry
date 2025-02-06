@@ -1,5 +1,4 @@
 from unittest import mock
-from urllib.parse import parse_qs, urlparse
 
 from requests.exceptions import HTTPError, SSLError
 
@@ -15,32 +14,11 @@ pytestmark = [requires_snuba]
 
 
 class DummyNotificationPlugin(CorePluginMixin, NotificationPlugin):
-    def is_configured(self, project):
+    def is_configured(self, project) -> bool:
         return True
 
 
-class NotifyPlugin(TestCase):
-    def test_add_notification_referrer_param(self):
-        n = DummyNotificationPlugin()
-        n.slug = "slack"
-        url = "https://sentry.io/"
-        assert n.add_notification_referrer_param(url) == url + "?referrer=" + n.slug
-
-        url = "https://sentry.io/?referrer=notslack"
-        assert n.add_notification_referrer_param(url) == "https://sentry.io/?referrer=slack"
-
-        url = "https://sentry.io/?utm_source=google"
-        with_referrer = n.add_notification_referrer_param(url)
-
-        # XXX(py3): Handle ordering differences between py2/3
-        assert parse_qs(urlparse(with_referrer).query) == parse_qs(
-            "referrer=slack&utm_source=google"
-        )
-
-        n.slug = ""
-        url = "https://sentry.io/"
-        assert n.add_notification_referrer_param(url) == "https://sentry.io/"
-
+class NotifyPluginTest(TestCase):
     def test_notify_failure(self):
         errors = (
             ApiError("The server is sad"),
@@ -56,7 +34,7 @@ class NotifyPlugin(TestCase):
             notification = Notification(event)
 
             with mock.patch.object(DummyNotificationPlugin, "notify_users", side_effect=err):
-                assert n.notify(notification) is False
+                n.notify(notification)  # does not raise!
 
     def test_test_configuration_and_get_test_results(self):
         errors = (

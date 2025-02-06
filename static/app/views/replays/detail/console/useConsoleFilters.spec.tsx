@@ -1,22 +1,24 @@
-import {browserHistory} from 'react-router';
 import type {Location} from 'history';
+import {ReplayConsoleFrameFixture} from 'sentry-fixture/replay/replayBreadcrumbFrameData';
+import {ReplayRecordFixture} from 'sentry-fixture/replayRecord';
 
-import {reactHooks} from 'sentry-test/reactTestingLibrary';
+import {renderHook, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import {BreadcrumbLevelType, BreadcrumbType} from 'sentry/types/breadcrumbs';
 import hydrateBreadcrumbs from 'sentry/utils/replays/hydrateBreadcrumbs';
 import {useLocation} from 'sentry/utils/useLocation';
-import useConsoleFilters, {
-  FilterFields,
-} from 'sentry/views/replays/detail/console/useConsoleFilters';
+import {useNavigate} from 'sentry/utils/useNavigate';
+import type {FilterFields} from 'sentry/views/replays/detail/console/useConsoleFilters';
+import useConsoleFilters from 'sentry/views/replays/detail/console/useConsoleFilters';
 
-jest.mock('react-router');
 jest.mock('sentry/utils/useLocation');
+jest.mock('sentry/utils/useNavigate');
 
+const mockUseNavigate = jest.mocked(useNavigate);
 const mockUseLocation = jest.mocked(useLocation);
 
-const frames = hydrateBreadcrumbs(TestStubs.ReplayRecord(), [
-  TestStubs.Replay.ConsoleFrame({
+const frames = hydrateBreadcrumbs(ReplayRecordFixture(), [
+  ReplayConsoleFrameFixture({
     type: BreadcrumbType.DEFAULT,
     timestamp: new Date('2022-05-11T23:00:45.094000Z'),
     level: BreadcrumbLevelType.INFO,
@@ -35,13 +37,13 @@ const frames = hydrateBreadcrumbs(TestStubs.ReplayRecord(), [
       logger: 'console',
     },
   }),
-  TestStubs.Replay.ConsoleFrame({
+  ReplayConsoleFrameFixture({
     type: BreadcrumbType.DEFAULT,
     timestamp: new Date('2022-05-11T23:00:45.094000Z'),
     level: BreadcrumbLevelType.INFO,
     message: 'longtask - does not exist [object PerformanceLongTaskTiming]',
   }),
-  TestStubs.Replay.ConsoleFrame({
+  ReplayConsoleFrameFixture({
     type: BreadcrumbType.DEFAULT,
     timestamp: new Date('2022-05-11T23:00:45.093000Z'),
     level: BreadcrumbLevelType.INFO,
@@ -62,7 +64,7 @@ const frames = hydrateBreadcrumbs(TestStubs.ReplayRecord(), [
       logger: 'console',
     },
   }),
-  TestStubs.Replay.ConsoleFrame({
+  ReplayConsoleFrameFixture({
     type: BreadcrumbType.DEFAULT,
     timestamp: new Date('2022-05-11T23:04:27.576000Z'),
     level: BreadcrumbLevelType.ERROR,
@@ -75,7 +77,7 @@ const frames = hydrateBreadcrumbs(TestStubs.ReplayRecord(), [
       logger: '',
     },
   }),
-  TestStubs.Replay.ConsoleFrame({
+  ReplayConsoleFrameFixture({
     type: BreadcrumbType.DEFAULT,
     timestamp: new Date('2022-05-11T23:05:51.531000Z'),
     level: BreadcrumbLevelType.WARNING,
@@ -90,31 +92,12 @@ const frames = hydrateBreadcrumbs(TestStubs.ReplayRecord(), [
       logger: 'console',
     },
   }),
-  // TestStubs.Replay.ConsoleFrame({
-  //   type: BreadcrumbType.ERROR,
-  //   timestamp: new Date('2022-05-11T23:05:51.531000Z'),
-  //   level: BreadcrumbLevelType.ERROR,
-  //   color: 'red300',
-  //   description: '',
-  //   id: 4,
-  //   message:
-  //     'NotFoundError GET "/projects/{orgSlug}/{projectSlug}/replays/2b5b78831dc849a0b663a72acdef9fa6/" 404',
-  //   category: 'issue',
-  //   data: {
-  //     arguments: [
-  //       'NotFoundError GET "/projects/{orgSlug}/{projectSlug}/replays/2b5b78831dc849a0b663a72acdef9fa6/" 404',
-  //     ],
-  //     logger: 'console',
-  //   },
-  // }),
 ]);
 
 describe('useConsoleFilters', () => {
-  beforeEach(() => {
-    jest.mocked(browserHistory.push).mockReset();
-  });
-
   it('should update the url when setters are called', () => {
+    const mockNavigate = jest.fn();
+    mockUseNavigate.mockReturnValue(mockNavigate);
     const LOG_FILTER = ['error'];
     const SEARCH_FILTER = 'component';
 
@@ -128,40 +111,46 @@ describe('useConsoleFilters', () => {
         query: {f_c_logLevel: LOG_FILTER},
       } as Location<FilterFields>);
 
-    const {result, rerender} = reactHooks.renderHook(useConsoleFilters, {
+    const {result, rerender} = renderHook(useConsoleFilters, {
       initialProps: {frames},
     });
 
     result.current.setLogLevel(LOG_FILTER);
-    expect(browserHistory.push).toHaveBeenLastCalledWith({
-      pathname: '/',
-      query: {
-        f_c_logLevel: LOG_FILTER,
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      {
+        pathname: '/',
+        query: {
+          f_c_logLevel: LOG_FILTER,
+        },
       },
-    });
+      {replace: true}
+    );
 
-    rerender();
+    rerender({frames});
 
     result.current.setSearchTerm(SEARCH_FILTER);
-    expect(browserHistory.push).toHaveBeenLastCalledWith({
-      pathname: '/',
-      query: {
-        f_c_logLevel: LOG_FILTER,
-        f_c_search: SEARCH_FILTER,
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      {
+        pathname: '/',
+        query: {
+          f_c_logLevel: LOG_FILTER,
+          f_c_search: SEARCH_FILTER,
+        },
       },
-    });
+      {replace: true}
+    );
   });
 
-  it('should not filter anything when no values are set', () => {
+  it('should not filter anything when no values are set', async () => {
     mockUseLocation.mockReturnValue({
       pathname: '/',
       query: {},
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useConsoleFilters, {
+    const {result} = renderHook(useConsoleFilters, {
       initialProps: {frames},
     });
-    expect(result.current.items.length).toEqual(5);
+    await waitFor(() => expect(result.current.items).toHaveLength(5));
   });
 
   it('should filter by logLevel', () => {
@@ -172,10 +161,10 @@ describe('useConsoleFilters', () => {
       },
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useConsoleFilters, {
+    const {result} = renderHook(useConsoleFilters, {
       initialProps: {frames},
     });
-    expect(result.current.items.length).toEqual(2);
+    expect(result.current.items).toHaveLength(2);
   });
 
   it('should filter by searchTerm', () => {
@@ -186,10 +175,10 @@ describe('useConsoleFilters', () => {
       },
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useConsoleFilters, {
+    const {result} = renderHook(useConsoleFilters, {
       initialProps: {frames},
     });
-    expect(result.current.items.length).toEqual(2);
+    expect(result.current.items).toHaveLength(2);
   });
 
   it('should filter by searchTerm and logLevel', () => {
@@ -201,32 +190,32 @@ describe('useConsoleFilters', () => {
       },
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useConsoleFilters, {
+    const {result} = renderHook(useConsoleFilters, {
       initialProps: {frames},
     });
-    expect(result.current.items.length).toEqual(1);
+    expect(result.current.items).toHaveLength(1);
   });
 
   describe('getOptions', () => {
     const [CRUMB_LOG_1, CRUMB_LOG_2, CRUMB_WARN, CRUMB_ERROR] = hydrateBreadcrumbs(
-      TestStubs.ReplayRecord(),
+      ReplayRecordFixture(),
       [
-        TestStubs.Replay.ConsoleFrame({
+        ReplayConsoleFrameFixture({
           timestamp: new Date(),
           level: BreadcrumbLevelType.LOG,
           message: '',
         }),
-        TestStubs.Replay.ConsoleFrame({
+        ReplayConsoleFrameFixture({
           timestamp: new Date(),
           level: BreadcrumbLevelType.LOG,
           message: '',
         }),
-        TestStubs.Replay.ConsoleFrame({
+        ReplayConsoleFrameFixture({
           timestamp: new Date(),
           level: BreadcrumbLevelType.WARNING,
           message: '',
         }),
-        TestStubs.Replay.ConsoleFrame({
+        ReplayConsoleFrameFixture({
           timestamp: new Date(),
           level: BreadcrumbLevelType.ERROR,
           message: '',
@@ -248,9 +237,9 @@ describe('useConsoleFilters', () => {
     });
 
     it('should return a sorted list of BreadcrumbLevelType', () => {
-      const simpleCrumbs = [CRUMB_LOG_1, CRUMB_WARN, CRUMB_ERROR];
+      const simpleCrumbs = [CRUMB_LOG_1!, CRUMB_WARN!, CRUMB_ERROR!];
 
-      const {result} = reactHooks.renderHook(useConsoleFilters, {
+      const {result} = renderHook(useConsoleFilters, {
         initialProps: {frames: simpleCrumbs},
       });
       expect(result.current.getLogLevels()).toStrictEqual([
@@ -261,23 +250,23 @@ describe('useConsoleFilters', () => {
     });
 
     it('should deduplicate BreadcrumbLevelType', () => {
-      const simpleCrumbs = [CRUMB_LOG_1, CRUMB_LOG_2];
+      const simpleCrumbs = [CRUMB_LOG_1!, CRUMB_LOG_2!];
 
-      const {result} = reactHooks.renderHook(useConsoleFilters, {
+      const {result} = renderHook(useConsoleFilters, {
         initialProps: {frames: simpleCrumbs},
       });
       expect(result.current.getLogLevels()).toStrictEqual([{label: 'log', value: 'log'}]);
     });
 
     it('should inject extra BreadcrumbLevelType values', () => {
-      const simpleCrumbs = [CRUMB_WARN, CRUMB_ERROR];
+      const simpleCrumbs = [CRUMB_WARN!, CRUMB_ERROR!];
 
       mockUseLocation.mockReturnValue({
         pathname: '/',
         query: {f_c_logLevel: ['log']},
       } as Location<FilterFields>);
 
-      const {result} = reactHooks.renderHook(useConsoleFilters, {
+      const {result} = renderHook(useConsoleFilters, {
         initialProps: {frames: simpleCrumbs},
       });
 
@@ -287,32 +276,5 @@ describe('useConsoleFilters', () => {
         {label: 'log', value: 'log'},
       ]);
     });
-
-    // it('should include issue if a crumb has that for a category', () => {
-    //   const simpleCrumbs = [CRUMB_ISSUE];
-
-    //   const {result} = reactHooks.renderHook(useConsoleFilters, {
-    //     initialProps: {breadcrumbs: simpleCrumbs},
-    //   });
-    //   expect(result.current.getLogLevels()).toStrictEqual([
-    //     {label: 'sentry error', value: 'issue'},
-    //   ]);
-    // });
-
-    // it('should include issue the query includes it', () => {
-    //   const simpleCrumbs = [];
-    //   mockUseLocation.mockReturnValue({
-    //     pathname: '/',
-    //     query: {f_c_logLevel: ['issue']},
-    //   } as Location<FilterFields>);
-
-    //   const {result} = reactHooks.renderHook(useConsoleFilters, {
-    //     initialProps: {frames: simpleCrumbs},
-    //   });
-
-    //   expect(result.current.getLogLevels()).toStrictEqual([
-    //     {label: 'sentry error', value: 'issue'},
-    //   ]);
-    // });
   });
 });

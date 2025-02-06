@@ -1,13 +1,12 @@
 import {Component, Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import omit from 'lodash/omit';
 
 import {Alert} from 'sentry/components/alert';
-import {Button} from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
 import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
-import DateTime from 'sentry/components/dateTime';
+import {DateTime} from 'sentry/components/dateTime';
 import {getFormattedTimeRangeWithLeadingAndTrailingZero} from 'sentry/components/events/interfaces/spans/utils';
 import Link from 'sentry/components/links/link';
 import {
@@ -21,11 +20,12 @@ import {generateIssueEventTarget} from 'sentry/components/quickTrace/utils';
 import {PAGE_URL_PARAM} from 'sentry/constants/pageFilters';
 import {t, tn} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {generateEventSlug} from 'sentry/utils/discover/urls';
 import getDynamicText from 'sentry/utils/getDynamicText';
-import {TraceFullDetailed} from 'sentry/utils/performance/quickTrace/types';
+import type {TraceFullDetailed} from 'sentry/utils/performance/quickTrace/types';
 import {getTransactionDetailsUrl} from 'sentry/utils/performance/urls';
 import {WEB_VITAL_DETAILS} from 'sentry/utils/performance/vitals/constants';
 import {CustomProfiler} from 'sentry/utils/performanceForSentry';
@@ -103,9 +103,9 @@ class TransactionDetail extends Component<Props> {
     );
 
     return (
-      <StyledButton size="xs" to={target}>
+      <StyledLinkButton size="xs" to={target}>
         {t('View Event')}
-      </StyledButton>
+      </StyledLinkButton>
     );
   }
 
@@ -113,16 +113,16 @@ class TransactionDetail extends Component<Props> {
     const {location, organization, transaction} = this.props;
 
     const target = transactionSummaryRouteWithQuery({
-      orgSlug: organization.slug,
+      organization,
       transaction: transaction.transaction,
       query: omit(location.query, Object.values(PAGE_URL_PARAM)),
       projectID: String(transaction.project_id),
     });
 
     return (
-      <StyledButton size="xs" to={target}>
+      <StyledLinkButton size="xs" to={target}>
         {t('View Summary')}
-      </StyledButton>
+      </StyledLinkButton>
     );
   }
 
@@ -147,9 +147,9 @@ class TransactionDetail extends Component<Props> {
     }
 
     return (
-      <StyledButton size="xs" to={target} onClick={handleOnClick}>
+      <StyledLinkButton size="xs" to={target} onClick={handleOnClick}>
         {t('View Profile')}
-      </StyledButton>
+      </StyledLinkButton>
     );
   }
 
@@ -158,6 +158,7 @@ class TransactionDetail extends Component<Props> {
     const {measurements = {}} = transaction;
 
     const measurementKeys = Object.keys(measurements)
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       .filter(name => Boolean(WEB_VITAL_DETAILS[`measurements.${name}`]))
       .sort();
 
@@ -170,9 +171,10 @@ class TransactionDetail extends Component<Props> {
         {measurementKeys.map(measurement => (
           <Row
             key={measurement}
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             title={WEB_VITAL_DETAILS[`measurements.${measurement}`]?.name}
           >
-            {`${Number(measurements[measurement].value.toFixed(3)).toLocaleString()}ms`}
+            {`${Number(measurements[measurement]!.value.toFixed(3)).toLocaleString()}ms`}
           </Row>
         ))}
       </Fragment>
@@ -271,7 +273,8 @@ class TransactionDetail extends Component<Props> {
             <Tags
               location={location}
               organization={organization}
-              transaction={transaction}
+              tags={transaction.tags ?? []}
+              event={transaction}
             />
           </tbody>
         </table>
@@ -304,7 +307,7 @@ const TransactionIdTitle = styled('a')`
   }
 `;
 
-const StyledButton = styled(Button)`
+const StyledLinkButton = styled(LinkButton)`
   position: absolute;
   top: ${space(0.75)};
   right: ${space(0.5)};

@@ -1,30 +1,28 @@
-import {Theme} from '@emotion/react';
-import {Location} from 'history';
+import type {Theme} from '@emotion/react';
+import type {Location} from 'history';
 import pick from 'lodash/pick';
-import moment from 'moment';
+import type {Moment} from 'moment-timezone';
+import moment from 'moment-timezone';
 
 import MarkLine from 'sentry/components/charts/components/markLine';
-import {parseStatsPeriod} from 'sentry/components/organizations/timeRangeSelector/utils';
+import {parseStatsPeriod} from 'sentry/components/timeRangeSelector/utils';
 import {URL_PARAM} from 'sentry/constants/pageFilters';
 import {t} from 'sentry/locale';
-import {
+import type {Series} from 'sentry/types/echarts';
+import type {
   Commit,
   CommitFile,
   FilesByRepository,
-  ReleaseComparisonChartType,
-  ReleaseProject,
-  ReleaseWithHealth,
   Repository,
-} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+} from 'sentry/types/integrations';
+import type {ReleaseProject, ReleaseWithHealth} from 'sentry/types/release';
+import {ReleaseComparisonChartType} from 'sentry/types/release';
 import {decodeList} from 'sentry/utils/queryString';
 
 import {getReleaseBounds, getReleaseParams, isMobileRelease} from '../utils';
 import {commonTermsDescription, SessionTerm} from '../utils/sessionTerm';
 
-export type CommitsByRepository = {
-  [key: string]: Commit[];
-};
+type CommitsByRepository = Record<string, Commit[]>;
 
 /**
  * Convert list of individual file changes into a per-file summary grouped by repository
@@ -37,18 +35,21 @@ export function getFilesByRepository(fileList: CommitFile[]) {
       filesByRepository[repoName] = {};
     }
 
-    if (!filesByRepository[repoName].hasOwnProperty(filename)) {
-      filesByRepository[repoName][filename] = {
+    if (!filesByRepository[repoName]!.hasOwnProperty(filename)) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      filesByRepository[repoName]![filename] = {
         authors: {},
         types: new Set(),
       };
     }
 
     if (author.email) {
-      filesByRepository[repoName][filename].authors[author.email] = author;
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      filesByRepository[repoName]![filename].authors[author.email] = author;
     }
 
-    filesByRepository[repoName][filename].types.add(type);
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+    filesByRepository[repoName]![filename].types.add(type);
 
     return filesByRepository;
   }, {});
@@ -58,14 +59,14 @@ export function getFilesByRepository(fileList: CommitFile[]) {
  * Convert list of individual commits into a summary grouped by repository
  */
 export function getCommitsByRepository(commitList: Commit[]): CommitsByRepository {
-  return commitList.reduce((commitsByRepository, commit) => {
+  return commitList.reduce<CommitsByRepository>((commitsByRepository, commit) => {
     const repositoryName = commit.repository?.name ?? t('unknown');
 
     if (!commitsByRepository.hasOwnProperty(repositoryName)) {
       commitsByRepository[repositoryName] = [];
     }
 
-    commitsByRepository[repositoryName].push(commit);
+    commitsByRepository[repositoryName]!.push(commit);
 
     return commitsByRepository;
   }, {});
@@ -101,7 +102,7 @@ export function getQuery({location, perPage = 40, activeRepository}: GetQueryPro
 /**
  * Get repositories to render according to the activeRepository
  */
-export function getReposToRender(repos: Array<string>, activeRepository?: Repository) {
+export function getReposToRender(repos: string[], activeRepository?: Repository) {
   if (!activeRepository) {
     return repos;
   }
@@ -144,7 +145,9 @@ export const releaseComparisonChartTitles = {
   [ReleaseComparisonChartType.FAILURE_RATE]: t('Failure Rate'),
 };
 
-export const releaseComparisonChartHelp = {
+export const releaseComparisonChartHelp: Partial<
+  Record<ReleaseComparisonChartType, string>
+> = {
   [ReleaseComparisonChartType.CRASH_FREE_SESSIONS]:
     commonTermsDescription[SessionTerm.CRASH_FREE_SESSIONS],
   [ReleaseComparisonChartType.CRASH_FREE_USERS]:
@@ -181,7 +184,7 @@ function generateReleaseMarkLine(
       label: {
         position: 'insideEndBottom',
         formatter: hideLabel ? '' : title,
-        // @ts-expect-error weird echart types
+        // @ts-expect-error TS(2322): Type '{ position: "insideEndBottom"; formatter: st... Remove this comment to see the full error message
         font: 'Rubik',
         fontSize: 14,
         color: theme.chartLabel,
@@ -250,8 +253,10 @@ export function generateReleaseMarkLines(
     return markLines;
   }
 
-  const releaseAdopted = adoptionStages?.adopted && moment(adoptionStages.adopted);
-  if (releaseAdopted && releaseAdopted.isBetween(start, end)) {
+  const releaseAdopted: Moment | undefined = adoptionStages?.adopted
+    ? moment(adoptionStages.adopted)
+    : undefined;
+  if (releaseAdopted?.isBetween(start, end)) {
     markLines.push(
       generateReleaseMarkLine(
         releaseMarkLinesLabels.adopted,
@@ -262,8 +267,10 @@ export function generateReleaseMarkLines(
     );
   }
 
-  const releaseReplaced = adoptionStages?.unadopted && moment(adoptionStages.unadopted);
-  if (releaseReplaced && releaseReplaced.isBetween(start, end)) {
+  const releaseReplaced: Moment | undefined = adoptionStages?.unadopted
+    ? moment(adoptionStages.unadopted)
+    : undefined;
+  if (releaseReplaced?.isBetween(start, end)) {
     markLines.push(
       generateReleaseMarkLine(
         releaseMarkLinesLabels.unadopted,

@@ -4,12 +4,19 @@ import sentry_sdk
 
 from sentry import features
 from sentry.incidents.charts import build_metric_alert_chart
-from sentry.incidents.models import AlertRuleTriggerAction, Incident, IncidentStatus
+from sentry.incidents.models.alert_rule import AlertRuleTriggerAction
+from sentry.incidents.models.incident import Incident, IncidentStatus
 from sentry.integrations.discord.client import DiscordClient
 from sentry.integrations.discord.message_builder.metric_alerts import (
     DiscordMetricAlertMessageBuilder,
 )
-from sentry.shared_integrations.exceptions.base import ApiError
+from sentry.integrations.discord.spec import DiscordMessagingSpec
+from sentry.integrations.discord.utils.metrics import record_lifecycle_termination_level
+from sentry.integrations.messaging.metrics import (
+    MessagingInteractionEvent,
+    MessagingInteractionType,
+)
+from sentry.shared_integrations.exceptions import ApiError
 
 from ..utils import logger
 
@@ -17,9 +24,9 @@ from ..utils import logger
 def send_incident_alert_notification(
     action: AlertRuleTriggerAction,
     incident: Incident,
-    metric_value: int,
+    metric_value: float,
     new_status: IncidentStatus,
-) -> None:
+) -> bool:
     chart_url = None
     if features.has("organizations:metric-alert-chartcuterie", incident.organization):
         try:
@@ -27,6 +34,7 @@ def send_incident_alert_notification(
                 organization=incident.organization,
                 alert_rule=incident.alert_rule,
                 selected_incident=incident,
+                subscription=incident.subscription,
             )
         except Exception as e:
             sentry_sdk.capture_exception(e)
@@ -37,9 +45,9 @@ def send_incident_alert_notification(
         # We can't send a message if we don't know the channel
         logger.warning(
             "discord.metric_alert.no_channel",
-            extra={"guild_id": incident.identifier},
+            extra={"incident_id": incident.id},
         )
-        return
+        return False
 
     message = DiscordMetricAlertMessageBuilder(
         alert_rule=incident.alert_rule,
@@ -49,11 +57,25 @@ def send_incident_alert_notification(
         chart_url=chart_url,
     )
 
-    client = DiscordClient(integration_id=incident.identifier)
-    try:
-        client.send_message(channel, message)
-    except ApiError as error:
-        logger.warning(
-            "discord.metric_alert.messsage_send_failure",
-            extra={"error": error, "guild_id": incident.identifier, "channel_id": channel},
-        )
+    client = DiscordClient()
+    with MessagingInteractionEvent(
+        interaction_type=MessagingInteractionType.SEND_INCIDENT_ALERT_NOTIFICATION,
+        spec=DiscordMessagingSpec(),
+    ).capture() as lifecycle:
+        try:
+            client.send_message(channel, message)
+        except ApiError as error:
+            # Errors that we recieve from the Discord API
+            record_lifecycle_termination_level(lifecycle, error)
+            return False
+        except Exception as error:
+            lifecycle.add_extras(
+                {
+                    "incident_id": incident.id,
+                    "channel_id": channel,
+                }
+            )
+
+            lifecycle.record_failure(error)
+            return False
+        return True

@@ -1,16 +1,14 @@
-import {memo, useMemo, useRef} from 'react';
-import {
-  AutoSizer,
-  CellMeasurer,
-  List as ReactVirtualizedList,
-  ListRowProps,
-} from 'react-virtualized';
+import {memo, useMemo, useRef, useState} from 'react';
+import type {ListRowProps} from 'react-virtualized';
+import {AutoSizer, CellMeasurer, List as ReactVirtualizedList} from 'react-virtualized';
 
 import Placeholder from 'sentry/components/placeholder';
 import JumpButtons from 'sentry/components/replays/jumpButtons';
 import {useReplayContext} from 'sentry/components/replays/replayContext';
+import useJumpButtons from 'sentry/components/replays/useJumpButtons';
 import {t} from 'sentry/locale';
 import useCrumbHandlers from 'sentry/utils/replays/hooks/useCrumbHandlers';
+import useCurrentHoverTime from 'sentry/utils/replays/playback/providers/useCurrentHoverTime';
 import ConsoleFilters from 'sentry/views/replays/detail/console/consoleFilters';
 import ConsoleLogRow from 'sentry/views/replays/detail/console/consoleLogRow';
 import useConsoleFilters from 'sentry/views/replays/detail/console/useConsoleFilters';
@@ -29,11 +27,14 @@ const cellMeasurer = {
 };
 
 function Console() {
-  const {currentTime, currentHoverTime, replay} = useReplayContext();
+  const {currentTime, replay} = useReplayContext();
+  const [currentHoverTime] = useCurrentHoverTime();
   const {onMouseEnter, onMouseLeave, onClickTimestamp} = useCrumbHandlers();
 
   const startTimestampMs = replay?.getReplay()?.started_at?.getTime() ?? 0;
   const frames = replay?.getConsoleFrames();
+
+  const [scrollToRow, setScrollToRow] = useState<undefined | number>(undefined);
 
   const filterProps = useConsoleFilters({frames: frames || []});
   const {expandPathsRef, searchTerm, logLevel, items, setSearchTerm} = filterProps;
@@ -54,6 +55,18 @@ function Console() {
     expandPathsRef,
   });
 
+  const {
+    handleClick: onClickToJump,
+    onRowsRendered,
+    showJumpDownButton,
+    showJumpUpButton,
+  } = useJumpButtons({
+    currentTime,
+    frames: items,
+    isTable: false,
+    setScrollToRow,
+  });
+
   const renderRow = ({index, key, style, parent}: ListRowProps) => {
     const item = items[index];
 
@@ -62,7 +75,7 @@ function Console() {
         cache={cache}
         columnIndex={0}
         // Set key based on filters, otherwise we can have odd expand/collapse state
-        // with <ObjectInspector> when filtering
+        // with <StructuredEventData> when filtering
         key={`${searchTerm}-${logLevel.join(',')}-${key}`}
         parent={parent}
         rowIndex={index}
@@ -71,7 +84,7 @@ function Console() {
           currentHoverTime={currentHoverTime}
           currentTime={currentTime}
           expandPaths={Array.from(expandPathsRef.current?.get(index) || [])}
-          frame={item}
+          frame={item!}
           onMouseEnter={onMouseEnter}
           onMouseLeave={onMouseLeave}
           index={index}
@@ -83,9 +96,6 @@ function Console() {
       </CellMeasurer>
     );
   };
-
-  const showJumpUpButton = false;
-  const showJumpDownButton = false;
 
   return (
     <FluidHeight>
@@ -105,11 +115,18 @@ function Console() {
                     {t('No console logs recorded')}
                   </NoRowRenderer>
                 )}
+                onRowsRendered={onRowsRendered}
+                onScroll={() => {
+                  if (scrollToRow !== undefined) {
+                    setScrollToRow(undefined);
+                  }
+                }}
                 overscanRowCount={5}
                 ref={listRef}
                 rowCount={items.length}
                 rowHeight={cache.rowHeight}
                 rowRenderer={renderRow}
+                scrollToIndex={scrollToRow}
                 width={width}
               />
             )}
@@ -117,11 +134,13 @@ function Console() {
         ) : (
           <Placeholder height="100%" />
         )}
-        <JumpButtons
-          jump={showJumpUpButton ? 'up' : showJumpDownButton ? 'down' : undefined}
-          onClick={() => {}}
-          tableHeaderHeight={0}
-        />
+        {items?.length ? (
+          <JumpButtons
+            jump={showJumpUpButton ? 'up' : showJumpDownButton ? 'down' : undefined}
+            onClick={onClickToJump}
+            tableHeaderHeight={0}
+          />
+        ) : null}
       </TabItemContainer>
     </FluidHeight>
   );

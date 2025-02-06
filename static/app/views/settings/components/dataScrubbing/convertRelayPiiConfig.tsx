@@ -1,4 +1,5 @@
-import {Applications, MethodType, PiiConfig, Rule, RuleDefault, RuleType} from './types';
+import type {Applications, PiiConfig, Rule, RuleDefault} from './types';
+import {MethodType, RuleType} from './types';
 
 // Remap PII config format to something that is more usable in React. Ideally
 // we would stop doing this at some point and make some updates to how we
@@ -11,10 +12,10 @@ export function convertRelayPiiConfig(relayPiiConfig?: string | null): Rule[] {
   const piiConfig = relayPiiConfig ? JSON.parse(relayPiiConfig) : {};
   const rules: Record<string, PiiConfig> = piiConfig.rules || {};
   const applications: Applications = piiConfig.applications || {};
-  const convertedRules: Array<Rule> = [];
+  const convertedRules: Rule[] = [];
 
   for (const application in applications) {
-    for (const rule of applications[application]) {
+    for (const rule of applications[application]!) {
       const resolvedRule = rules[rule];
       const id = convertedRules.length;
       const source = application;

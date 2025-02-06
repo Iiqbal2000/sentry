@@ -1,25 +1,25 @@
 import {Fragment} from 'react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
-import capitalize from 'lodash/capitalize';
 import moment from 'moment-timezone';
 
 import CollapsePanel from 'sentry/components/collapsePanel';
-import DateTime from 'sentry/components/dateTime';
+import {DateTime} from 'sentry/components/dateTime';
 import Duration from 'sentry/components/duration';
 import Link from 'sentry/components/links/link';
-import PanelTable from 'sentry/components/panels/panelTable';
-import StatusIndicator from 'sentry/components/statusIndicator';
+import {PanelTable} from 'sentry/components/panels/panelTable';
+import {StatusIndicator} from 'sentry/components/statusIndicator';
 import {t, tn} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {Organization} from 'sentry/types';
-import {getDuration} from 'sentry/utils/formatters';
+import type {Organization} from 'sentry/types/organization';
+import getDuration from 'sentry/utils/duration/getDuration';
 import getDynamicText from 'sentry/utils/getDynamicText';
+import {capitalize} from 'sentry/utils/string/capitalize';
 import useOrganization from 'sentry/utils/useOrganization';
 import {COMPARISON_DELTA_OPTIONS} from 'sentry/views/alerts/rules/metric/constants';
 import {AlertRuleThresholdType} from 'sentry/views/alerts/rules/metric/types';
-import type {ActivityType} from 'sentry/views/alerts/types';
-import {Incident, IncidentActivityType, IncidentStatus} from 'sentry/views/alerts/types';
+import type {ActivityType, Incident} from 'sentry/views/alerts/types';
+import {IncidentActivityType, IncidentStatus} from 'sentry/views/alerts/types';
 import {alertDetailsLink} from 'sentry/views/alerts/utils';
 import {AlertWizardAlertNames} from 'sentry/views/alerts/wizard/options';
 import {getAlertTypeFromAggregateDataset} from 'sentry/views/alerts/wizard/utils';
@@ -43,7 +43,7 @@ function MetricAlertActivity({organization, incident}: MetricAlertActivityProps)
   );
 
   const triggeredActivity: ActivityType = criticalActivity
-    ? criticalActivity!
+    ? criticalActivity
     : warningActivity!;
   const isCritical = Number(triggeredActivity.value) === IncidentStatus.CRITICAL;
 
@@ -83,27 +83,39 @@ function MetricAlertActivity({organization, incident}: MetricAlertActivityProps)
         </Link>
       </Cell>
       <Cell>
-        {incident.alertRule.comparisonDelta ? (
+        {/* If an alert rule is a % comparison based detection type */}
+        {incident.alertRule.detectionType !== 'dynamic' &&
+          incident.alertRule.comparisonDelta && (
+            <Fragment>
+              {alertName} {curentTrigger?.alertThreshold}%
+              {t(
+                ' %s in %s compared to the ',
+                incident.alertRule.thresholdType === AlertRuleThresholdType.ABOVE
+                  ? t('higher')
+                  : t('lower'),
+                timeWindow
+              )}
+              {COMPARISON_DELTA_OPTIONS.find(
+                ({value}) => value === incident.alertRule.comparisonDelta
+              )?.label ?? COMPARISON_DELTA_OPTIONS[0]?.label}
+            </Fragment>
+          )}
+        {/* If an alert rule is a static detection type */}
+        {incident.alertRule.detectionType !== 'dynamic' &&
+          !incident.alertRule.comparisonDelta && (
+            <Fragment>
+              {alertName}{' '}
+              {incident.alertRule.thresholdType === AlertRuleThresholdType.ABOVE
+                ? t('above')
+                : t('below')}{' '}
+              {curentTrigger?.alertThreshold} {t('in')} {timeWindow}
+            </Fragment>
+          )}
+        {/* If an alert rule is a dynamic detection type */}
+        {incident.alertRule.detectionType === 'dynamic' && (
           <Fragment>
-            {alertName} {curentTrigger?.alertThreshold}%
-            {t(
-              ' %s in %s compared to the ',
-              incident.alertRule.thresholdType === AlertRuleThresholdType.ABOVE
-                ? t('higher')
-                : t('lower'),
-              timeWindow
-            )}
-            {COMPARISON_DELTA_OPTIONS.find(
-              ({value}) => value === incident.alertRule.comparisonDelta
-            )?.label ?? COMPARISON_DELTA_OPTIONS[0].label}
-          </Fragment>
-        ) : (
-          <Fragment>
-            {alertName}{' '}
-            {incident.alertRule.thresholdType === AlertRuleThresholdType.ABOVE
-              ? t('above')
-              : t('below')}{' '}
-            {curentTrigger?.alertThreshold} {t('in')} {timeWindow}
+            {t('Detected an anomaly in the query for ')}
+            {alertName}
           </Fragment>
         )}
       </Cell>

@@ -1,22 +1,24 @@
 import styled from '@emotion/styled';
 
 import {LinkButton} from 'sentry/components/button';
-import {EventDataSection} from 'sentry/components/events/eventDataSection';
 import {getProblemSpansForSpanTree} from 'sentry/components/events/interfaces/performance/utils';
 import {IconSettings} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {space} from 'sentry/styles/space';
+import type {EventTransaction} from 'sentry/types/event';
 import {
-  EventTransaction,
-  getIssueTypeFromOccurenceType,
-  Organization,
-} from 'sentry/types';
+  getIssueTypeFromOccurrenceType,
+  isOccurrenceBased,
+  isTransactionBased,
+} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
 import {sanitizeQuerySelector} from 'sentry/utils/sanitizeQuerySelector';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
 import {ProfileGroupProvider} from 'sentry/views/profiling/profileGroupProvider';
 import {ProfileContext, ProfilesProvider} from 'sentry/views/profiling/profilesProvider';
 
 import TraceView from '../spans/traceView';
-import {TraceContextType} from '../spans/types';
+import type {TraceContextType} from '../spans/types';
 import WaterfallModel from '../spans/waterfallModel';
 
 import {SpanEvidenceKeyValueList} from './spanEvidenceKeyValueList';
@@ -42,28 +44,33 @@ export function SpanEvidenceSection({event, organization, projectSlug}: Props) {
 
   const hasProfilingFeature = organization.features.includes('profiling');
 
-  const issueType = getIssueTypeFromOccurenceType(event.occurrence?.type);
+  const typeId = event.occurrence?.type;
+  const issueType = getIssueTypeFromOccurrenceType(typeId);
   const issueTitle = event.occurrence?.issueTitle;
   const sanitizedIssueTitle = issueTitle && sanitizeQuerySelector(issueTitle);
-  const hasConfigurableThresholds =
-    organization.features.includes('project-performance-settings-admin') && issueType;
+  const hasSetting = isTransactionBased(typeId) && isOccurrenceBased(typeId);
 
   return (
-    <EventDataSection
+    <InterimSection
+      type={SectionKey.SPAN_EVIDENCE}
       title={t('Span Evidence')}
-      type="span-evidence"
       help={t(
         'Span Evidence identifies the root cause of this issue, found in other similar events within the same issue.'
       )}
       actions={
-        hasConfigurableThresholds && (
+        issueType &&
+        hasSetting && (
           <LinkButton
             data-test-id="span-evidence-settings-btn"
-            to={`/settings/projects/${projectSlug}/performance/?issueType=${issueType}#${sanitizedIssueTitle}`}
+            to={{
+              pathname: `/settings/${organization.slug}/projects/${projectSlug}/performance/`,
+              query: {issueType},
+              hash: sanitizedIssueTitle,
+            }}
             size="xs"
+            icon={<IconSettings />}
           >
-            <StyledSettingsIcon size="xs" />
-            Threshold Settings
+            {t('Threshold Settings')}
           </LinkButton>
         )
       }
@@ -73,7 +80,7 @@ export function SpanEvidenceSection({event, organization, projectSlug}: Props) {
         <ProfilesProvider
           orgSlug={organization.slug}
           projectSlug={projectSlug}
-          profileId={profileId || ''}
+          profileMeta={profileId || ''}
         >
           <ProfileContext.Consumer>
             {profiles => (
@@ -86,11 +93,7 @@ export function SpanEvidenceSection({event, organization, projectSlug}: Props) {
                   <TraceView
                     organization={organization}
                     waterfallModel={
-                      new WaterfallModel(
-                        event as EventTransaction,
-                        affectedSpanIds,
-                        focusedSpanIds
-                      )
+                      new WaterfallModel(event, affectedSpanIds, focusedSpanIds)
                     }
                     isEmbedded
                   />
@@ -103,26 +106,16 @@ export function SpanEvidenceSection({event, organization, projectSlug}: Props) {
         <TraceViewWrapper>
           <TraceView
             organization={organization}
-            waterfallModel={
-              new WaterfallModel(
-                event as EventTransaction,
-                affectedSpanIds,
-                focusedSpanIds
-              )
-            }
+            waterfallModel={new WaterfallModel(event, affectedSpanIds, focusedSpanIds)}
             isEmbedded
           />
         </TraceViewWrapper>
       )}
-    </EventDataSection>
+    </InterimSection>
   );
 }
 
 const TraceViewWrapper = styled('div')`
   border: 1px solid ${p => p.theme.innerBorder};
   border-radius: ${p => p.theme.borderRadius};
-`;
-
-const StyledSettingsIcon = styled(IconSettings)`
-  margin-right: ${space(0.5)};
 `;

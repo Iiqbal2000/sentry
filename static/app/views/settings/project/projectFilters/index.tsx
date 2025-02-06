@@ -1,11 +1,12 @@
 import {Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
 
 import Link from 'sentry/components/links/link';
 import NavTabs from 'sentry/components/navTabs';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import recreateRoute from 'sentry/utils/recreateRoute';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import TextBlock from 'sentry/views/settings/components/text/textBlock';
@@ -20,7 +21,7 @@ type Props = {
 } & RouteComponentProps<{filterType: string; projectId: string}, {}>;
 
 function ProjectFilters(props: Props) {
-  const {organization, project, params} = props;
+  const {project, params} = props;
   const {projectId, filterType} = params;
   if (!project) {
     return null;
@@ -41,7 +42,7 @@ function ProjectFilters(props: Props) {
       <PermissionAlert project={project} />
 
       <div>
-        <ProjectFiltersChart project={project} organization={organization} />
+        <ProjectFiltersChart project={project} />
 
         {features.has('discard-groups') && (
           <NavTabs underlined style={{paddingTop: '30px'}}>

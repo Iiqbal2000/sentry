@@ -22,7 +22,7 @@ const makeEmptyEventedTrace = (type?: 'flamegraph' | 'flamechart'): EventedProfi
 describe('flamegraph', () => {
   it('throws if we are trying to construct call order flamegraph', () => {
     expect(() => {
-      return new Flamegraph(makeEmptyEventedTrace('flamegraph'), 0, {
+      return new Flamegraph(makeEmptyEventedTrace('flamegraph'), {
         inverted: false,
         sort: 'call order',
       });
@@ -30,14 +30,14 @@ describe('flamegraph', () => {
   });
   it('throws if we are trying to construct alphabetic order flamechart', () => {
     expect(() => {
-      return new Flamegraph(makeEmptyEventedTrace('flamechart'), 0, {
+      return new Flamegraph(makeEmptyEventedTrace('flamechart'), {
         inverted: false,
         sort: 'alphabetical',
       });
     }).toThrow();
   });
   it('sets default timeline for empty flamegraph', () => {
-    const flamegraph = new Flamegraph(makeEmptyEventedTrace(), 0, {
+    const flamegraph = new Flamegraph(makeEmptyEventedTrace(), {
       inverted: false,
       sort: 'call order',
     });
@@ -69,7 +69,6 @@ describe('flamegraph', () => {
         createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
         {type: 'flamechart'}
       ),
-      10,
       {
         inverted: true,
         sort: 'left heavy',
@@ -101,7 +100,6 @@ describe('flamegraph', () => {
         createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
         {type: 'flamechart'}
       ),
-      10,
       {
         inverted: true,
         sort: 'left heavy',
@@ -110,7 +108,6 @@ describe('flamegraph', () => {
 
     expect(flamegraph.inverted).toBe(true);
     expect(flamegraph.sort).toBe('left heavy');
-    expect(flamegraph.profileIndex).toBe(10);
   });
 
   it('creates a call order graph', () => {
@@ -137,7 +134,6 @@ describe('flamegraph', () => {
         createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
         {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
         sort: 'call order',
@@ -146,8 +142,8 @@ describe('flamegraph', () => {
 
     const order = ['f0', 'f1', 'f2'].reverse();
     for (let i = 0; i < order.length; i++) {
-      expect(flamegraph.frames[i].frame.name).toBe(order[i]);
-      expect(flamegraph.frames[i].depth).toBe(order.length - i - 1);
+      expect(flamegraph.frames[i]!.frame.name).toBe(order[i]);
+      expect(flamegraph.frames[i]!.depth).toBe(order.length - i - 1);
     }
   });
 
@@ -173,13 +169,12 @@ describe('flamegraph', () => {
         createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
         {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
         sort: 'call order',
       }
     );
-    expect(flamegraph.frames.length).toBe(1);
+    expect(flamegraph.frames).toHaveLength(1);
     expect(flamegraph.frames.every(f => f.frame.name !== 'f1')).toBe(true);
   });
 
@@ -207,7 +202,6 @@ describe('flamegraph', () => {
         createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
         {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
         sort: 'call order',
@@ -240,7 +234,6 @@ describe('flamegraph', () => {
             createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
             {type: 'flamechart'}
           ),
-          10,
           {
             inverted: false,
             sort: 'call order',
@@ -271,22 +264,21 @@ describe('flamegraph', () => {
         createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
         {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
         sort: 'left heavy',
       }
     );
 
-    expect(flamegraph.frames[1].frame.name).toBe('f0');
-    expect(flamegraph.frames[1].frame.totalWeight).toBe(1);
-    expect(flamegraph.frames[1].start).toBe(2);
-    expect(flamegraph.frames[1].end).toBe(3);
+    expect(flamegraph.frames[1]!.frame.name).toBe('f0');
+    expect(flamegraph.frames[1]!.frame.totalWeight).toBe(1);
+    expect(flamegraph.frames[1]!.start).toBe(2);
+    expect(flamegraph.frames[1]!.end).toBe(3);
 
-    expect(flamegraph.frames[0].frame.name).toBe('f1');
-    expect(flamegraph.frames[0].frame.totalWeight).toBe(2);
-    expect(flamegraph.frames[0].start).toBe(0);
-    expect(flamegraph.frames[0].end).toBe(2);
+    expect(flamegraph.frames[0]!.frame.name).toBe('f1');
+    expect(flamegraph.frames[0]!.frame.totalWeight).toBe(2);
+    expect(flamegraph.frames[0]!.start).toBe(0);
+    expect(flamegraph.frames[0]!.end).toBe(2);
   });
 
   it('updates startTime and endTime of left heavy children graph', () => {
@@ -313,14 +305,13 @@ describe('flamegraph', () => {
         createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
         {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
         sort: 'left heavy',
       }
     );
 
-    expect(flamegraph.frames[2].frame.name).toBe('f0');
+    expect(flamegraph.frames[2]!.frame.name).toBe('f0');
   });
 
   it('From', () => {
@@ -347,7 +338,6 @@ describe('flamegraph', () => {
         createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
         {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
         sort: 'left heavy',

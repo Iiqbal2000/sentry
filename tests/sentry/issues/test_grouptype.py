@@ -2,10 +2,10 @@ from dataclasses import dataclass
 from datetime import timedelta
 from unittest.mock import patch
 
+from sentry.grouping.grouptype import ErrorGroupType
 from sentry.issues.grouptype import (
     DEFAULT_EXPIRY_TIME,
     DEFAULT_IGNORE_LIMIT,
-    ErrorGroupType,
     GroupCategory,
     GroupType,
     GroupTypeRegistry,
@@ -17,7 +17,6 @@ from sentry.issues.grouptype import (
     get_group_types_by_category,
 )
 from sentry.testutils.cases import TestCase
-from sentry.testutils.silo import region_silo_test
 
 
 class BaseGroupTypeTest(TestCase):
@@ -31,7 +30,6 @@ class BaseGroupTypeTest(TestCase):
         self.registry_patcher.__exit__(None, None, None)
 
 
-@region_silo_test(stable=True)
 class GroupTypeTest(BaseGroupTypeTest):
     def test_get_types_by_category(self) -> None:
         @dataclass(frozen=True)
@@ -118,7 +116,6 @@ class GroupTypeTest(BaseGroupTypeTest):
         assert TestGroupType.noise_config.expiry_time == timedelta(hours=12)
 
 
-@region_silo_test(stable=True)
 class GroupTypeReleasedTest(BaseGroupTypeTest):
     def test_released(self) -> None:
         @dataclass(frozen=True)
@@ -129,7 +126,6 @@ class GroupTypeReleasedTest(BaseGroupTypeTest):
             category = GroupCategory.PERFORMANCE.value
             released = True
 
-        assert TestGroupType.is_visible(self.organization)
         assert TestGroupType.allow_post_process_group(self.organization)
         assert TestGroupType.allow_ingest(self.organization)
 
@@ -142,7 +138,6 @@ class GroupTypeReleasedTest(BaseGroupTypeTest):
             category = GroupCategory.PERFORMANCE.value
             released = False
 
-        assert not TestGroupType.is_visible(self.organization)
         assert not TestGroupType.allow_post_process_group(self.organization)
         assert not TestGroupType.allow_ingest(self.organization)
 
@@ -155,8 +150,6 @@ class GroupTypeReleasedTest(BaseGroupTypeTest):
             category = GroupCategory.PERFORMANCE.value
             released = False
 
-        with self.feature(TestGroupType.build_visible_feature_name()):
-            assert TestGroupType.is_visible(self.organization)
         with self.feature(TestGroupType.build_post_process_group_feature_name()):
             assert TestGroupType.allow_post_process_group(self.organization)
         with self.feature(TestGroupType.build_ingest_feature_name()):

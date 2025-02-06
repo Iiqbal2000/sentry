@@ -21,7 +21,7 @@ function ShortId({shortId, avatar}: Props) {
 
 export default ShortId;
 
-const Wrapper = styled('div')`
+export const Wrapper = styled('div')`
   display: flex;
   align-items: center;
   white-space: nowrap;
@@ -37,5 +37,4 @@ const IdWrapper = styled('div')`
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-top: 1px;
 `;

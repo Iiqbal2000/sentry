@@ -3,7 +3,8 @@ from __future__ import annotations
 import abc
 import inspect
 import logging
-from typing import Any, Callable, Iterable, Mapping, Protocol, Type
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any, Protocol
 
 from django.conf import settings
 from django.contrib.auth import REDIRECT_FIELD_NAME
@@ -18,12 +19,14 @@ from django.http.response import HttpResponseBase
 from django.middleware.csrf import CsrfViewMiddleware
 from django.template.context_processors import csrf
 from django.urls import reverse
+from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 from rest_framework.request import Request
 
 from sentry import options
-from sentry.api.utils import generate_organization_url, is_member_disabled_from_limit
+from sentry.api.exceptions import DataSecrecyError
+from sentry.api.utils import is_member_disabled_from_limit
 from sentry.auth import access
 from sentry.auth.superuser import is_active_superuser
 from sentry.constants import ObjectStatus
@@ -31,21 +34,20 @@ from sentry.middleware.placeholder import placeholder_get_response
 from sentry.models.avatars.base import AvatarBase
 from sentry.models.organization import Organization, OrganizationStatus
 from sentry.models.project import Project
-from sentry.models.team import Team, TeamStatus
-from sentry.models.user import User
-from sentry.services.hybrid_cloud.organization import (
+from sentry.organizations.absolute_url import generate_organization_url
+from sentry.organizations.services.organization import (
     RpcOrganization,
     RpcOrganizationSummary,
     RpcUserOrganizationContext,
     organization_service,
 )
-from sentry.services.hybrid_cloud.user.service import user_service
-from sentry.silo import SiloLimit
-from sentry.silo.base import SiloMode
+from sentry.silo.base import SiloLimit, SiloMode
+from sentry.types.region import subdomain_is_region
+from sentry.users.services.user.service import user_service
 from sentry.utils import auth
 from sentry.utils.audit import create_audit_entry
 from sentry.utils.auth import construct_link_with_query, is_valid_redirect
-from sentry.utils.http import absolute_uri, is_using_customer_domain
+from sentry.utils.http import absolute_uri, is_using_customer_domain, origin_from_request
 from sentry.web.frontend.generic import FOREVER_CACHE
 from sentry.web.helpers import render_to_response
 from sudo.views import redirect_to_sudo
@@ -55,7 +57,7 @@ audit_logger = logging.getLogger("sentry.audit.ui")
 
 
 class ViewSiloLimit(SiloLimit):
-    def modify_endpoint_class(self, decorated_class: Type[View]) -> type:
+    def modify_endpoint_class(self, decorated_class: type[View]) -> type:
         dispatch_override = self.create_override(decorated_class.dispatch)
         new_class = type(
             decorated_class.__name__,
@@ -123,8 +125,7 @@ class _HasRespond(Protocol):
 
     def respond(
         self, template: str, context: dict[str, Any] | None = None, status: int = 200
-    ) -> HttpResponseBase:
-        ...
+    ) -> HttpResponseBase: ...
 
 
 class OrganizationMixin:
@@ -247,28 +248,13 @@ class OrganizationMixin:
     ) -> bool:
         return is_member_disabled_from_limit(request, organization)
 
-    def get_active_team(
-        self, request: HttpRequest, organization: RpcOrganization, team_slug: str
-    ) -> Team | None:
-        """
-        Returns the currently selected team for the request or None
-        if no match.
-        """
-        try:
-            team = Team.objects.get_from_cache(slug=team_slug, organization=organization)
-        except Team.DoesNotExist:
-            return None
-
-        if team.status != TeamStatus.ACTIVE:
-            return None
-
-        return team
-
     def get_active_project(
-        self, request: HttpRequest, organization: RpcOrganization, project_slug: str
+        self, request: HttpRequest, organization: RpcOrganization, project_id_or_slug: int | str
     ) -> Project | None:
         try:
-            project = Project.objects.get(slug=project_slug, organization=organization)
+            project = Project.objects.get(
+                slug__id_or_slug=project_id_or_slug, organization=organization
+            )
         except Project.DoesNotExist:
             return None
 
@@ -299,7 +285,11 @@ class OrganizationMixin:
             if using_customer_domain and request.user and request.user.is_authenticated:
                 requesting_org_slug = request.subdomain
                 org_context = organization_service.get_organization_by_slug(
-                    slug=requesting_org_slug, only_visible=False, user_id=request.user.id
+                    slug=requesting_org_slug,
+                    only_visible=False,
+                    user_id=request.user.id,
+                    include_projects=False,
+                    include_teams=False,
                 )
                 if org_context and org_context.organization:
                     if org_context.organization.status == OrganizationStatus.PENDING_DELETION:
@@ -343,7 +333,7 @@ class BaseView(View, OrganizationMixin):
             self.csrf_protect = csrf_protect
         super().__init__(*args, **kwargs)
 
-    @csrf_exempt
+    @method_decorator(csrf_exempt)
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponseBase:
         """
         A note on the CSRF protection process.
@@ -362,9 +352,8 @@ class BaseView(View, OrganizationMixin):
            check unconditionally again.
 
         """
-
         organization_slug = kwargs.get("organization_slug", None)
-        if request and is_using_customer_domain(request):
+        if request and is_using_customer_domain(request) and not subdomain_is_region(request):
             organization_slug = request.subdomain
         self.determine_active_organization(request, organization_slug)
 
@@ -375,12 +364,6 @@ class BaseView(View, OrganizationMixin):
             if response:
                 return response
 
-        if self.is_auth_required(request, *args, **kwargs):
-            return self.handle_auth_required(request, *args, **kwargs)
-
-        if self.is_sudo_required(request):
-            return self.handle_sudo_required(request, *args, **kwargs)
-
         if (
             is_using_customer_domain(request)
             and "organization_slug" in inspect.signature(self.convert_args).parameters
@@ -389,9 +372,23 @@ class BaseView(View, OrganizationMixin):
             # In customer domain contexts, we will need to pre-populate the organization_slug keyword argument.
             kwargs["organization_slug"] = organization_slug
 
+        if self.is_auth_required(request, *args, **kwargs):
+            return self.handle_auth_required(request, *args, **kwargs)
+
+        if self.is_sudo_required(request):
+            return self.handle_sudo_required(request, *args, **kwargs)
+
         args, kwargs = self.convert_args(request, *args, **kwargs)
 
-        request.access = self.get_access(request, *args, **kwargs)
+        try:
+            request.access = self.get_access(request, *args, **kwargs)
+        except DataSecrecyError:
+            return render_to_response(
+                "sentry/data-secrecy.html",
+                context={"organization_slug": organization_slug},
+                status=403,
+                request=request,
+            )
 
         if not self.has_permission(request, *args, **kwargs):
             return self.handle_permission_required(request, *args, **kwargs)
@@ -408,7 +405,7 @@ class BaseView(View, OrganizationMixin):
 
         return self.handle(request, *args, **kwargs)
 
-    def test_csrf(self, request: HttpRequest) -> HttpResponse:
+    def test_csrf(self, request: HttpRequest) -> HttpResponseBase | None:
         middleware = CsrfViewMiddleware(placeholder_get_response)
         return middleware.process_view(request, self.dispatch, (request,), {})
 
@@ -470,8 +467,7 @@ class BaseView(View, OrganizationMixin):
         return reverse("sentry-account-settings-security")
 
     def get_context_data(self, request: HttpRequest, **kwargs: Any) -> dict[str, Any]:
-        context = csrf(request)
-        return context
+        return csrf(request)
 
     def respond(
         self, template: str, context: dict[str, Any] | None = None, status: int = 200
@@ -482,15 +478,12 @@ class BaseView(View, OrganizationMixin):
 
         return render_to_response(template, default_context, self.request, status=status)
 
-    def redirect(self, url: str, headers: Mapping[str, str] | None = None) -> HttpResponse:
+    def redirect(self, url: str, headers: Mapping[str, str] | None = None) -> HttpResponseRedirect:
         res = HttpResponseRedirect(url)
         if headers:
             for k, v in headers.items():
                 res[k] = v
         return res
-
-    def get_team_list(self, user: User, organization: Organization) -> list[Team]:
-        return Team.objects.get_for_user(organization=organization, user=user, with_projects=True)
 
     def create_audit_entry(
         self, request: HttpRequest, transaction_id: int | None = None, **kwargs: Any
@@ -524,7 +517,13 @@ class AbstractOrganizationView(BaseView, abc.ABC):
         context["organization"] = organization
         return context
 
-    def has_permission(self, request: HttpRequest, organization: RpcOrganization | Organization, *args: Any, **kwargs: Any) -> bool:  # type: ignore[override]
+    def has_permission(
+        self,
+        request: HttpRequest,
+        organization: RpcOrganization | Organization,
+        *args: Any,
+        **kwargs: Any,
+    ) -> bool:
         if organization is None:
             return False
         if self.valid_sso_required:
@@ -562,15 +561,21 @@ class AbstractOrganizationView(BaseView, abc.ABC):
             # Require auth if we there is an organization associated with the slug that we just cannot access
             # for some reason.
             return (
-                organization_service.get_organization_by_slug(
-                    user_id=None, slug=organization_slug, only_visible=True
+                organization_service.check_organization_by_slug(
+                    slug=organization_slug, only_visible=True
                 )
                 is not None
             )
 
         return False
 
-    def handle_permission_required(self, request: HttpRequest, organization: Organization | RpcOrganization | None, *args: Any, **kwargs: Any) -> HttpResponse:  # type: ignore[override]
+    def handle_permission_required(
+        self,
+        request: HttpRequest,
+        organization: Organization | RpcOrganization | None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> HttpResponse:
         query_params = {
             "referrer": request.GET.get("referrer"),
         }
@@ -675,7 +680,7 @@ class ControlSiloOrganizationView(AbstractOrganizationView):
 class ProjectView(OrganizationView):
     """
     Any view acting on behalf of a project should inherit from this base and the
-    matching URL pattern must pass 'org_slug' as well as 'project_slug'.
+    matching URL pattern must pass 'org_slug' as well as 'project_id_or_slug'.
 
     Three keyword arguments are added to the resulting dispatch:
 
@@ -714,7 +719,7 @@ class ProjectView(OrganizationView):
             return False
         return True
 
-    def convert_args(self, request: HttpRequest, organization_slug: str, project_slug: str, *args: Any, **kwargs: Any) -> tuple[tuple[Any, ...], dict[str, Any]]:  # type: ignore[override]
+    def convert_args(self, request: HttpRequest, organization_slug: str, project_id_or_slug: int | str, *args: Any, **kwargs: Any) -> tuple[tuple[Any, ...], dict[str, Any]]:  # type: ignore[override]
         organization: Organization | None = None
         active_project: Project | None = None
         if self.active_organization:
@@ -722,7 +727,9 @@ class ProjectView(OrganizationView):
 
             if organization:
                 active_project = self.get_active_project(
-                    request=request, organization=organization, project_slug=project_slug
+                    request=request,
+                    organization=organization,
+                    project_id_or_slug=project_id_or_slug,
                 )
 
         kwargs["project"] = active_project
@@ -757,4 +764,11 @@ class AvatarPhotoView(View):
 
         res = HttpResponse(photo_file, content_type="image/png")
         res["Cache-Control"] = FOREVER_CACHE
+
+        origin = origin_from_request(request)
+        if origin is None or origin == "null":
+            res["Access-Control-Allow-Origin"] = "*"
+        else:
+            res["Access-Control-Allow-Origin"] = origin
+
         return res

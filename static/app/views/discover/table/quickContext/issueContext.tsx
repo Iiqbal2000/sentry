@@ -3,20 +3,16 @@ import styled from '@emotion/styled';
 
 import ActorAvatar from 'sentry/components/avatar/actorAvatar';
 import Count from 'sentry/components/count';
-import {QuickContextCommitRow} from 'sentry/components/discover/quickContextCommitRow';
-import {EventCause, StyledPanel} from 'sentry/components/events/eventCause';
-import {CauseHeader, DataSection} from 'sentry/components/events/styles';
 import {getAssignedToDisplayName} from 'sentry/components/group/assignedTo';
-import Panel from 'sentry/components/panels/panel';
 import {IconWrapper} from 'sentry/components/sidebarSection';
-import * as SidebarSection from 'sentry/components/sidebarSection';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconCheckmark, IconMute, IconNot, IconUser} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Event, Group} from 'sentry/types';
+import type {Group} from 'sentry/types/group';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import {useApiQuery} from 'sentry/utils/queryClient';
+import {makeFetchGroupQueryKey} from 'sentry/views/issueDetails/useGroup';
 
 import {NoContext} from './quickContextWrapper';
 import {
@@ -27,7 +23,8 @@ import {
   ContextTitle,
   Wrapper,
 } from './styles';
-import {BaseContextProps, ContextType, tenSecondInMs} from './utils';
+import type {BaseContextProps} from './utils';
+import {ContextType} from './utils';
 
 function IssueContext(props: BaseContextProps) {
   const {dataRow, organization} = props;
@@ -40,33 +37,20 @@ function IssueContext(props: BaseContextProps) {
   }, [organization]);
 
   const {
-    isLoading: issueLoading,
+    isPending: issueLoading,
     isError: issueError,
     data: issue,
   } = useApiQuery<Group>(
-    [
-      `/issues/${dataRow['issue.id']}/`,
-      {
-        query: {
-          collapse: 'release',
-          expand: 'inbox',
-        },
-      },
-    ],
+    makeFetchGroupQueryKey({
+      groupId: dataRow['issue.id'],
+      organizationSlug: organization.slug,
+      // The link to issue details doesn't seem to currently pass selected environments
+      environments: [],
+    }),
     {
-      staleTime: tenSecondInMs,
+      staleTime: 30_000,
     }
   );
-
-  // NOTE: Suspect commits are generated from the first event of an issue.
-  // Therefore, all events for an issue have the same suspect commits.
-  const {
-    isLoading: eventLoading,
-    isError: eventError,
-    data: event,
-  } = useApiQuery<Event>([`/issues/${dataRow['issue.id']}/events/oldest/`], {
-    staleTime: tenSecondInMs,
-  });
 
   const title = issue?.title;
   const renderTitle = () =>
@@ -147,28 +131,13 @@ function IssueContext(props: BaseContextProps) {
               <IconUser size="md" />
             </StyledIconWrapper>
           )}
-          {getAssignedToDisplayName(issue)}
+          {getAssignedToDisplayName(issue) ?? t('No one')}
         </AssignedToBody>
       </IssueContextContainer>
     );
 
-  const renderSuspectCommits = () =>
-    event &&
-    event.eventID &&
-    issue && (
-      <SuspectCommitsContainer data-test-id="quick-context-suspect-commits-container">
-        <EventCause
-          project={issue.project}
-          eventId={event.eventID}
-          commitRow={QuickContextCommitRow}
-        />
-      </SuspectCommitsContainer>
-    );
-
-  const isLoading = issueLoading || eventLoading;
-  const isError = issueError || eventError;
-  if (isLoading || isError) {
-    return <NoContext isLoading={isLoading} />;
+  if (issueLoading || issueError) {
+    return <NoContext isLoading={issueLoading} />;
   }
 
   return (
@@ -176,29 +145,9 @@ function IssueContext(props: BaseContextProps) {
       {renderTitle()}
       {renderStatusAndCounts()}
       {renderAssignee()}
-      {renderSuspectCommits()}
     </Wrapper>
   );
 }
-
-const SuspectCommitsContainer = styled(ContextContainer)`
-  ${SidebarSection.Wrap}, ${Panel}, h6 {
-    margin: 0;
-  }
-
-  ${StyledPanel} {
-    border: none;
-    box-shadow: none;
-  }
-
-  ${DataSection} {
-    padding: 0;
-  }
-
-  ${CauseHeader} {
-    margin: ${space(2)} 0 ${space(0.75)};
-  }
-`;
 
 const IssueTitleBody = styled(ContextBody)`
   margin: 0;

@@ -1,6 +1,6 @@
-import {mat3} from 'gl-matrix';
+import type {mat3} from 'gl-matrix';
 
-import {Rect} from 'sentry/utils/profiling/speedscope';
+import type {Rect} from 'sentry/utils/profiling/speedscope';
 
 import {getContext} from '../gl/utils';
 
@@ -25,7 +25,7 @@ class SelectedFrameRenderer {
     context.lineWidth = style.BORDER_WIDTH;
 
     for (let i = 0; i < frames.length; i++) {
-      const frameInPhysicalSpace = frames[i].transformRect(configViewToPhysicalSpace);
+      const frameInPhysicalSpace = frames[i]!.transformRect(configViewToPhysicalSpace);
 
       context.beginPath();
 

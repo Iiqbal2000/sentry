@@ -19,8 +19,7 @@ from sentry.models.debugfile import ProjectDebugFile
 from sentry.models.files.file import File
 from sentry.testutils.cases import TransactionTestCase
 from sentry.testutils.factories import get_fixture_path
-from sentry.testutils.helpers.datetime import before_now, iso_format
-from sentry.testutils.helpers.options import override_options
+from sentry.testutils.helpers.datetime import before_now
 from sentry.testutils.relay import RelayStoreHelper
 from sentry.testutils.skips import requires_kafka, requires_symbolicator
 from sentry.utils import json
@@ -74,7 +73,7 @@ REAL_RESOLVING_EVENT_DATA = {
             }
         ]
     },
-    "timestamp": iso_format(before_now(seconds=1)),
+    "timestamp": before_now(seconds=1).isoformat(),
 }
 
 
@@ -91,10 +90,11 @@ class SymbolicatorResolvingIntegrationTest(RelayStoreHelper, TransactionTestCase
     @pytest.fixture(autouse=True)
     def initialize(self, live_server):
         self.project.update_option("sentry:builtin_symbol_sources", [])
-        self.min_ago = iso_format(before_now(minutes=1))
+        self.min_ago = before_now(minutes=1).isoformat()
 
-        with patch("sentry.auth.system.is_internal_ip", return_value=True), self.options(
-            {"system.url-prefix": live_server.url}
+        with (
+            patch("sentry.auth.system.is_internal_ip", return_value=True),
+            self.options({"system.url-prefix": live_server.url}),
         ):
             # Run test case
             yield
@@ -106,8 +106,8 @@ class SymbolicatorResolvingIntegrationTest(RelayStoreHelper, TransactionTestCase
         url = reverse(
             "sentry-api-0-dsym-files",
             kwargs={
-                "organization_slug": self.project.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.project.organization.slug,
+                "project_id_or_slug": self.project.slug,
             },
         )
 
@@ -190,7 +190,7 @@ class SymbolicatorResolvingIntegrationTest(RelayStoreHelper, TransactionTestCase
                 "value": "Fatal Error: EXCEPTION_ACCESS_VIOLATION_WRITE",
             },
             "platform": "native",
-            "timestamp": iso_format(before_now(seconds=1)),
+            "timestamp": before_now(seconds=1).isoformat(),
         }
 
         event = self.post_and_retrieve_event(event_data)
@@ -267,7 +267,7 @@ class SymbolicatorResolvingIntegrationTest(RelayStoreHelper, TransactionTestCase
                 "value": "Fatal Error: EXCEPTION_ACCESS_VIOLATION_WRITE",
             },
             "platform": "native",
-            "timestamp": iso_format(before_now(seconds=1)),
+            "timestamp": before_now(seconds=1).isoformat(),
         }
 
         event = self.post_and_retrieve_event(event_data)
@@ -398,12 +398,7 @@ class SymbolicatorResolvingIntegrationTest(RelayStoreHelper, TransactionTestCase
             },
         }
 
-        with override_options(
-            {
-                "symbolicator.sourcemaps-processing-sample-rate": 1.0,
-            }
-        ):
-            event = self.post_and_retrieve_event(data)
+        event = self.post_and_retrieve_event(data)
 
         exception = event.interfaces["exception"]
         frames = exception.values[0].stacktrace.frames

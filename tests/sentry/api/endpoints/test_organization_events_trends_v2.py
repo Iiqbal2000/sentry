@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import Any, Dict, List, Union
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -7,14 +7,11 @@ from django.urls import reverse
 
 from sentry.snuba.metrics.naming_layer import TransactionMRI
 from sentry.testutils.cases import MetricsAPIBaseTestCase
-from sentry.testutils.helpers.datetime import freeze_time, iso_format
-from sentry.testutils.helpers.features import with_feature
-from sentry.testutils.silo import region_silo_test
+from sentry.testutils.helpers.datetime import freeze_time
 
 pytestmark = pytest.mark.sentry_metrics
 
 
-@region_silo_test(stable=True)
 @freeze_time(MetricsAPIBaseTestCase.MOCK_DATETIME)
 class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
     def setUp(self):
@@ -63,8 +60,8 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
             self.url,
             format="json",
             data={
-                "end": iso_format(self.now - timedelta(minutes=1)),
-                "start": iso_format(self.now - timedelta(hours=4)),
+                "end": self.now - timedelta(minutes=1),
+                "start": self.now - timedelta(hours=4),
                 "field": ["project", "transaction"],
                 "query": "event.type:transaction",
             },
@@ -78,8 +75,8 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
                 self.url,
                 format="json",
                 data={
-                    "end": iso_format(self.now - timedelta(minutes=1)),
-                    "start": iso_format(self.now - timedelta(hours=4)),
+                    "end": self.now - timedelta(minutes=1),
+                    "start": self.now - timedelta(hours=4),
                     "interval": "1h",
                     "field": ["project", "transaction"],
                     "query": "",
@@ -93,7 +90,7 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
     def test_simple_with_trends(self, mock_detect_breakpoints):
         mock_trends_result = [
             {
-                "project": self.project.slug,
+                "project": self.project.id,
                 "transaction": "foo",
                 "change": "regression",
                 "trend_difference": -15,
@@ -107,8 +104,8 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
                 self.url,
                 format="json",
                 data={
-                    "end": iso_format(self.now),
-                    "start": iso_format(self.now - timedelta(days=1)),
+                    "end": self.now,
+                    "start": self.now - timedelta(days=1),
                     "interval": "1h",
                     "field": ["project", "transaction"],
                     "query": "event.type:transaction",
@@ -125,11 +122,11 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
         assert events["data"] == mock_trends_result
 
         assert len(result_stats) > 0
-        assert len(result_stats.get(f"{self.project.slug},foo", [])) > 0
+        assert len(result_stats.get(f"{self.project.id},foo", [])) > 0
 
     @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
     def test_simple_with_no_trends(self, mock_detect_breakpoints):
-        mock_trends_result: List[Union[Dict[str, Any], None]] = []
+        mock_trends_result: list[dict[str, Any] | None] = []
         mock_detect_breakpoints.return_value = {"data": mock_trends_result}
 
         with self.feature(self.features):
@@ -137,8 +134,8 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
                 self.url,
                 format="json",
                 data={
-                    "end": iso_format(self.now),
-                    "start": iso_format(self.now - timedelta(days=1)),
+                    "end": self.now,
+                    "start": self.now - timedelta(days=1),
                     "interval": "1h",
                     "field": ["project", "transaction"],
                     "query": "event.type:transaction",
@@ -158,7 +155,7 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
 
     @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
     def test_simple_with_transaction_query(self, mock_detect_breakpoints):
-        mock_trends_result: List[Union[Dict[str, Any], None]] = []
+        mock_trends_result: list[dict[str, Any] | None] = []
         mock_detect_breakpoints.return_value = {"data": mock_trends_result}
 
         self.store_performance_metric(
@@ -175,8 +172,8 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
                 self.url,
                 format="json",
                 data={
-                    "end": iso_format(self.now),
-                    "start": iso_format(self.now - timedelta(days=1)),
+                    "end": self.now,
+                    "start": self.now - timedelta(days=1),
                     "interval": "1h",
                     "field": ["project", "transaction"],
                     "query": "event.type:transaction transaction:foo",
@@ -185,8 +182,8 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
             )
 
         trends_call_args_data = mock_detect_breakpoints.call_args[0][0]["data"]
-        assert len(trends_call_args_data.get(f"{self.project.slug},foo")) > 0
-        assert len(trends_call_args_data.get(f"{self.project.slug},bar", [])) == 0
+        assert len(trends_call_args_data.get(f"{self.project.id},foo")) > 0
+        assert len(trends_call_args_data.get(f"{self.project.id},bar", [])) == 0
 
         assert response.status_code == 200, response.content
 
@@ -194,7 +191,7 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
     def test_simple_with_trends_p75(self, mock_detect_breakpoints):
         mock_trends_result = [
             {
-                "project": self.project.slug,
+                "project": self.project.id,
                 "transaction": "foo",
                 "change": "regression",
                 "trend_difference": -15,
@@ -208,8 +205,8 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
                 self.url,
                 format="json",
                 data={
-                    "end": iso_format(self.now),
-                    "start": iso_format(self.now - timedelta(days=1)),
+                    "end": self.now,
+                    "start": self.now - timedelta(days=1),
                     "interval": "1h",
                     "field": ["project", "transaction"],
                     "query": "event.type:transaction",
@@ -227,13 +224,13 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
         assert events["data"] == mock_trends_result
 
         assert len(result_stats) > 0
-        assert len(result_stats.get(f"{self.project.slug},foo", [])) > 0
+        assert len(result_stats.get(f"{self.project.id},foo", [])) > 0
 
     @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
     def test_simple_with_trends_p95(self, mock_detect_breakpoints):
         mock_trends_result = [
             {
-                "project": self.project.slug,
+                "project": self.project.id,
                 "transaction": "foo",
                 "change": "regression",
                 "trend_difference": -15,
@@ -247,47 +244,8 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
                 self.url,
                 format="json",
                 data={
-                    "end": iso_format(self.now),
-                    "start": iso_format(self.now - timedelta(days=1)),
-                    "interval": "1h",
-                    "field": ["project", "transaction"],
-                    "query": "event.type:transaction",
-                    "project": self.project.id,
-                    "trendFunction": "p95(transaction.duration)",
-                },
-            )
-
-        assert response.status_code == 200, response.content
-
-        events = response.data["events"]
-        result_stats = response.data["stats"]
-
-        assert len(events["data"]) == 1
-        assert events["data"] == mock_trends_result
-
-        assert len(result_stats) > 0
-        assert len(result_stats.get(f"{self.project.slug},foo", [])) > 0
-
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
-    def test_simple_with_trends_p95_with_project_id(self, mock_detect_breakpoints):
-        mock_trends_result = [
-            {
-                "project": self.project.id,
-                "transaction": "foo",
-                "change": "regression",
-                "trend_difference": -15,
-                "trend_percentage": 0.88,
-            }
-        ]
-        mock_detect_breakpoints.return_value = {"data": mock_trends_result}
-
-        with self.feature({**self.features, "organizations:performance-trendsv2-dev-only": True}):
-            response = self.client.get(
-                self.url,
-                format="json",
-                data={
-                    "end": iso_format(self.now),
-                    "start": iso_format(self.now - timedelta(days=1)),
+                    "end": self.now,
+                    "start": self.now - timedelta(days=1),
                     "interval": "1h",
                     "field": ["project", "transaction"],
                     "query": "event.type:transaction",
@@ -324,8 +282,8 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
                 self.url,
                 format="json",
                 data={
-                    "end": iso_format(self.now),
-                    "start": iso_format(self.now - timedelta(days=1)),
+                    "end": self.now,
+                    "start": self.now - timedelta(days=1),
                     "interval": "1h",
                     "field": ["project", "transaction"],
                     "query": "event.type:transaction",
@@ -338,281 +296,141 @@ class OrganizationEventsTrendsStatsV2EndpointTest(MetricsAPIBaseTestCase):
         assert response.status_code == 200, response.content
 
         trends_call_args_data = mock_detect_breakpoints.call_args[0][0]["data"]
-        assert len(trends_call_args_data.get(f"{self.project.slug},foo")) > 0
+        assert len(trends_call_args_data.get(f"{self.project.id},foo")) > 0
         # checks that second transaction wasn't sent to the trends microservice
-        assert len(trends_call_args_data.get(f"{self.project.slug},bar", [])) == 0
+        assert len(trends_call_args_data.get(f"{self.project.id},bar", [])) == 0
 
-    @with_feature(
-        {"organizations:issue-platform": True, "organizations:performance-trends-issues": False}
-    )
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.send_regressions_to_plaform")
     @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
-    def test_skipped_issue_creation_no_feature_flag(
-        self, mock_detect_breakpoints, mock_send_regressions_to_plaform
-    ):
-        mock_trends_result = [
-            {
-                "project": self.project.slug,
-                "transaction": "foo",
-                "change": "regression",
-                "trend_percentage": 2.0,
-            }
-        ]
-        mock_detect_breakpoints.return_value = {"data": mock_trends_result}
+    def test_two_projects_same_transaction(self, mock_detect_breakpoints):
+        project1 = self.create_project(organization=self.org)
+        project2 = self.create_project(organization=self.org)
 
-        with self.feature(self.features):
+        self.store_performance_metric(
+            name=TransactionMRI.DURATION.value,
+            tags={"transaction": "bar"},
+            org_id=self.org.id,
+            project_id=project1.id,
+            value=2,
+            hours_before_now=2,
+        )
+        self.store_performance_metric(
+            name=TransactionMRI.DURATION.value,
+            tags={"transaction": "bar"},
+            org_id=self.org.id,
+            project_id=project2.id,
+            value=2,
+            hours_before_now=2,
+        )
+
+        with self.feature([*self.features, "organizations:global-views"]):
             response = self.client.get(
                 self.url,
                 format="json",
                 data={
-                    "statsPeriod": "14d",
+                    "end": self.now,
+                    "start": self.now - timedelta(days=1),
                     "interval": "1h",
                     "field": ["project", "transaction"],
                     "query": "event.type:transaction",
-                    "project": self.project.id,
+                    "project": [project1.id, project2.id],
                     "trendFunction": "p95(transaction.duration)",
+                    "topEvents": 2,
                 },
             )
 
         assert response.status_code == 200, response.content
-        assert len(mock_send_regressions_to_plaform.mock_calls) == 0
 
-    @with_feature(
-        {"organizations:issue-platform": True, "organizations:performance-trends-issues": True}
-    )
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.send_regressions_to_plaform")
+        trends_call_args_data = mock_detect_breakpoints.call_args[0][0]["data"]
+
+        assert len(trends_call_args_data.get(f"{project1.id},bar")) > 0
+        assert len(trends_call_args_data.get(f"{project2.id},bar")) > 0
+
     @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
-    def test_skipped_issue_creation_wrong_stats_period(
-        self, mock_detect_breakpoints, mock_send_regressions_to_plaform
-    ):
-        mock_trends_result = [
-            {
-                "project": self.project.slug,
-                "transaction": "foo",
-                "change": "regression",
-                "trend_percentage": 2.0,
-            }
-        ]
-        mock_detect_breakpoints.return_value = {"data": mock_trends_result}
+    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.EVENTS_PER_QUERY", 2)
+    def test_two_projects_same_transaction_split_queries(self, mock_detect_breakpoints):
+        project1 = self.create_project(organization=self.org)
+        project2 = self.create_project(organization=self.org)
 
-        with self.feature(self.features):
+        # force these 2 transactions from different projects
+        # to fall into the FIRST bucket when querying
+        for i in range(2):
+            self.store_performance_metric(
+                name=TransactionMRI.DURATION.value,
+                tags={"transaction": "foo bar*"},
+                org_id=self.org.id,
+                project_id=project1.id,
+                value=2,
+                hours_before_now=2,
+            )
+            self.store_performance_metric(
+                name=TransactionMRI.DURATION.value,
+                tags={"transaction": 'foo bar\\\\"'},
+                org_id=self.org.id,
+                project_id=project2.id,
+                value=2,
+                hours_before_now=2,
+            )
+        # force these 2 transactions from different projects
+        # to fall into the SECOND bucket when querying
+        self.store_performance_metric(
+            name=TransactionMRI.DURATION.value,
+            tags={"transaction": "foo bar*"},
+            org_id=self.org.id,
+            project_id=project2.id,
+            value=2,
+            hours_before_now=2,
+        )
+        self.store_performance_metric(
+            name=TransactionMRI.DURATION.value,
+            tags={"transaction": 'foo bar\\\\"'},
+            org_id=self.org.id,
+            project_id=project1.id,
+            value=2,
+            hours_before_now=2,
+        )
+
+        with self.feature([*self.features, "organizations:global-views"]):
             response = self.client.get(
                 self.url,
                 format="json",
                 data={
-                    "statsPeriod": "30d",
+                    "end": self.now,
+                    "start": self.now - timedelta(days=1),
                     "interval": "1h",
                     "field": ["project", "transaction"],
                     "query": "event.type:transaction",
-                    "project": self.project.id,
+                    "project": [project1.id, project2.id],
                     "trendFunction": "p95(transaction.duration)",
+                    "topEvents": 4,
+                    "statsPeriod": "3h",
                 },
             )
 
         assert response.status_code == 200, response.content
-        assert len(mock_send_regressions_to_plaform.mock_calls) == 0
 
-    @with_feature(
-        {"organizations:issue-platform": True, "organizations:performance-trends-issues": True}
-    )
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.send_regressions_to_plaform")
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
-    def test_skipped_issue_creation_too_small_trend_percentage(
-        self, mock_detect_breakpoints, mock_send_regressions_to_plaform
-    ):
-        mock_trends_result = [
-            {
-                "project": self.project.slug,
-                "transaction": "foo",
-                "change": "regression",
-                # trend percentage change is 20%
-                "trend_percentage": 1.2,
-            }
-        ]
-        mock_detect_breakpoints.return_value = {"data": mock_trends_result}
+        trends_call_args_data_1 = mock_detect_breakpoints.call_args_list[0][0][0]["data"]
+        trends_call_args_data_2 = mock_detect_breakpoints.call_args_list[1][0][0]["data"]
 
-        with self.feature(self.features):
-            response = self.client.get(
-                self.url,
-                format="json",
-                data={
-                    "statsPeriod": "14d",
-                    "interval": "1h",
-                    "field": ["project", "transaction"],
-                    "query": "event.type:transaction",
-                    "project": self.project.id,
-                    "trendFunction": "p95(transaction.duration)",
-                },
-            )
+        # the order the calls happen in is non-deterministic because of the async
+        # nature making making the requests in a thread pool so check that 1 of
+        # the 2 possibilities happened
+        assert (
+            len(trends_call_args_data_1.get(f"{project1.id},foo bar*", {})) > 0
+            and len(trends_call_args_data_1.get(f'{project2.id},foo bar\\\\"', {})) > 0
+            and len(trends_call_args_data_2.get(f'{project1.id},foo bar\\\\"', {})) > 0
+            and len(trends_call_args_data_2.get(f"{project2.id},foo bar*", {})) > 0
+        ) or (
+            len(trends_call_args_data_1.get(f'{project1.id},foo bar\\\\"', {})) > 0
+            and len(trends_call_args_data_1.get(f"{project2.id},foo bar*", {})) > 0
+            and len(trends_call_args_data_2.get(f"{project1.id},foo bar*", {})) > 0
+            and len(trends_call_args_data_2.get(f'{project2.id},foo bar\\\\"', {})) > 0
+        )
 
-        assert response.status_code == 200, response.content
-        assert len(mock_send_regressions_to_plaform.mock_calls) == 0
-
-    @with_feature(
-        {"organizations:issue-platform": True, "organizations:performance-trends-issues": True}
-    )
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.send_regressions_to_plaform")
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
-    def test_skipped_issue_creation_no_regression(
-        self, mock_detect_breakpoints, mock_send_regressions_to_plaform
-    ):
-        mock_trends_result = [
-            {
-                "project": self.project.slug,
-                "transaction": "foo",
-                "change": "improvement",
-                "trend_percentage": 2.0,
-            }
-        ]
-        mock_detect_breakpoints.return_value = {"data": mock_trends_result}
-
-        with self.feature(self.features):
-            response = self.client.get(
-                self.url,
-                format="json",
-                data={
-                    "statsPeriod": "30d",
-                    "interval": "1h",
-                    "field": ["project", "transaction"],
-                    "query": "event.type:transaction",
-                    "project": self.project.id,
-                    "trendFunction": "p95(transaction.duration)",
-                },
-            )
-
-        assert response.status_code == 200, response.content
-        assert len(mock_send_regressions_to_plaform.mock_calls) == 0
-
-    @with_feature(
-        {"organizations:issue-platform": True, "organizations:performance-trends-issues": True}
-    )
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.send_regressions_to_plaform")
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
-    def test_skipped_issue_creation_wrong_metric(
-        self, mock_detect_breakpoints, mock_send_regressions_to_plaform
-    ):
-        mock_trends_result = [
-            {
-                "project": self.project.slug,
-                "transaction": "foo",
-                "change": "regression",
-                "trend_percentage": 2.0,
-            }
-        ]
-        mock_detect_breakpoints.return_value = {"data": mock_trends_result}
-
-        with self.feature(self.features):
-            response = self.client.get(
-                self.url,
-                format="json",
-                data={
-                    "statsPeriod": "30d",
-                    "interval": "1h",
-                    "field": ["project", "transaction"],
-                    "query": "event.type:transaction",
-                    "project": self.project.id,
-                    "trendFunction": "p75(transaction.duration)",
-                },
-            )
-
-        assert response.status_code == 200, response.content
-        assert len(mock_send_regressions_to_plaform.mock_calls) == 0
-
-    @with_feature(
-        {"organizations:issue-platform": True, "organizations:performance-trends-issues": True}
-    )
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.send_regressions_to_plaform")
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
-    def test_issue_creation_simple(self, mock_detect_breakpoints, send_regressions_to_plaform):
-        mock_trends_result = [
-            {
-                "project": self.project.slug,
-                "transaction": "foo",
-                "change": "regression",
-                "trend_percentage": 2.0,
-                "aggregate_range_1": 14,
-                "aggregate_range_2": 28,
-            }
-        ]
-        mock_detect_breakpoints.return_value = {"data": mock_trends_result}
-
-        with self.feature(self.features):
-            response = self.client.get(
-                self.url,
-                format="json",
-                data={
-                    "statsPeriod": "14d",
-                    "interval": "1h",
-                    "field": ["project", "transaction"],
-                    "query": "event.type:transaction",
-                    "project": self.project.id,
-                    "trendFunction": "p95(transaction.duration)",
-                },
-            )
-
-        assert response.status_code == 200, response.content
-        assert len(send_regressions_to_plaform.mock_calls) == 1
-
-        regressions, automatic_detection = send_regressions_to_plaform.mock_calls[0].args
-
-        # regressions were found via the trends endpoint
-        assert automatic_detection is False
-
-        for regression in regressions:
-            assert regression == {
-                "project": self.project.id,
-                "transaction": "foo",
-                "change": "regression",
-                "trend_percentage": 2.0,
-                "aggregate_range_1": 14,
-                "aggregate_range_2": 28,
-            }
-
-    @with_feature(
-        {
-            "organizations:issue-platform": True,
-            "organizations:performance-trends-issues": True,
-            "organizations:performance-trendsv2-dev-only": True,
-        }
-    )
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.send_regressions_to_plaform")
-    @mock.patch("sentry.api.endpoints.organization_events_trends_v2.detect_breakpoints")
-    def test_issue_creation_simple_with_project_id(
-        self, mock_detect_breakpoints, send_regressions_to_plaform
-    ):
-        mock_trends_result = [
-            {
-                "project": self.project.id,
-                "transaction": "foo",
-                "change": "regression",
-                "trend_percentage": 2.0,
-                "aggregate_range_1": 14,
-                "aggregate_range_2": 28,
-            }
-        ]
-        mock_detect_breakpoints.return_value = {"data": mock_trends_result}
-
-        with self.feature(self.features):
-            response = self.client.get(
-                self.url,
-                format="json",
-                data={
-                    "statsPeriod": "14d",
-                    "interval": "1h",
-                    "field": ["project", "transaction"],
-                    "query": "event.type:transaction",
-                    "project": self.project.id,
-                    "trendFunction": "p95(transaction.duration)",
-                },
-            )
-
-        assert response.status_code == 200, response.content
-        assert len(send_regressions_to_plaform.mock_calls) == 1
-
-        regressions, automatic_detection = send_regressions_to_plaform.mock_calls[0].args
-
-        # regressions were found via the trends endpoint
-        assert automatic_detection is False
-
-        for regression in regressions:
-            assert regression == regression
+        for trends_call_args_data in [trends_call_args_data_1, trends_call_args_data_2]:
+            for k, v in trends_call_args_data.items():
+                count = 0
+                for entry in v["data"]:
+                    # each entry should have exactly 1 data point
+                    assert len(entry[1]) == 1
+                    count += entry[1][0]["count"]
+                assert count > 0, k  # make sure the timeseries has some data

@@ -1,6 +1,6 @@
-import * as PropTypes from 'prop-types';
-import {Organization} from 'sentry-fixture/organization';
-import {ProjectKeys} from 'sentry-fixture/projectKeys';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {ProjectKeysFixture} from 'sentry-fixture/projectKeys';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {
@@ -10,36 +10,51 @@ import {
   userEvent,
 } from 'sentry-test/reactTestingLibrary';
 
-import {Organization as TOrganization, Project, ProjectKey} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project, ProjectKey} from 'sentry/types/project';
 import ProjectKeyDetails from 'sentry/views/settings/project/projectKeys/details';
 
 describe('ProjectKeyDetails', function () {
   const {routerProps} = initializeOrg();
 
-  let org: TOrganization;
+  let org: Organization;
   let project: Project;
   let deleteMock: jest.Mock;
   let statsMock: jest.Mock;
   let putMock: jest.Mock;
   let projectKeys: ProjectKey[];
 
+  function renderProjectKeyDetails() {
+    render(
+      <ProjectKeyDetails
+        {...routerProps}
+        organization={org}
+        project={project}
+        params={{
+          keyId: projectKeys[0]!.id,
+          projectId: project.slug,
+        }}
+      />
+    );
+  }
+
   beforeEach(function () {
-    org = Organization();
-    project = TestStubs.Project();
-    projectKeys = ProjectKeys();
+    org = OrganizationFixture();
+    project = ProjectFixture();
+    projectKeys = ProjectKeysFixture();
 
     MockApiClient.clearMockResponses();
     MockApiClient.addMockResponse({
-      url: `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0].id}/`,
+      url: `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0]!.id}/`,
       method: 'GET',
       body: projectKeys[0],
     });
     putMock = MockApiClient.addMockResponse({
-      url: `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0].id}/`,
+      url: `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0]!.id}/`,
       method: 'PUT',
     });
     statsMock = MockApiClient.addMockResponse({
-      url: `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0].id}/stats/`,
+      url: `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0]!.id}/stats/`,
       method: 'GET',
       body: [
         {filtered: 0, accepted: 0, total: 0, ts: 1517270400, dropped: 0},
@@ -76,47 +91,25 @@ describe('ProjectKeyDetails', function () {
       ],
     });
     deleteMock = MockApiClient.addMockResponse({
-      url: `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0].id}/`,
+      url: `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0]!.id}/`,
       method: 'DELETE',
     });
-
-    const context = {
-      context: {
-        project: TestStubs.Project(),
-      },
-      childContextTypes: {
-        project: PropTypes.object,
-      },
-    };
-
-    render(
-      <ProjectKeyDetails
-        {...routerProps}
-        organization={org}
-        project={project}
-        params={{
-          keyId: projectKeys[0].id,
-          projectId: project.slug,
-        }}
-      />,
-      {
-        context,
-      }
-    );
   });
 
-  it('has stats box', function () {
-    expect(screen.getByText('Key Details')).toBeInTheDocument();
+  it('has stats box', async function () {
+    renderProjectKeyDetails();
+    expect(await screen.findByText('Key Details')).toBeInTheDocument();
     expect(statsMock).toHaveBeenCalled();
   });
 
   it('changes name', async function () {
-    await userEvent.clear(screen.getByRole('textbox', {name: 'Name'}));
-    await userEvent.type(screen.getByRole('textbox', {name: 'Name'}), 'New Name');
+    renderProjectKeyDetails();
+    await userEvent.clear(await screen.findByRole('textbox', {name: 'Name'}));
+    await userEvent.type(await screen.findByRole('textbox', {name: 'Name'}), 'New Name');
     await userEvent.tab();
 
     expect(putMock).toHaveBeenCalledWith(
-      `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0].id}/`,
+      `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0]!.id}/`,
       expect.objectContaining({
         data: {
           name: 'New Name',
@@ -126,19 +119,20 @@ describe('ProjectKeyDetails', function () {
   });
 
   it('disable and enables key', async function () {
-    await userEvent.click(screen.getByRole('checkbox', {name: 'Enabled'}));
+    renderProjectKeyDetails();
+    await userEvent.click(await screen.findByRole('checkbox', {name: 'Enabled'}));
 
     expect(putMock).toHaveBeenCalledWith(
-      `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0].id}/`,
+      `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0]!.id}/`,
       expect.objectContaining({
         data: {isActive: false},
       })
     );
 
-    await userEvent.click(screen.getByRole('checkbox', {name: 'Enabled'}));
+    await userEvent.click(await screen.findByRole('checkbox', {name: 'Enabled'}));
 
     expect(putMock).toHaveBeenCalledWith(
-      `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0].id}/`,
+      `/projects/${org.slug}/${project.slug}/keys/${projectKeys[0]!.id}/`,
       expect.objectContaining({
         data: {isActive: false},
       })
@@ -146,11 +140,10 @@ describe('ProjectKeyDetails', function () {
   });
 
   it('revokes a key', async function () {
-    await userEvent.click(screen.getByRole('button', {name: 'Revoke Key'}));
-
+    renderProjectKeyDetails();
+    await userEvent.click(await screen.findByRole('button', {name: 'Revoke Key'}));
     renderGlobalModal();
-    await userEvent.click(screen.getByTestId('confirm-button'));
-
+    await userEvent.click(await screen.findByTestId('confirm-button'));
     expect(deleteMock).toHaveBeenCalled();
   });
 });

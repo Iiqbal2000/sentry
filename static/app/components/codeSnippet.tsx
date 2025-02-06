@@ -5,61 +5,101 @@ import Prism from 'prismjs';
 import {Button} from 'sentry/components/button';
 import {IconCopy} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {prismStyles} from 'sentry/styles/prism';
 import {space} from 'sentry/styles/space';
-import {loadPrismLanguage} from 'sentry/utils/loadPrismLanguage';
+import {loadPrismLanguage} from 'sentry/utils/prism';
 
 interface CodeSnippetProps {
   children: string;
-  language: string;
   className?: string;
   dark?: boolean;
+  ['data-render-inline']?: boolean;
   /**
    * Makes the text of the element and its sub-elements not selectable.
-   * Userful when loading parts of a code snippet, and
+   * Useful when loading parts of a code snippet, and
    * we wish to avoid users copying them manually.
    */
   disableUserSelection?: boolean;
+  /**
+   * Name of the file to be displayed at the top of the code snippet.
+   */
   filename?: string;
+  /**
+   * Hides the copy button in the top right.
+   */
   hideCopyButton?: boolean;
+  /**
+   * Adds an icon to the top right, next to the copy button.
+   */
+  icon?: React.ReactNode;
+  /**
+   * Controls whether the snippet wrapper has rounded corners.
+   */
+  isRounded?: boolean;
+  language?: string;
+  /**
+   * Line numbers of the code that will be visually highlighted.
+   */
+  linesToHighlight?: number[];
   /**
    * Fires after the code snippet is highlighted and all DOM nodes are available
    * @param element The root element of the code snippet
    */
   onAfterHighlight?: (element: HTMLElement) => void;
+  /**
+   * Fires with the user presses the copy button.
+   */
   onCopy?: (copiedCode: string) => void;
   /**
-   * Fired when the user selects and copies code snippet manually
+   * Fires when the user selects and copies code snippet manually
    */
   onSelectAndCopy?: () => void;
+  /**
+   * Fires when the user switches tabs.
+   */
   onTabClick?: (tab: string) => void;
   selectedTab?: string;
-  tabs?: {
+  tabs?: Array<{
     label: string;
     value: string;
-  }[];
+  }>;
 }
 
 export function CodeSnippet({
   children,
-  language,
+  className,
   dark,
+  'data-render-inline': dataRenderInline,
+  disableUserSelection,
   filename,
   hideCopyButton,
-  onCopy,
-  className,
-  onSelectAndCopy,
-  disableUserSelection,
+  language,
+  linesToHighlight,
+  icon,
+  isRounded = true,
   onAfterHighlight,
-  selectedTab,
+  onCopy,
+  onSelectAndCopy,
   onTabClick,
+  selectedTab,
   tabs,
 }: CodeSnippetProps) {
   const ref = useRef<HTMLModElement | null>(null);
 
+  // https://prismjs.com/plugins/line-highlight/
+  useEffect(() => {
+    if (linesToHighlight) {
+      // @ts-expect-error TS(7016): Could not find a declaration file for module 'pris... Remove this comment to see the full error message
+      import('prismjs/plugins/line-highlight/prism-line-highlight');
+    }
+  }, [linesToHighlight]);
+
   useEffect(() => {
     const element = ref.current;
     if (!element) {
+      return;
+    }
+
+    if (!language) {
       return;
     }
 
@@ -95,11 +135,15 @@ export function CodeSnippet({
     tooltipState === 'copy'
       ? t('Copy')
       : tooltipState === 'copied'
-      ? t('Copied')
-      : t('Unable to copy');
+        ? t('Copied')
+        : t('Unable to copy');
 
   return (
-    <Wrapper className={`${dark ? 'prism-dark ' : ''}${className ?? ''}`}>
+    <Wrapper
+      isRounded={isRounded}
+      className={`${dark ? 'prism-dark ' : ''}${className ?? ''}`}
+      data-render-inline={dataRenderInline}
+    >
       <Header isSolid={hasSolidHeader}>
         {hasTabs && (
           <Fragment>
@@ -118,6 +162,7 @@ export function CodeSnippet({
             <FlexSpacer />
           </Fragment>
         )}
+        {icon}
         {filename && <FileName>{filename}</FileName>}
         {!hasTabs && <FlexSpacer />}
         {!hideCopyButton && (
@@ -137,7 +182,10 @@ export function CodeSnippet({
         )}
       </Header>
 
-      <pre className={`language-${String(language)}`}>
+      <pre
+        className={`language-${String(language)}`}
+        data-line={linesToHighlight?.join(',')}
+      >
         <Code
           ref={ref}
           className={`language-${String(language)}`}
@@ -151,14 +199,17 @@ export function CodeSnippet({
   );
 }
 
-const Wrapper = styled('div')`
+const Wrapper = styled('div')<{isRounded: boolean}>`
   position: relative;
   background: var(--prism-block-background);
-  border-radius: ${p => p.theme.borderRadius};
+  border-radius: ${p => (p.isRounded ? p.theme.borderRadius : '0px')};
 
-  ${p => prismStyles(p.theme)}
   pre {
     margin: 0;
+  }
+
+  &[data-render-inline='true'] pre {
+    padding: 0;
   }
 `;
 
@@ -169,14 +220,14 @@ const Header = styled('div')<{isSolid: boolean}>`
   font-family: ${p => p.theme.text.familyMono};
   font-size: ${p => p.theme.codeFontSize};
   color: var(--prism-base);
-  font-weight: 600;
+  font-weight: ${p => p.theme.fontWeightBold};
   z-index: 2;
 
   ${p =>
     p.isSolid
       ? `
-      margin: 0 ${space(0.5)};
-      border-bottom: solid 1px var(--prism-highlight-accent);
+      padding: 0 ${space(0.5)};
+      border-bottom: solid 1px ${p.theme.innerBorder};
     `
       : `
       justify-content: flex-end;
@@ -190,7 +241,7 @@ const Header = styled('div')<{isSolid: boolean}>`
     `}
 `;
 
-const FileName = styled('p')`
+const FileName = styled('span')`
   ${p => p.theme.overflowEllipsis}
   padding: ${space(0.5)} ${space(0.5)};
   margin: 0;
@@ -228,7 +279,7 @@ const CopyButton = styled(Button)<{isAlwaysVisible: boolean}>`
   opacity: 0;
 
   div:hover > div > &, /* if Wrapper is hovered */
-  &.focus-visible {
+  &:focus-visible {
     opacity: 1;
   }
   &:hover {

@@ -1,14 +1,14 @@
-import {mat3} from 'gl-matrix';
+import type {mat3} from 'gl-matrix';
 
 import {getContext} from 'sentry/utils/profiling/gl/utils';
-import {Rect} from 'sentry/utils/profiling/speedscope';
+import type {Rect} from 'sentry/utils/profiling/speedscope';
 
-import {Flamegraph} from '../flamegraph';
-import {FlamegraphTheme} from '../flamegraph/flamegraphTheme';
+import type {Flamegraph} from '../flamegraph';
+import type {FlamegraphTheme} from '../flamegraph/flamegraphTheme';
 
 function computeAbsoluteSampleTimestamps(
   startedAt: number,
-  weights: ReadonlyArray<number>
+  weights: readonly number[]
 ): number[] {
   if (!weights.length) {
     return [];

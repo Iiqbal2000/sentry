@@ -1,42 +1,121 @@
-import type {RouteComponentProps} from 'react-router';
+import {Fragment, useCallback, useMemo, useRef} from 'react';
 import styled from '@emotion/styled';
 
+import Alert from 'sentry/components/alert';
+import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
+import {InputGroup} from 'sentry/components/inputGroup';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
+import TextOverflow from 'sentry/components/textOverflow';
+import {IconSearch} from 'sentry/icons/iconSearch';
 import {space} from 'sentry/styles/space';
-import EmptyStory from 'sentry/views/stories/emptyStory';
-import ErrorStory from 'sentry/views/stories/errorStory';
-import storiesContext from 'sentry/views/stories/storiesContext';
-import StoryFile from 'sentry/views/stories/storyFile';
-import StoryHeader from 'sentry/views/stories/storyHeader';
-import StoryTree from 'sentry/views/stories/storyTree';
-import type {StoriesQuery} from 'sentry/views/stories/types';
-import useStoriesLoader from 'sentry/views/stories/useStoriesLoader';
+import {useHotkeys} from 'sentry/utils/useHotkeys';
+import {useLocation} from 'sentry/utils/useLocation';
+import {useNavigate} from 'sentry/utils/useNavigate';
+import OrganizationContainer from 'sentry/views/organizationContainer';
+import RouteAnalyticsContextProvider from 'sentry/views/routeAnalyticsContextProvider';
+import {StoryExports} from 'sentry/views/stories/storyExports';
+import {StoryHeader} from 'sentry/views/stories/storyHeader';
+import {StorySourceLinks} from 'sentry/views/stories/storySourceLinks';
+import {StoryTableOfContents} from 'sentry/views/stories/storyTableOfContents';
+import {StoryTree, useStoryTree} from 'sentry/views/stories/storyTree';
+import {useStoriesLoader, useStoryBookFiles} from 'sentry/views/stories/useStoriesLoader';
 
-type Props = RouteComponentProps<{}, {}, any, StoriesQuery>;
+export default function Stories() {
+  const searchInput = useRef<HTMLInputElement>(null);
+  const location = useLocation<{name: string; query?: string}>();
+  const files = useStoryBookFiles();
 
-export default function Stories({location}: Props) {
-  const story = useStoriesLoader({filename: location.query.name});
+  // If no story is selected, show the landing page stories
+  const storyFiles = useMemo(() => {
+    if (!location.query.name) {
+      return files.filter(
+        file =>
+          file.endsWith('styles/colors.stories.tsx') ||
+          file.endsWith('styles/typography.stories.tsx')
+      );
+    }
+    return [location.query.name];
+  }, [files, location.query.name]);
+
+  const story = useStoriesLoader({files: storyFiles});
+  const nodes = useStoryTree(files, location.query.query ?? '');
+
+  const navigate = useNavigate();
+  const onSearchInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      navigate({
+        query: {...location.query, query: e.target.value, name: location.query.name},
+      });
+    },
+    [location.query, navigate]
+  );
+
+  useHotkeys([{match: '/', callback: () => searchInput.current?.focus()}], []);
 
   return (
-    <Layout>
-      <StoryHeader style={{gridArea: 'head'}} />
-      <aside style={{gridArea: 'aside'}}>
-        <StoryTree files={storiesContext().files()} />
-      </aside>
+    <RouteAnalyticsContextProvider>
+      <OrganizationContainer>
+        <Layout>
+          <HeaderContainer>
+            <StoryHeader />
+          </HeaderContainer>
 
-      {story.error ? (
-        <VerticalScroll style={{gridArea: 'body'}}>
-          <ErrorStory error={story.error} />
-        </VerticalScroll>
-      ) : story.resolved ? (
-        <Main style={{gridArea: 'body'}}>
-          <StoryFile filename={story.filename} resolved={story.resolved} />
-        </Main>
-      ) : (
-        <VerticalScroll style={{gridArea: 'body'}}>
-          <EmptyStory />
-        </VerticalScroll>
-      )}
-    </Layout>
+          <SidebarContainer>
+            <InputGroup>
+              <InputGroup.LeadingItems disablePointerEvents>
+                <IconSearch />
+              </InputGroup.LeadingItems>
+              <InputGroup.Input
+                ref={searchInput}
+                placeholder="Search stories"
+                defaultValue={location.query.query ?? ''}
+                onChange={onSearchInputChange}
+              />
+              {/* @TODO (JonasBadalic): Implement clear button when there is an active query */}
+            </InputGroup>
+            <StoryTreeContainer>
+              <StoryTree nodes={nodes} />
+            </StoryTreeContainer>
+          </SidebarContainer>
+
+          {story.isLoading ? (
+            <VerticalScroll style={{gridArea: 'body'}}>
+              <LoadingIndicator />
+            </VerticalScroll>
+          ) : story.isError ? (
+            <VerticalScroll style={{gridArea: 'body'}}>
+              <Alert type="error" showIcon>
+                <strong>{story.error.name}:</strong> {story.error.message}
+              </Alert>
+            </VerticalScroll>
+          ) : story.isSuccess ? (
+            <StoryMainContainer>
+              {story.data.map((s, _i, arr) => {
+                // We render extra information if this is the only story that is being rendered
+                if (arr.length === 1) {
+                  <Fragment key={s.filename}>
+                    <TextOverflow>{s.filename}</TextOverflow>
+                    <CopyToClipboardButton size="xs" iconSize="xs" text={s.filename} />
+                    <StorySourceLinks story={s} />
+                    <StoryExports story={s} />
+                  </Fragment>;
+                }
+
+                // Render just the story exports in case of multiple stories being rendered
+                return <StoryExports key={s.filename} story={s} />;
+              })}
+            </StoryMainContainer>
+          ) : (
+            <VerticalScroll style={{gridArea: 'body'}}>
+              <strong>The file you selected does not export a story.</strong>
+            </VerticalScroll>
+          )}
+          <StoryIndexContainer>
+            <StoryTableOfContents />
+          </StoryIndexContainer>
+        </Layout>
+      </OrganizationContainer>
+    </RouteAnalyticsContextProvider>
   );
 }
 
@@ -45,8 +124,8 @@ const Layout = styled('div')`
 
   display: grid;
   grid-template:
-    'head head' max-content
-    'aside body' auto/ ${p => p.theme.settings.sidebarWidth} 1fr;
+    'head head head' max-content
+    'aside body index' auto / 200px 1fr;
   gap: var(--stories-grid-space);
   place-items: stretch;
 
@@ -54,23 +133,57 @@ const Layout = styled('div')`
   padding: var(--stories-grid-space);
 `;
 
+const HeaderContainer = styled('div')`
+  grid-area: head;
+`;
+
+const SidebarContainer = styled('div')`
+  grid-area: aside;
+  display: flex;
+  flex-direction: column;
+  gap: ${space(2)};
+  min-height: 0;
+`;
+
+const StoryTreeContainer = styled('div')`
+  overflow-y: scroll;
+  flex-grow: 1;
+`;
+
+const StoryIndexContainer = styled('div')`
+  grid-area: index;
+`;
+
 const VerticalScroll = styled('main')`
   overflow-x: hidden;
   overflow-y: scroll;
+  grid-area: body;
 `;
 
 /**
  * Avoid <Panel> here because nested panels will have a modified theme.
  * Therefore stories will look different in prod.
  */
-const Main = styled(VerticalScroll)`
+const StoryMainContainer = styled(VerticalScroll)`
   background: ${p => p.theme.background};
   border-radius: ${p => p.theme.panelBorderRadius};
   border: 1px solid ${p => p.theme.border};
 
+  grid-area: body;
+
   padding: var(--stories-grid-space);
+  padding-top: 0;
   overflow-x: hidden;
-  overflow-y: scroll;
+  overflow-y: auto;
 
   position: relative;
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    scroll-margin-top: ${space(3)};
+  }
 `;

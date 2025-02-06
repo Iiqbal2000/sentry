@@ -1,6 +1,7 @@
 import {t} from 'sentry/locale';
-import {MetricsApiResponse, SessionApiResponse} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {Series} from 'sentry/types/echarts';
+import type {MetricsApiResponse} from 'sentry/types/metrics';
+import type {SessionApiResponse} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
 
 import {DERIVED_STATUS_METRICS_PATTERN} from '../widgetBuilder/releaseWidget/fields';
@@ -54,10 +55,11 @@ export function transformSessionsResponseToSeries(
       // stripped.
       if (!injectedFields.includes(derivedMetricsToField(field))) {
         results.push({
+          // @ts-expect-error TS(2345): Argument of type '{ by: Record<string, string | nu... Remove this comment to see the full error message
           seriesName: getSeriesName(field, group, queryAlias),
           data: response.intervals.map((interval, index) => ({
             name: interval,
-            value: group.series[field][index] ?? 0,
+            value: group.series[field]?.[index] ?? 0,
           })),
         });
       }
@@ -78,10 +80,11 @@ export function transformSessionsResponseToSeries(
             }
           }
           results.push({
+            // @ts-expect-error TS(2345): Argument of type '{ by: Record<string, string | nu... Remove this comment to see the full error message
             seriesName: getSeriesName(status, group, queryAlias),
             data: response.intervals.map((interval, index) => ({
               name: interval,
-              value: metricField ? group.series[metricField][index] ?? 0 : 0,
+              value: metricField ? group.series[metricField]?.[index] ?? 0 : 0,
             })),
           });
         }

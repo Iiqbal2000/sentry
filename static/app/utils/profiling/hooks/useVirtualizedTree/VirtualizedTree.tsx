@@ -1,12 +1,15 @@
-import {TreeLike} from 'sentry/utils/profiling/hooks/useVirtualizedTree/useVirtualizedTree';
+import type {TreeLike} from 'sentry/utils/profiling/hooks/useVirtualizedTree/useVirtualizedTree';
 
 import {VirtualizedTreeNode} from './VirtualizedTreeNode';
 
 export class VirtualizedTree<T extends TreeLike> {
-  roots: VirtualizedTreeNode<T>[] = [];
-  flattened: VirtualizedTreeNode<T>[] = [];
+  roots: Array<VirtualizedTreeNode<T>> = [];
+  flattened: Array<VirtualizedTreeNode<T>> = [];
 
-  constructor(roots: VirtualizedTreeNode<T>[], flattenedList?: VirtualizedTreeNode<T>[]) {
+  constructor(
+    roots: Array<VirtualizedTreeNode<T>>,
+    flattenedList?: Array<VirtualizedTreeNode<T>>
+  ) {
     this.roots = roots;
     this.flattened = flattenedList || VirtualizedTree.toExpandedList(this.roots);
   }
@@ -21,12 +24,12 @@ export class VirtualizedTree<T extends TreeLike> {
     // to carry-them over and preserver their state.
     expandedNodes?: Set<T>
   ): VirtualizedTree<T> {
-    const roots: VirtualizedTreeNode<T>[] = [];
+    const roots: Array<VirtualizedTreeNode<T>> = [];
 
     function toTreeNode(
       node: T,
       parent: VirtualizedTreeNode<T> | null,
-      collection: VirtualizedTreeNode<T>[] | null,
+      collection: Array<VirtualizedTreeNode<T>> | null,
       depth: number
     ) {
       const shouldUseExpandedSet = expandedNodes && expandedNodes.size > 0;
@@ -60,7 +63,7 @@ export class VirtualizedTree<T extends TreeLike> {
     }
 
     for (let i = 0; i < items.length; i++) {
-      toTreeNode(items[i], null, roots, 0);
+      toTreeNode(items[i]!, null, roots, 0);
     }
 
     return new VirtualizedTree<T>(roots, undefined);
@@ -68,9 +71,9 @@ export class VirtualizedTree<T extends TreeLike> {
 
   // Returns a list of nodes that are visible in the tree.
   static toExpandedList<T extends TreeLike>(
-    nodes: VirtualizedTreeNode<T>[]
-  ): VirtualizedTreeNode<T>[] {
-    const list: VirtualizedTreeNode<T>[] = [];
+    nodes: Array<VirtualizedTreeNode<T>>
+  ): Array<VirtualizedTreeNode<T>> {
+    const list: Array<VirtualizedTreeNode<T>> = [];
 
     function visit(node: VirtualizedTreeNode<T>): void {
       list.push(node);
@@ -80,12 +83,12 @@ export class VirtualizedTree<T extends TreeLike> {
       }
 
       for (let i = 0; i < node.children.length; i++) {
-        visit(node.children[i]);
+        visit(node.children[i]!);
       }
     }
 
     for (let i = 0; i < nodes.length; i++) {
-      visit(nodes[i]);
+      visit(nodes[i]!);
     }
 
     return list;
@@ -102,7 +105,7 @@ export class VirtualizedTree<T extends TreeLike> {
       }
 
       for (let i = 0; i < candidate.children.length; i++) {
-        queue.push(candidate.children[i]);
+        queue.push(candidate.children[i]!);
       }
     }
 
@@ -134,7 +137,7 @@ export class VirtualizedTree<T extends TreeLike> {
     value: boolean,
     opts?: {expandChildren: boolean}
   ) {
-    // Because node.setExpanded handles toggling the node and all it's children, we still need to update the
+    // Because node.setExpanded handles toggling the node and all its children, we still need to update the
     // flattened list. To do that w/o having to rebuild the entire tree, we can just remove the node and add them
     const removedOrAddedNodes = node.setExpanded(value, opts);
 
@@ -163,20 +166,20 @@ export class VirtualizedTree<T extends TreeLike> {
     function visit(node: VirtualizedTreeNode<T>) {
       const sortedChildren = node.children.sort(sortFn);
       for (let i = 0; i < sortedChildren.length; i++) {
-        visit(sortedChildren[i]);
+        visit(sortedChildren[i]!);
       }
     }
 
     const sortedRoots = this.roots.sort(sortFn);
     for (let i = 0; i < sortedRoots.length; i++) {
-      visit(sortedRoots[i]);
+      visit(sortedRoots[i]!);
     }
 
     this.flattened = VirtualizedTree.toExpandedList(this.roots);
   }
 
   getAllExpandedNodes(previouslyExpandedNodes: Set<T>): Set<T> {
-    const expandedNodes = new Set<T>([...previouslyExpandedNodes]);
+    const expandedNodes = new Set<T>(previouslyExpandedNodes);
 
     function visit(node: VirtualizedTreeNode<T>) {
       if (node.expanded) {
@@ -184,12 +187,12 @@ export class VirtualizedTree<T extends TreeLike> {
       }
 
       for (let i = 0; i < node.children.length; i++) {
-        visit(node.children[i]);
+        visit(node.children[i]!);
       }
     }
 
     for (let i = 0; i < this.roots.length; i++) {
-      visit(this.roots[i]);
+      visit(this.roots[i]!);
     }
 
     return expandedNodes;

@@ -1,11 +1,8 @@
-import {EventsMetaType, MetaType} from 'sentry/utils/discover/eventView';
-import {TransactionThresholdMetric} from 'sentry/views/performance/transactionSummary/transactionThresholdModal';
+import type {EventsMetaType, MetaType} from 'sentry/utils/discover/eventView';
+import type {TransactionThresholdMetric} from 'sentry/views/performance/transactionSummary/transactionThresholdModal';
 
-import GenericDiscoverQuery, {
-  DiscoverQueryProps,
-  GenericChildrenProps,
-  useGenericDiscoverQuery,
-} from './genericDiscoverQuery';
+import type {DiscoverQueryProps, GenericChildrenProps} from './genericDiscoverQuery';
+import GenericDiscoverQuery, {useGenericDiscoverQuery} from './genericDiscoverQuery';
 
 /**
  * An individual row in a DiscoverQuery result
@@ -19,7 +16,7 @@ export type TableDataRow = {
  * A DiscoverQuery result including rows and metadata.
  */
 export type TableData = {
-  data: Array<TableDataRow>;
+  data: TableDataRow[];
   meta?: MetaType;
 };
 
@@ -27,7 +24,7 @@ export type TableData = {
  * A DiscoverQuery result including rows and metadata from the events endpoint.
  */
 export type EventsTableData = {
-  data: Array<TableDataRow>;
+  data: TableDataRow[];
   meta?: EventsMetaType;
 };
 
@@ -55,11 +52,11 @@ function shouldRefetchData(
 }
 
 function DiscoverQuery(props: DiscoverQueryComponentProps) {
-  const afterFetch = (data, _) => {
+  const afterFetch = (data: any, _: any) => {
     const {fields, ...otherMeta} = data.meta ?? {};
     return {
       ...data,
-      meta: {...fields, ...otherMeta},
+      meta: {...fields, ...otherMeta, fields},
     };
   };
   return (
@@ -73,11 +70,11 @@ function DiscoverQuery(props: DiscoverQueryComponentProps) {
 }
 
 export function useDiscoverQuery(props: Omit<DiscoverQueryComponentProps, 'children'>) {
-  const afterFetch = (data, _) => {
+  const afterFetch = (data: any, _: any) => {
     const {fields, ...otherMeta} = data.meta ?? {};
     return {
       ...data,
-      meta: {...fields, ...otherMeta},
+      meta: {...fields, ...otherMeta, fields},
     };
   };
 

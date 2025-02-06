@@ -1,9 +1,11 @@
 import {t} from 'sentry/locale';
-import {IssueCategoryConfigMapping} from 'sentry/utils/issueTypeConfig/types';
+import type {IssueCategoryConfigMapping} from 'sentry/utils/issueTypeConfig/types';
+import {Tab} from 'sentry/views/issueDetails/types';
 
 const cronConfig: IssueCategoryConfigMapping = {
   _categoryDefaults: {
     actions: {
+      archiveUntilOccurrence: {enabled: true},
       delete: {
         enabled: false,
         disabledReason: t('Not yet supported for cron issues'),
@@ -17,14 +19,36 @@ const cronConfig: IssueCategoryConfigMapping = {
         disabledReason: t('Not yet supported for cron issues'),
       },
       ignore: {enabled: true},
+      resolve: {enabled: false},
+      resolveInRelease: {enabled: false},
       share: {enabled: true},
     },
-    attachments: {enabled: false},
+    header: {
+      filterBar: {enabled: false, fixedEnvironment: true},
+      graph: {enabled: false, type: 'checkin-timeline'},
+      tagDistribution: {enabled: false},
+      occurrenceSummary: {enabled: false},
+    },
+    detector: {
+      enabled: true,
+      title: t('Cron Monitor'),
+      ctaText: t('View monitor details'),
+    },
+    pages: {
+      landingPage: Tab.DETAILS,
+      events: {enabled: true},
+      openPeriods: {enabled: false},
+      checkIns: {enabled: false},
+      attachments: {enabled: false},
+      userFeedback: {enabled: false},
+      replays: {enabled: false},
+      tagsTab: {enabled: true},
+    },
+    autofix: false,
     mergedIssues: {enabled: false},
-    replays: {enabled: false},
     similarIssues: {enabled: false},
-    userFeedback: {enabled: false},
     usesIssuePlatform: true,
+    issueSummary: {enabled: false},
   },
 };
 

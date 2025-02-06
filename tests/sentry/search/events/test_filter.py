@@ -10,8 +10,8 @@ from snuba_sdk.function import Function
 from sentry.api.event_search import SearchFilter, SearchKey, SearchValue
 from sentry.api.release_search import INVALID_SEMVER_MESSAGE
 from sentry.exceptions import InvalidSearchQuery
-from sentry.models.release import SemverFilter
-from sentry.search.events.builder import UnresolvedQuery
+from sentry.models.releases.util import SemverFilter
+from sentry.search.events.builder.discover import UnresolvedQuery
 from sentry.search.events.constants import (
     SEMVER_ALIAS,
     SEMVER_BUILD_ALIAS,
@@ -28,53 +28,6 @@ from sentry.search.events.filter import (
 from sentry.search.events.types import ParamsType, QueryBuilderConfig
 from sentry.snuba.dataset import Dataset
 from sentry.testutils.cases import TestCase
-from sentry.utils.snuba import OPERATOR_TO_FUNCTION
-
-
-# Helper functions to make reading the expected output from the boolean tests easier to read. #
-# a:b
-def _eq(xy):
-    return ["equals", [["ifNull", [xy[0], "''"]], xy[1]]]
-
-
-# a:b but using operators instead of functions
-def _oeq(xy):
-    return [["ifNull", [xy[0], "''"]], "=", xy[1]]
-
-
-# !a:b using operators instead of functions
-def _noeq(xy):
-    return [["ifNull", [xy[0], "''"]], "!=", xy[1]]
-
-
-# message ("foo bar baz")
-def _m(x):
-    return ["notEquals", [["positionCaseInsensitive", ["message", f"'{x}'"]], 0]]
-
-
-# message ("foo bar baz") using operators instead of functions
-def _om(x):
-    return [["positionCaseInsensitive", ["message", f"'{x}'"]], "!=", 0]
-
-
-# x OR y
-def _or(x, y):
-    return ["or", [x, y]]
-
-
-# x AND y
-def _and(x, y):
-    return ["and", [x, y]]
-
-
-# count():>1
-def _c(op, val):
-    return [OPERATOR_TO_FUNCTION[op], ["count", val]]
-
-
-# count():>1 using operators instead of functions
-def _oc(op, val):
-    return ["count", op, val]
 
 
 def with_type(type, argument):
@@ -101,13 +54,15 @@ class DiscoverFunctionTest(unittest.TestCase):
 
     def test_no_optional_not_enough_arguments(self):
         with pytest.raises(
-            InvalidSearchQuery, match=r"fn_wo_optionals\(\): expected 2 argument\(s\)"
+            InvalidSearchQuery,
+            match=r"fn_wo_optionals\(\): expected 2 argument\(s\) but got 1 argument\(s\)",
         ):
             self.fn_wo_optionals.validate_argument_count("fn_wo_optionals()", ["arg1"])
 
     def test_no_optional_too_may_arguments(self):
         with pytest.raises(
-            InvalidSearchQuery, match=r"fn_wo_optionals\(\): expected 2 argument\(s\)"
+            InvalidSearchQuery,
+            match=r"fn_wo_optionals\(\): expected 2 argument\(s\) but got 3 argument\(s\)",
         ):
             self.fn_wo_optionals.validate_argument_count(
                 "fn_wo_optionals()", ["arg1", "arg2", "arg3"]
@@ -120,13 +75,15 @@ class DiscoverFunctionTest(unittest.TestCase):
 
     def test_optional_not_enough_arguments(self):
         with pytest.raises(
-            InvalidSearchQuery, match=r"fn_w_optionals\(\): expected at least 1 argument\(s\)"
+            InvalidSearchQuery,
+            match=r"fn_w_optionals\(\): expected at least 1 argument\(s\) but got 0 argument\(s\)",
         ):
             self.fn_w_optionals.validate_argument_count("fn_w_optionals()", [])
 
     def test_optional_too_many_arguments(self):
         with pytest.raises(
-            InvalidSearchQuery, match=r"fn_w_optionals\(\): expected at most 2 argument\(s\)"
+            InvalidSearchQuery,
+            match=r"fn_w_optionals\(\): expected at most 2 argument\(s\) but got 3 argument\(s\)",
         ):
             self.fn_w_optionals.validate_argument_count(
                 "fn_w_optionals()", ["arg1", "arg2", "arg3"]
@@ -234,7 +191,7 @@ class SemverFilterConverterTest(BaseSemverConverterTest):
         with pytest.raises(ValueError, match="organization_id is a required param"):
             _semver_filter_converter(filter, key, None)
         with pytest.raises(ValueError, match="organization_id is a required param"):
-            _semver_filter_converter(filter, key, {"something": 1})
+            _semver_filter_converter(filter, key, {"something": 1})  # type: ignore[arg-type]  # intentionally bad data
 
     def test_invalid_query(self):
         key = SEMVER_ALIAS
@@ -389,7 +346,7 @@ class SemverPackageFilterConverterTest(BaseSemverConverterTest):
         with pytest.raises(ValueError, match="organization_id is a required param"):
             _semver_filter_converter(filter, key, None)
         with pytest.raises(ValueError, match="organization_id is a required param"):
-            _semver_filter_converter(filter, key, {"something": 1})
+            _semver_filter_converter(filter, key, {"something": 1})  # type: ignore[arg-type]  # intentionally bad data
 
     def test_empty(self):
         self.run_test("=", "test", "IN", [SEMVER_EMPTY_RELEASE])
@@ -417,6 +374,15 @@ class SemverPackageFilterConverterTest(BaseSemverConverterTest):
             project_id=[self.project.id, project_2.id],
         )
 
+    def test_in(self):
+        release_1 = self.create_release(version="foo@1.0.0.0")
+        release_2 = self.create_release(version="bar@1.2.0.0")
+        self.run_test("IN", ["foo"], "IN", [release_1.version])
+        self.run_test("IN", ["foo", "bar"], "IN", [release_1.version, release_2.version])
+        self.run_test(
+            "IN", ["foo", "bar", "notathing"], "IN", [release_1.version, release_2.version]
+        )
+
 
 class SemverBuildFilterConverterTest(BaseSemverConverterTest):
     key = SEMVER_BUILD_ALIAS
@@ -430,7 +396,7 @@ class SemverBuildFilterConverterTest(BaseSemverConverterTest):
         with pytest.raises(ValueError, match="organization_id is a required param"):
             _semver_filter_converter(filter, key, None)
         with pytest.raises(ValueError, match="organization_id is a required param"):
-            _semver_filter_converter(filter, key, {"something": 1})
+            _semver_filter_converter(filter, key, {"something": 1})  # type: ignore[arg-type]  # intentionally bad data
 
         filter = SearchFilter(SearchKey(key), "IN", SearchValue("sentry"))
         with pytest.raises(

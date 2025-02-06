@@ -1,3 +1,9 @@
+import {
+  ReplayRequestFrameFixture,
+  ReplayResourceFrameFixture,
+} from 'sentry-fixture/replay/replaySpanFrameData';
+import {ReplayRecordFixture} from 'sentry-fixture/replayRecord';
+
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
 import hydrateSpans from 'sentry/utils/replays/hydrateSpans';
@@ -20,20 +26,20 @@ const [
   fetchBodySkipped,
   fetchWithHeaders,
   fetchWithRespBody,
-] = hydrateSpans(TestStubs.ReplayRecord(), [
-  TestStubs.Replay.ResourceFrame({
+] = hydrateSpans(ReplayRecordFixture(), [
+  ReplayResourceFrameFixture({
     op: 'resource.img',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
     description: '/static/img/logo.png',
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
     description: '/api/0/issues/1234',
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
@@ -45,7 +51,7 @@ const [
       response: {_meta: {warnings: ['URL_SKIPPED']}, headers: {}},
     },
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
@@ -54,18 +60,18 @@ const [
       method: 'GET',
       statusCode: 200,
       request: {
-        // @ts-expect-error
+        // @ts-expect-error 'BODY_SKIPPED' is not assignable to type NetworkMetaWarning
         _meta: {warnings: ['BODY_SKIPPED']},
         headers: {accept: 'application/json'},
       },
       response: {
-        // @ts-expect-error
+        // @ts-expect-error 'BODY_SKIPPED' is not assignable to type NetworkMetaWarning
         _meta: {warnings: ['BODY_SKIPPED']},
         headers: {'content-type': 'application/json'},
       },
     },
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
@@ -83,7 +89,7 @@ const [
       },
     },
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
@@ -105,12 +111,12 @@ const [
 ]);
 
 const mockItems = {
-  img,
-  fetchNoDataObj,
-  fetchUrlSkipped,
-  fetchBodySkipped,
-  fetchWithHeaders,
-  fetchWithRespBody,
+  img: img!,
+  fetchNoDataObj: fetchNoDataObj!,
+  fetchUrlSkipped: fetchUrlSkipped!,
+  fetchBodySkipped: fetchBodySkipped!,
+  fetchWithHeaders: fetchWithHeaders!,
+  fetchWithRespBody: fetchWithRespBody!,
 };
 
 function basicSectionProps() {
@@ -175,7 +181,7 @@ describe('NetworkDetailsContent', () => {
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -198,7 +204,7 @@ describe('NetworkDetailsContent', () => {
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -222,7 +228,7 @@ describe('NetworkDetailsContent', () => {
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -279,7 +285,7 @@ describe('NetworkDetailsContent', () => {
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -304,7 +310,7 @@ describe('NetworkDetailsContent', () => {
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -324,7 +330,7 @@ describe('NetworkDetailsContent', () => {
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -381,7 +387,7 @@ describe('NetworkDetailsContent', () => {
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -406,7 +412,7 @@ describe('NetworkDetailsContent', () => {
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -426,7 +432,7 @@ describe('NetworkDetailsContent', () => {
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );

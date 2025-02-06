@@ -7,6 +7,9 @@ export enum Output {
   UNSUPPORTED = 'unsupported',
   URL_SKIPPED = 'url_skipped',
   BODY_SKIPPED = 'body_skipped',
+  BODY_PARSE_ERROR = 'body_parse_error',
+  BODY_PARSE_TIMEOUT = 'body_parse_timeout',
+  UNPARSEABLE_BODY_TYPE = 'unparseable_body_type',
   DATA = 'data',
 }
 
@@ -44,14 +47,28 @@ export default function getOutputType({isSetup, item, visibleTab}: Args): Output
   const respWarnings = response?._meta?.warnings ?? ['URL_SKIPPED'];
   const isReqUrlSkipped = reqWarnings?.includes('URL_SKIPPED');
   const isRespUrlSkipped = respWarnings?.includes('URL_SKIPPED');
+
+  if (respWarnings?.includes('BODY_PARSE_ERROR')) {
+    return Output.BODY_PARSE_ERROR;
+  }
+
+  if (respWarnings?.includes('BODY_PARSE_TIMEOUT')) {
+    return Output.BODY_PARSE_TIMEOUT;
+  }
+
+  if (respWarnings?.includes('UNPARSEABLE_BODY_TYPE')) {
+    // Differs from BODY_PARSE_ERROR in that we did not attempt to parse it
+    return Output.UNPARSEABLE_BODY_TYPE;
+  }
+
   if (isReqUrlSkipped || isRespUrlSkipped) {
     return Output.URL_SKIPPED;
   }
 
   if (['request', 'response'].includes(visibleTab)) {
-    // @ts-expect-error: is BODY_SKIPPED really emitted from the SDK?
+    // @ts-expect-error TS(2345): Argument of type '"BODY_SKIPPED"' is not assignabl... Remove this comment to see the full error message
     const isReqBodySkipped = reqWarnings.includes('BODY_SKIPPED');
-    // @ts-expect-error: is BODY_SKIPPED really emitted from the SDK?
+    // @ts-expect-error TS(2345): Argument of type '"BODY_SKIPPED"' is not assignabl... Remove this comment to see the full error message
     const isRespBodySkipped = respWarnings.includes('BODY_SKIPPED');
     if (isReqBodySkipped || isRespBodySkipped) {
       return Output.BODY_SKIPPED;

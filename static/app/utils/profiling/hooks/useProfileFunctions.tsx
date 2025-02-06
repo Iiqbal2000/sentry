@@ -1,5 +1,5 @@
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
-import {PageFilters} from 'sentry/types';
+import type {PageFilters} from 'sentry/types/core';
 import {useApiQuery} from 'sentry/utils/queryClient';
 import useOrganization from 'sentry/utils/useOrganization';
 import usePageFilters from 'sentry/utils/usePageFilters';
@@ -14,7 +14,7 @@ export interface UseProfileFunctionsOptions<F extends string> {
   datetime?: PageFilters['datetime'];
   enabled?: boolean;
   limit?: number;
-  projects?: (number | string)[];
+  projects?: Array<number | string>;
   query?: string;
   refetchOnMount?: boolean;
 }

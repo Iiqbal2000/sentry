@@ -1,10 +1,10 @@
-import {render, screen} from 'sentry-test/reactTestingLibrary';
+import {render, screen, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
 import EventView from 'sentry/utils/discover/eventView';
 
 describe('DiscoverQuery', function () {
-  let location, eventView;
+  let location: any, eventView: any;
   beforeEach(() => {
     location = {
       pathname: '/events',
@@ -34,14 +34,13 @@ describe('DiscoverQuery', function () {
           if (isLoading) {
             return 'loading';
           }
-          return <p>{tableData?.data[0].transaction}</p>;
+          return <p>{tableData?.data[0]!.transaction}</p>;
         }}
       </DiscoverQuery>
     );
-    await tick();
 
     // Children should be rendered, and API should be called.
-    expect(getMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('/health')).toBeInTheDocument();
   });
 
@@ -65,13 +64,12 @@ describe('DiscoverQuery', function () {
           if (isLoading) {
             return 'loading';
           }
-          return <p>{tableData?.data[0].transaction}</p>;
+          return <p>{tableData?.data[0]!.transaction}</p>;
         }}
       </DiscoverQuery>
     );
-    await tick();
 
-    expect(getMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
     expect(getMock).toHaveBeenCalledWith(
       '/organizations/test-org/events/',
       expect.objectContaining({
@@ -93,7 +91,7 @@ describe('DiscoverQuery', function () {
       statusCode: 400,
     });
 
-    let errorValue;
+    let errorValue: any;
     render(
       <DiscoverQuery
         orgSlug="test-org"
@@ -109,9 +107,8 @@ describe('DiscoverQuery', function () {
         }}
       </DiscoverQuery>
     );
-    await tick();
 
-    expect(errorValue.message).toEqual('Error Message');
+    await waitFor(() => expect(errorValue.message).toBe('Error Message'));
   });
 
   it('parses object errors correctly', async function () {
@@ -127,7 +124,7 @@ describe('DiscoverQuery', function () {
       statusCode: 400,
     });
 
-    let errorValue;
+    let errorValue: any;
     render(
       <DiscoverQuery
         orgSlug="test-org"
@@ -143,8 +140,7 @@ describe('DiscoverQuery', function () {
         }}
       </DiscoverQuery>
     );
-    await tick();
 
-    expect(errorValue.message).toEqual('Object Error');
+    await waitFor(() => expect(errorValue.message).toBe('Object Error'));
   });
 });

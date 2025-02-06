@@ -1,4 +1,5 @@
-import {Organization} from 'sentry-fixture/organization';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render} from 'sentry-test/reactTestingLibrary';
@@ -11,17 +12,18 @@ jest.mock('sentry/components/charts/eventsRequest');
 
 describe('Discover > MiniGraph', function () {
   const features = ['discover-basic'];
-  const location = TestStubs.location({
+  const location = LocationFixture({
     query: {query: 'tag:value'},
     pathname: '/',
   });
 
-  let organization, eventView, initialData;
+  let organization!: ReturnType<typeof OrganizationFixture>;
+  let eventView!: ReturnType<typeof EventView.fromSavedQueryOrLocation>;
+  let initialData!: ReturnType<typeof initializeOrg>;
 
   beforeEach(() => {
-    organization = Organization({
+    organization = OrganizationFixture({
       features,
-      projects: [TestStubs.Project()],
     });
     initialData = initializeOrg({
       organization,
@@ -48,7 +50,7 @@ describe('Discover > MiniGraph', function () {
         organization={organization}
         yAxis={yAxis}
       />,
-      {context: initialData.routerContext}
+      {router: initialData.router}
     );
 
     expect(eventRequest.default).toHaveBeenCalledWith(
@@ -68,7 +70,7 @@ describe('Discover > MiniGraph', function () {
         organization={organization}
         yAxis={yAxis}
       />,
-      {context: initialData.routerContext}
+      {router: initialData.router}
     );
 
     expect(eventRequest.default).toHaveBeenCalledWith(

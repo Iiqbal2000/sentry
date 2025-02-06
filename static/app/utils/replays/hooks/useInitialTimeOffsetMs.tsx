@@ -1,7 +1,9 @@
 import {useEffect, useMemo, useState} from 'react';
-import first from 'lodash/first';
+import type {Query} from 'history';
 
+import type {Client} from 'sentry/api';
 import isValidDate from 'sentry/utils/date/isValidDate';
+import {decodeScalar} from 'sentry/utils/queryString';
 import fetchReplayClicks from 'sentry/utils/replays/fetchReplayClicks';
 import type {highlightNode} from 'sentry/utils/replays/highlightNode';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
@@ -14,19 +16,19 @@ export type TimeOffsetLocationQueryParams = {
    * Anything that can be parsed by `new Date()`; for example a timestamp in ms
    * or an ISO 8601 formatted string.
    */
-  event_t?: string;
+  event_t?: Query[string];
 
   /**
    * The query that was used on the index page. If it includes `click.*` fields
    * then we will use those to lookup a list of `offsetMs` values
    */
-  query?: string;
+  query?: Query[string];
 
   /**
    * A specific offset into the replay. Number of seconds.
    * Should be less than the duration of the replay
    */
-  t?: string;
+  t?: Query[string];
 };
 
 type Opts = {
@@ -59,7 +61,7 @@ type Result =
 
 const ZERO_OFFSET = {offsetMs: 0};
 
-function fromOffset({offsetSec}): Result {
+function fromOffset({offsetSec}: {offsetSec: Query[string]}): Result {
   if (offsetSec === undefined) {
     // Not using this strategy
     return undefined;
@@ -68,16 +70,22 @@ function fromOffset({offsetSec}): Result {
   return {offsetMs: Number(offsetSec) * 1000};
 }
 
-function fromEventTimestamp({eventTimestamp, replayStartTimestampMs}): Result {
-  if (eventTimestamp === undefined) {
+function fromEventTimestamp({
+  eventTimestamp,
+  replayStartTimestampMs,
+}: {
+  eventTimestamp: Query[string];
+  replayStartTimestampMs: Opts['replayStartTimestampMs'];
+}): Result {
+  if (eventTimestamp === undefined || eventTimestamp === null) {
     // Not using this strategy
     return undefined;
   }
 
-  if (replayStartTimestampMs !== undefined) {
-    let date = new Date(eventTimestamp);
+  if (replayStartTimestampMs !== undefined && replayStartTimestampMs !== null) {
+    let date = new Date(decodeScalar(eventTimestamp, ''));
     if (!isValidDate(date)) {
-      const asInt = parseInt(eventTimestamp, 10);
+      const asInt = parseInt(decodeScalar(eventTimestamp, ''), 10);
       // Allow input to be `?event_t=$num_of_seconds` or `?event_t=$num_of_miliseconds`
       date = asInt < 9999999999 ? new Date(asInt * 1000) : new Date(asInt);
     }
@@ -97,15 +105,20 @@ async function fromListPageQuery({
   replayId,
   projectSlug,
   replayStartTimestampMs,
-}): Promise<Result> {
-  if (listPageQuery === undefined) {
+}: Opts & {api: Client; listPageQuery: Query[string]}): Promise<Result> {
+  if (listPageQuery === undefined || listPageQuery === null) {
     // Not using this strategy
     return undefined;
   }
 
   // Check if there is even any `click.*` fields in the query string
-  const search = new MutableSearch(listPageQuery);
-  const isClickSearch = search.getFilterKeys().some(key => key.startsWith('click.'));
+  const search = new MutableSearch(decodeScalar(listPageQuery, ''));
+  const isClickSearch = search
+    .getFilterKeys()
+    .some(
+      key =>
+        key.startsWith('click.') || key.startsWith('rage.') || key.startsWith('dead.')
+    );
   if (!isClickSearch) {
     // There was a search, but not for clicks, so lets skip this strategy.
     return undefined;
@@ -125,20 +138,21 @@ async function fromListPageQuery({
     orgSlug,
     projectSlug,
     replayId,
-    query: listPageQuery,
+    query: decodeScalar(listPageQuery, ''),
   });
+
   if (!results.clicks.length) {
     return ZERO_OFFSET;
   }
   try {
-    const firstResult = first(results.clicks)!;
-    const firstTimestamp = firstResult!.timestamp;
-    const nodeId = firstResult!.node_id;
+    const firstResult = results.clicks.at(0)!;
+    const firstTimestamp = firstResult.timestamp;
+    const nodeId = firstResult.node_id;
     const firstTimestmpMs = new Date(firstTimestamp).getTime();
     return {
       highlight: {
-        annotation: listPageQuery,
-        nodeId,
+        annotation: undefined,
+        nodeIds: [nodeId],
         spotlight: true,
       },
       offsetMs: firstTimestmpMs - replayStartTimestampMs,
@@ -148,7 +162,7 @@ async function fromListPageQuery({
   }
 }
 
-function useInitialTimeOffsetMs({
+export default function useInitialTimeOffsetMs({
   orgSlug,
   replayId,
   projectSlug,
@@ -170,7 +184,7 @@ function useInitialTimeOffsetMs({
   );
   const queryTimeMs = useMemo(
     () =>
-      eventTimestamp === undefined
+      eventTimestamp === undefined || eventTimestamp === null
         ? fromListPageQuery({
             api,
             listPageQuery,
@@ -208,5 +222,3 @@ function definedOrDefault<T>(dflt: T | undefined | Promise<T | undefined>) {
     return val ?? dflt;
   };
 }
-
-export default useInitialTimeOffsetMs;

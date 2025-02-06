@@ -1,9 +1,6 @@
-/* eslint-env node */
-/* eslint import/no-nodejs-modules:0, import/no-unresolved:0, no-console:0 */
-import {spawn} from 'child_process';
-import {join} from 'path';
-import {stderr, stdout} from 'process';
-
+import {spawn} from 'node:child_process';
+import {join} from 'node:path';
+import {stderr, stdout} from 'node:process';
 import sane from 'sane';
 
 const watcherPy = sane(join(__dirname, '../src/sentry'));

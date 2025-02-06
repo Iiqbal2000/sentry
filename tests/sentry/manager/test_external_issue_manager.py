@@ -1,13 +1,11 @@
-from sentry.models.integrations.external_issue import ExternalIssue
-from sentry.services.hybrid_cloud.integration.serial import serialize_integration
+from sentry.integrations.models.external_issue import ExternalIssue
+from sentry.integrations.services.integration.serial import serialize_integration
 from sentry.testutils.cases import TestCase
-from sentry.testutils.silo import region_silo_test
 from sentry.testutils.skips import requires_snuba
 
 pytestmark = requires_snuba
 
 
-@region_silo_test(stable=True)
 class ExternalIssueManagerTest(TestCase):
     def setUp(self):
         self.project = self.create_project(organization=self.organization)
@@ -76,28 +74,6 @@ class ExternalIssueManagerTest(TestCase):
             assert ei in result
         # Empty case
         result = ExternalIssue.objects.get_linked_issues(
-            event=self.event2, integration=self.api_integration2
-        )
-        assert len(result) == 0
-
-    def test_get_linked_issue_ids(self):
-        # Base case
-        result = ExternalIssue.objects.get_linked_issue_ids(
-            event=self.event1, integration=self.api_integration1
-        )
-        assert len(result) == 1
-        assert self.external_issue1.key in result
-        external_issue4 = self.create_integration_external_issue(
-            group=self.event1.group, integration=self.integration1, key="JKL-000"
-        )
-        result = ExternalIssue.objects.get_linked_issue_ids(
-            event=self.event1, integration=self.api_integration1
-        )
-        assert len(result) == 2
-        for ei in [self.external_issue1, external_issue4]:
-            assert ei.key in result
-        # Empty case
-        result = ExternalIssue.objects.get_linked_issue_ids(
             event=self.event2, integration=self.api_integration2
         )
         assert len(result) == 0

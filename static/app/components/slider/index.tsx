@@ -2,7 +2,8 @@ import {forwardRef, useCallback, useImperativeHandle, useMemo, useRef} from 'rea
 import isPropValid from '@emotion/is-prop-valid';
 import styled from '@emotion/styled';
 import {useNumberFormatter} from '@react-aria/i18n';
-import {AriaSliderProps, AriaSliderThumbOptions, useSlider} from '@react-aria/slider';
+import type {AriaSliderProps, AriaSliderThumbOptions} from '@react-aria/slider';
+import {useSlider} from '@react-aria/slider';
 import {useSliderState} from '@react-stately/slider';
 
 import {Tooltip} from 'sentry/components/tooltip';
@@ -124,14 +125,14 @@ function BaseSlider(
       onChange: indexValue =>
         onChange?.(
           Array.isArray(indexValue)
-            ? indexValue.map(i => allowedValues[i])
-            : allowedValues[indexValue]
+            ? indexValue.map(i => allowedValues[i]!)
+            : allowedValues[indexValue]!
         ),
       onChangeEnd: indexValue =>
         onChangeEnd?.(
           Array.isArray(indexValue)
-            ? indexValue.map(i => allowedValues[i])
-            : allowedValues[indexValue]
+            ? indexValue.map(i => allowedValues[i]!)
+            : allowedValues[indexValue]!
         ),
     }),
   };
@@ -170,17 +171,13 @@ function BaseSlider(
   }, [ticks, ticksInterval, tickValues, min, max]);
 
   const nThumbs = state.values.length;
-  const refs = useRef<Array<HTMLInputElement>>([]);
-  useImperativeHandle(
-    forwardedRef,
-    () => {
-      if (nThumbs > 1) {
-        return refs.current;
-      }
-      return refs.current[0];
-    },
-    [nThumbs]
-  );
+  const refs = useRef<HTMLInputElement[]>([]);
+  useImperativeHandle(forwardedRef, () => {
+    if (nThumbs > 1) {
+      return refs.current;
+    }
+    return refs.current[0]!;
+  }, [nThumbs]);
 
   const getFormattedValue = useCallback(
     (val: number) => {
@@ -188,8 +185,8 @@ function BaseSlider(
       // like an index for `allowedValues`.
       if (allowedValues) {
         return formatLabel
-          ? formatLabel(allowedValues[val])
-          : state.getFormattedValue(allowedValues[val]);
+          ? formatLabel(allowedValues[val]!)
+          : state.getFormattedValue(allowedValues[val]!);
       }
 
       return formatLabel ? formatLabel(val) : state.getFormattedValue(val);
@@ -217,10 +214,10 @@ function BaseSlider(
             <SliderLabel {...labelProps}>{label}</SliderLabel>
             <SliderLabelOutput {...outputProps}>
               {nThumbs > 1
-                ? `${getFormattedValue(selectedRange[0])}–${getFormattedValue(
-                    selectedRange[1]
+                ? `${getFormattedValue(selectedRange[0]!)}–${getFormattedValue(
+                    selectedRange[1]!
                   )}`
-                : getFormattedValue(selectedRange[1])}
+                : getFormattedValue(selectedRange[1]!)}
             </SliderLabelOutput>
           </SliderLabelWrapper>
         )}
@@ -237,8 +234,8 @@ function BaseSlider(
             disabled={disabled}
             error={error}
             style={{
-              left: `${state.getValuePercent(selectedRange[0]) * 100}%`,
-              right: `${100 - state.getValuePercent(selectedRange[1]) * 100}%`,
+              left: `${state.getValuePercent(selectedRange[0]!) * 100}%`,
+              right: `${100 - state.getValuePercent(selectedRange[1]!) * 100}%`,
             }}
           />
 
@@ -248,14 +245,16 @@ function BaseSlider(
               aria-hidden
               error={error}
               disabled={disabled}
-              inSelection={tickValue >= selectedRange[0] && tickValue <= selectedRange[1]}
+              inSelection={
+                tickValue >= selectedRange[0]! && tickValue <= selectedRange[1]!
+              }
               style={{left: `${(state.getValuePercent(tickValue) * 100).toFixed(2)}%`}}
               justifyContent={
                 index === 0
                   ? 'start'
                   : index === allTickValues.length - 1
-                  ? 'end'
-                  : 'center'
+                    ? 'end'
+                    : 'center'
               }
             >
               {showTickLabels && (
@@ -317,7 +316,7 @@ const SliderLabelWrapper = styled('div')`
 `;
 
 const SliderLabel = styled('label')`
-  font-weight: 400;
+  font-weight: ${p => p.theme.fontWeightNormal};
   color: ${p => p.theme.textColor};
 `;
 
