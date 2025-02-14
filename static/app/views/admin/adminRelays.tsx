@@ -1,16 +1,16 @@
 import {Component} from 'react';
-import {RouteComponentProps} from 'react-router';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import LinkWithConfirmation from 'sentry/components/links/linkWithConfirmation';
 import ResultGrid from 'sentry/components/resultGrid';
 import {t} from 'sentry/locale';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
 import withApi from 'sentry/utils/withApi';
 
 const prettyDate = (x: string) => moment(x).format('ll LTS');
 
-type Props = RouteComponentProps<{}, {}> & {api: Client};
+type Props = RouteComponentProps & {api: Client};
 
 type State = {
   loading: boolean;

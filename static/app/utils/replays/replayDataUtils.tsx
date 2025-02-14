@@ -1,9 +1,13 @@
 import invariant from 'invariant';
-import {duration} from 'moment';
+import {duration} from 'moment-timezone';
 
 import isValidDate from 'sentry/utils/date/isValidDate';
 import getMinMax from 'sentry/utils/getMinMax';
 import type {ReplayRecord} from 'sentry/views/replays/types';
+
+const defaultValues = {
+  has_viewed: false,
+};
 
 export function mapResponseToReplayRecord(apiResponse: any): ReplayRecord {
   // Marshal special fields into tags
@@ -35,26 +39,19 @@ export function mapResponseToReplayRecord(apiResponse: any): ReplayRecord {
     ...user,
   };
 
-  // Sort the tags by key
-  const tags = Object.keys(unorderedTags)
-    .sort()
-    .reduce((acc, key) => {
-      acc[key] = unorderedTags[key];
-      return acc;
-    }, {});
-
   const startedAt = new Date(apiResponse.started_at);
   invariant(isValidDate(startedAt), 'replay.started_at is invalid');
   const finishedAt = new Date(apiResponse.finished_at);
   invariant(isValidDate(finishedAt), 'replay.finished_at is invalid');
   return {
+    ...defaultValues,
     ...apiResponse,
     ...(apiResponse.started_at ? {started_at: startedAt} : {}),
     ...(apiResponse.finished_at ? {finished_at: finishedAt} : {}),
     ...(apiResponse.duration !== undefined
       ? {duration: duration(apiResponse.duration * 1000)}
       : {}),
-    tags,
+    tags: unorderedTags,
   };
 }
 
@@ -66,16 +63,16 @@ export function mapResponseToReplayRecord(apiResponse: any): ReplayRecord {
  */
 export function replayTimestamps(
   replayRecord: ReplayRecord,
-  rrwebEvents: {timestamp: number}[],
-  rawCrumbs: {timestamp: number}[],
-  rawSpanData: {endTimestamp: number; op: string; startTimestamp: number}[]
+  rrwebEvents: Array<{timestamp: number}>,
+  rawCrumbs: Array<{timestamp: number}>,
+  rawSpanData: Array<{endTimestamp: number; op: string; startTimestamp: number}>
 ) {
   const rrwebTimestamps = rrwebEvents.map(event => event.timestamp).filter(Boolean);
   const breadcrumbTimestamps = rawCrumbs
     .map(rawCrumb => rawCrumb.timestamp)
     .filter(Boolean);
   const rawSpanDataFiltered = rawSpanData.filter(
-    ({op}) => op !== 'largest-contentful-paint'
+    ({op}) => op !== 'web-vital' && op !== 'largest-contentful-paint'
   );
   const spanStartTimestamps = rawSpanDataFiltered
     .map(span => span.startTimestamp)

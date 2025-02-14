@@ -1,4 +1,6 @@
-import {DataScrubbingRelayPiiConfig} from 'sentry-fixture/dataScrubbingRelayPiiConfig';
+import {DataScrubbingRelayPiiConfigFixture} from 'sentry-fixture/dataScrubbingRelayPiiConfig';
+import {EventFixture} from 'sentry-fixture/event';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
@@ -9,9 +11,8 @@ import ProjectsStore from 'sentry/stores/projectsStore';
 import {BreadcrumbLevelType, BreadcrumbType} from 'sentry/types/breadcrumbs';
 
 describe('Breadcrumb Data Default', function () {
-  const project = TestStubs.Project({
+  const project = ProjectFixture({
     id: '0',
-    relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfig()),
   });
 
   const {organization, router} = initializeOrg({
@@ -21,7 +22,17 @@ describe('Breadcrumb Data Default', function () {
     projects: [project],
   });
 
-  ProjectsStore.loadInitialData([project]);
+  beforeEach(() => {
+    const projectDetails = ProjectFixture({
+      ...project,
+      relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+    });
+    MockApiClient.addMockResponse({
+      url: `/projects/org-slug/${project.slug}/`,
+      body: projectDetails,
+    });
+    ProjectsStore.loadInitialData([project]);
+  });
 
   it('display redacted message', async function () {
     render(
@@ -42,8 +53,8 @@ describe('Breadcrumb Data Default', function () {
             },
           },
         }}
-        event={TestStubs.Event()}
-        orgSlug="org-slug"
+        event={EventFixture()}
+        organization={organization}
         searchTerm=""
         breadcrumb={{
           type: BreadcrumbType.DEBUG,
@@ -86,8 +97,8 @@ describe('Breadcrumb Data Default', function () {
             },
           },
         }}
-        event={TestStubs.Event()}
-        orgSlug="org-slug"
+        event={EventFixture()}
+        organization={organization}
         searchTerm=""
         breadcrumb={{
           type: BreadcrumbType.DEBUG,

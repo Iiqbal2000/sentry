@@ -1,4 +1,5 @@
 import {Fragment} from 'react';
+import type {PopperProps} from 'react-popper';
 import isPropValid from '@emotion/is-prop-valid';
 import styled from '@emotion/styled';
 
@@ -14,7 +15,7 @@ interface BaseRadioGroupProps<C extends string> {
   /**
    * The choices availiable in the group
    */
-  choices: RadioOption<C>[];
+  choices: Array<RadioOption<C>>;
   /**
    * Labels the radio group.
    */
@@ -25,11 +26,12 @@ interface BaseRadioGroupProps<C extends string> {
   /**
    * An array of [choice id, disabled reason]
    */
-  disabledChoices?: [C, React.ReactNode?][];
+  disabledChoices?: Array<[C, React.ReactNode?]>;
   /**
    * Switch the radio items to flow left to right, instead of vertically.
    */
   orientInline?: boolean;
+  tooltipPosition?: PopperProps<any>['placement'];
 }
 
 /**
@@ -43,9 +45,12 @@ export type RadioOption<C extends string = string> = [
 
 export interface RadioGroupProps<C extends string = string>
   extends BaseRadioGroupProps<C>,
-    Omit<ContainerProps, 'onChange'> {}
+    Omit<ContainerProps, 'onChange'> {
+  name?: string;
+}
 
 function RadioGroup<C extends string>({
+  name: groupName,
   value,
   disabled: groupDisabled,
   disabledChoices = [],
@@ -53,6 +58,7 @@ function RadioGroup<C extends string>({
   label,
   onChange,
   orientInline,
+  tooltipPosition,
   ...props
 }: RadioGroupProps<C>) {
   return (
@@ -77,9 +83,11 @@ function RadioGroup<C extends string>({
             key={index}
             disabled={!disabledChoiceReason}
             title={disabledChoiceReason}
+            position={tooltipPosition}
           >
             <RadioLineItem index={index} aria-checked={value === id} disabled={disabled}>
               <Radio
+                name={groupName}
                 aria-label={name?.toString()}
                 disabled={disabled}
                 checked={value === id}
@@ -122,7 +130,7 @@ export const RadioLineItem = styled('label', {shouldForwardProp})<{
   align-items: center;
   cursor: ${p => (p.disabled ? 'default' : 'pointer')};
   outline: none;
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
   margin: 0;
 `;
 

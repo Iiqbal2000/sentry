@@ -6,7 +6,6 @@ from sentry.runner import configure
 from sentry.utils.json import dumps_htmlsafe
 
 configure()
-import pathlib
 import uuid
 from datetime import datetime, timedelta
 
@@ -73,11 +72,11 @@ def create_recording(replay_id, project_id, timestamp):
             24,
         ),
     ]
-    for (segment_id, segment) in enumerate(segments):
+    for segment_id, segment in enumerate(segments):
         store_replay_segments(replay_id, project_id, segment_id, segment)
 
 
-def store_replay_segments(replay_id: str, project_id: str, segment_id: int, segment):
+def store_replay_segments(replay_id: str, project_id: int, segment_id: int, segment) -> None:
     f = File.objects.create(name="rr:{segment_id}", type="replay.recording")
     f.putfile(BytesIO(compress(dumps_htmlsafe(segment).encode())))
     ReplayRecordingSegment.objects.create(
@@ -86,11 +85,6 @@ def store_replay_segments(replay_id: str, project_id: str, segment_id: int, segm
         segment_id=segment_id,
         file_id=f.id,
     )
-
-
-def make_filename(filename: str) -> str:
-    parent_dir = pathlib.Path(__file__).parent.resolve()
-    return f"{parent_dir}/rrweb-output/{filename}"
 
 
 def main():

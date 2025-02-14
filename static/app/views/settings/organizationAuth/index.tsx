@@ -1,22 +1,22 @@
-import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
+import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
+import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import {AuthProvider, Organization} from 'sentry/types';
-import routeTitleGen from 'sentry/utils/routeTitle';
+import type {AuthProvider} from 'sentry/types/auth';
+import type {Organization} from 'sentry/types/organization';
 import withOrganization from 'sentry/utils/withOrganization';
-import DeprecatedAsyncView from 'sentry/views/deprecatedAsyncView';
 
 import OrganizationAuthList from './organizationAuthList';
 
-type Props = DeprecatedAsyncView['props'] & {
+type Props = DeprecatedAsyncComponent['props'] & {
   organization: Organization;
 };
 
-type State = DeprecatedAsyncView['state'] & {
+type State = DeprecatedAsyncComponent['state'] & {
   provider: AuthProvider | null;
   providerList: AuthProvider[] | null;
 };
 
-class OrganizationAuth extends DeprecatedAsyncView<Props, State> {
+class OrganizationAuth extends DeprecatedAsyncComponent<Props, State> {
   componentDidUpdate() {
     const {organization} = this.props;
     const access = organization.access;
@@ -33,37 +33,13 @@ class OrganizationAuth extends DeprecatedAsyncView<Props, State> {
     }
   }
 
-  getEndpoints(): ReturnType<DeprecatedAsyncView['getEndpoints']> {
+  getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
     const {organization} = this.props;
     return [
       ['providerList', `/organizations/${organization.slug}/auth-providers/`],
       ['provider', `/organizations/${organization.slug}/auth-provider/`],
     ];
   }
-
-  getTitle() {
-    return routeTitleGen(t('Auth Settings'), this.props.organization.slug, false);
-  }
-
-  /**
-   * TODO(epurkhiser): This does not work right now as we still fallback to the
-   * old SSO auth configuration page
-   */
-  handleSendReminders = (_provider: AuthProvider) => {
-    const {organization} = this.props;
-    this.setState({sendRemindersBusy: true});
-
-    this.api.request(
-      `/organizations/${organization.slug}/auth-provider/send-reminders/`,
-      {
-        method: 'POST',
-        data: {},
-        success: () => addSuccessMessage(t('Sent reminders to members')),
-        error: () => addErrorMessage(t('Failed to send reminders')),
-        complete: () => this.setState({sendRemindersBusy: false}),
-      }
-    );
-  };
 
   /**
    * TODO(epurkhiser): This does not work right now as we still fallback to the
@@ -78,7 +54,7 @@ class OrganizationAuth extends DeprecatedAsyncView<Props, State> {
       data: {provider, init: true},
       success: data => {
         // Redirect to auth provider URL
-        if (data && data.auth_url) {
+        if (data?.auth_url) {
           window.location.href = data.auth_url;
         }
       },
@@ -109,6 +85,7 @@ class OrganizationAuth extends DeprecatedAsyncView<Props, State> {
   };
 
   renderBody() {
+    const {organization} = this.props;
     const {providerList, provider} = this.state;
 
     if (providerList === null) {
@@ -124,7 +101,12 @@ class OrganizationAuth extends DeprecatedAsyncView<Props, State> {
     const activeProvider = providerList?.find(p => p.key === provider?.key);
 
     return (
-      <OrganizationAuthList activeProvider={activeProvider} providerList={providerList} />
+      <SentryDocumentTitle title={t('Auth Settings')} orgSlug={organization.slug}>
+        <OrganizationAuthList
+          activeProvider={activeProvider}
+          providerList={providerList}
+        />
+      </SentryDocumentTitle>
     );
   }
 }

@@ -1,24 +1,29 @@
 from unittest import mock
 from uuid import uuid4
 
+import orjson
 import responses
 from django.core.exceptions import ValidationError
 
 from sentry.integrations.discord.actions.issue_alert.form import DiscordNotifyServiceForm
 from sentry.integrations.discord.actions.issue_alert.notification import DiscordNotifyServiceAction
-from sentry.integrations.discord.client import DiscordClient
+from sentry.integrations.discord.client import DISCORD_BASE_URL, MESSAGE_URL
 from sentry.integrations.discord.message_builder import LEVEL_TO_COLOR
 from sentry.integrations.discord.message_builder.base.component import DiscordComponentCustomIds
-from sentry.integrations.message_builder import build_attachment_title, build_footer, get_title_link
+from sentry.integrations.messaging.message_builder import (
+    build_attachment_title,
+    build_footer,
+    get_title_link,
+)
+from sentry.integrations.services.integration import integration_service
+from sentry.integrations.types import EventLifecycleOutcome, ExternalProviders
 from sentry.models.group import GroupStatus
 from sentry.models.release import Release
-from sentry.services.hybrid_cloud.integration import integration_service
-from sentry.shared_integrations.exceptions import ApiTimeoutError
+from sentry.shared_integrations.exceptions import ApiError, ApiRateLimitedError, ApiTimeoutError
+from sentry.testutils.asserts import assert_slo_metric
 from sentry.testutils.cases import RuleTestCase, TestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.testutils.helpers.datetime import before_now
 from sentry.testutils.skips import requires_snuba
-from sentry.types.integrations import ExternalProviders
-from sentry.utils import json
 
 pytestmark = [requires_snuba]
 
@@ -28,7 +33,7 @@ class DiscordIssueAlertTest(RuleTestCase):
 
     def setUp(self):
         self.guild_id = "guild-id"
-        self.channel_id = "channel-id"
+        self.channel_id = "12345678910"
         self.discord_user_id = "user1234"
         self.discord_integration = self.create_integration(
             provider="discord",
@@ -44,7 +49,7 @@ class DiscordIssueAlertTest(RuleTestCase):
             data={
                 "event_id": "a" * 32,
                 "message": "Event message",
-                "timestamp": iso_format(before_now(seconds=1)),
+                "timestamp": before_now(seconds=1).isoformat(),
             },
             project_id=self.project.id,
         )
@@ -59,24 +64,68 @@ class DiscordIssueAlertTest(RuleTestCase):
 
         responses.add(
             method=responses.POST,
-            url=f"{DiscordClient.MESSAGE_URL.format(channel_id=self.channel_id)}",
+            url=f"{DISCORD_BASE_URL}{MESSAGE_URL.format(channel_id=self.channel_id)}",
             status=200,
+            json={"message_id": "12345678910"},
         )
+
+    @mock.patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def assert_lifecycle_metrics(self, mock_record_event):
+        notification_uuid = str(uuid4())
+        self.rule.after(self.event, notification_uuid=notification_uuid)
+
+        assert_slo_metric(mock_record_event)
+
+    @mock.patch(
+        "sentry.integrations.discord.client.DiscordClient.send_message", side_effect=Exception
+    )
+    @mock.patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def assert_lifecycle_metrics_failure(self, mock_record_event, mock_send_message):
+        self.rule.after(self.event)
+        assert_slo_metric(mock_record_event, EventLifecycleOutcome.FAILURE)
+
+    @mock.patch(
+        "sentry.integrations.discord.client.DiscordClient.send_message",
+        side_effect=ApiRateLimitedError(text="Rate limited"),
+    )
+    @mock.patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def assert_lifecycle_metrics_halt_for_rate_limit(self, mock_record_event, mock_send_message):
+        self.rule.after(self.event)
+        assert_slo_metric(mock_record_event, EventLifecycleOutcome.HALTED)
+
+    @mock.patch(
+        "sentry.integrations.discord.client.DiscordClient.send_message",
+        side_effect=ApiError(code=50001, text="Missing access"),
+    )
+    @mock.patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def assert_lifecycle_metrics_halt_for_missing_access(
+        self, mock_record_event, mock_send_message
+    ):
+        self.rule.after(self.event)
+        assert_slo_metric(mock_record_event, EventLifecycleOutcome.HALTED)
+
+    @mock.patch(
+        "sentry.integrations.discord.client.DiscordClient.send_message",
+        side_effect=ApiError(code=400, text="Bad request"),
+    )
+    @mock.patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def assert_lifecycle_metrics_failure_for_other_api_error(
+        self, mock_record_event, mock_send_message
+    ):
+        self.rule.after(self.event)
+        assert_slo_metric(mock_record_event, EventLifecycleOutcome.FAILURE)
 
     @responses.activate
     @mock.patch("sentry.analytics.record")
     def test_basic(self, mock_record):
         notification_uuid = str(uuid4())
-        results = list(
-            self.rule.after(self.event, self.get_state(), notification_uuid=notification_uuid)
-        )
+        results = list(self.rule.after(self.event, notification_uuid=notification_uuid))
         assert len(results) == 1
 
-        with self.feature("organizations:integrations-discord-notifications"):
-            results[0].callback(self.event, futures=[])
+        results[0].callback(self.event, futures=[])
 
         body = responses.calls[0].request.body
-        data = json.loads(bytes.decode(body, "utf-8"))
+        data = orjson.loads(body)
 
         embed = data["embeds"][0]
         assert embed == {
@@ -135,14 +184,13 @@ class DiscordIssueAlertTest(RuleTestCase):
         )
         release.add_project(self.project)
 
-        results = list(self.rule.after(self.event, self.get_state()))
+        results = list(self.rule.after(self.event))
         assert len(results) == 1
 
-        with self.feature("organizations:integrations-discord-notifications"):
-            results[0].callback(self.event, futures=[])
+        results[0].callback(self.event, futures=[])
 
         body = responses.calls[0].request.body
-        data = json.loads(bytes.decode(body, "utf-8"))
+        data = orjson.loads(body)
 
         buttons = data["components"][0]["components"]
         assert (
@@ -163,14 +211,13 @@ class DiscordIssueAlertTest(RuleTestCase):
         return_value=GroupStatus.RESOLVED,
     )
     def test_resolved(self, mock_get_status):
-        results = list(self.rule.after(self.event, self.get_state()))
+        results = list(self.rule.after(self.event))
         assert len(results) == 1
 
-        with self.feature("organizations:integrations-discord-notifications"):
-            results[0].callback(self.event, futures=[])
+        results[0].callback(self.event, futures=[])
 
         body = responses.calls[0].request.body
-        data = json.loads(bytes.decode(body, "utf-8"))
+        data = orjson.loads(body)
 
         buttons = data["components"][0]["components"]
         assert (
@@ -191,14 +238,13 @@ class DiscordIssueAlertTest(RuleTestCase):
         return_value=GroupStatus.IGNORED,
     )
     def test_ignored(self, mock_get_status):
-        results = list(self.rule.after(self.event, self.get_state()))
+        results = list(self.rule.after(self.event))
         assert len(results) == 1
 
-        with self.feature("organizations:integrations-discord-notifications"):
-            results[0].callback(self.event, futures=[])
+        results[0].callback(self.event, futures=[])
 
         body = responses.calls[0].request.body
-        data = json.loads(bytes.decode(body, "utf-8"))
+        data = orjson.loads(body)
 
         buttons = data["components"][0]["components"]
         assert (
@@ -215,19 +261,16 @@ class DiscordIssueAlertTest(RuleTestCase):
 
     @responses.activate
     def test_feature_flag_disabled(self):
-        results = list(self.rule.after(self.event, self.get_state()))
+        results = list(self.rule.after(self.event))
         assert len(results) == 1
-        with self.feature("organizations:integrations-discord-notifications"):
-            results[0].callback(self.event, futures=[])
+        results[0].callback(self.event, futures=[])
 
-        responses.assert_call_count(
-            f"{DiscordClient.MESSAGE_URL.format(channel_id=self.channel_id)}", 0
-        )
+        responses.assert_call_count(f"{MESSAGE_URL.format(channel_id=self.channel_id)}", 0)
 
     @responses.activate
     def test_integration_removed(self):
         integration_service.delete_integration(integration_id=self.discord_integration.id)
-        results = list(self.rule.after(self.event, self.get_state()))
+        results = list(self.rule.after(self.event))
         assert len(results) == 0
 
     @responses.activate
@@ -249,14 +292,14 @@ class DiscordIssueAlertTest(RuleTestCase):
         label = self.rule.render_label()
         assert (
             label
-            == "Send a notification to the Cool server Discord server in the channel with ID: channel-id and show tags [environment, user] in the notification."
+            == f"Send a notification to the Cool server Discord server in the channel with ID or URL: {self.channel_id} and show tags [{self.tags}] in the notification."
         )
 
 
 class DiscordNotifyServiceFormTest(TestCase):
     def setUp(self):
         self.guild_id = "guild-id"
-        self.channel_id = "channel-id"
+        self.channel_id = "12345678910"
         self.discord_integration = self.create_integration(
             provider="discord",
             name="Cool server",
@@ -271,9 +314,17 @@ class DiscordNotifyServiceFormTest(TestCase):
         )
         self.integrations = [self.discord_integration, self.other_integration]
 
+        self.form = DiscordNotifyServiceForm(
+            data={
+                "server": self.discord_integration.id,
+                "channel_id": self.channel_id,
+            },
+            integrations=self.integrations,
+        )
+
     def test_has_choices(self):
         form = DiscordNotifyServiceForm(integrations=self.integrations)
-        assert form.fields["server"].choices == [  # type: ignore
+        assert form.fields["server"].choices == [  # type: ignore[attr-defined]
             (self.discord_integration.id, self.discord_integration.name),
             (self.other_integration.id, self.other_integration.name),
         ]
@@ -283,26 +334,18 @@ class DiscordNotifyServiceFormTest(TestCase):
         return_value=None,
     )
     def test_valid(self, mock_validate_channel_id):
-        form = DiscordNotifyServiceForm(
-            data={
-                "server": self.discord_integration.id,
-                "channel_id": self.channel_id,
-                "tags": "environment",
-            },
-            integrations=self.integrations,
-        )
-
-        form.full_clean()
-        assert form.is_valid()
+        self.form.full_clean()
+        assert self.form.is_valid()
         assert mock_validate_channel_id.call_count == 1
 
-    def test_no_channel_id(self):
-        form = DiscordNotifyServiceForm(
-            data={"server": self.discord_integration.id},
-            integrations=self.integrations,
-        )
-        form.full_clean()
-        assert not form.is_valid()
+    @mock.patch(
+        "sentry.integrations.discord.actions.issue_alert.form.get_channel_id_from_url",
+        return_value="",
+    )
+    def test_no_channel_id(self, mock_get_channel_id_from_url):
+        self.form.full_clean()
+        assert not self.form.is_valid()
+        assert mock_get_channel_id_from_url.call_count == 1
 
     def test_no_server(self):
         form = DiscordNotifyServiceForm(integrations=self.integrations)
@@ -314,16 +357,8 @@ class DiscordNotifyServiceFormTest(TestCase):
         return_value=None,
     )
     def test_no_tags(self, mock_validate_channel_id):
-        form = DiscordNotifyServiceForm(
-            data={
-                "server": self.discord_integration.id,
-                "channel_id": self.channel_id,
-            },
-            integrations=self.integrations,
-        )
-
-        form.full_clean()
-        assert form.is_valid()
+        self.form.full_clean()
+        assert self.form.is_valid()
         assert mock_validate_channel_id.call_count == 1
 
     @mock.patch(
@@ -331,16 +366,8 @@ class DiscordNotifyServiceFormTest(TestCase):
         side_effect=ValidationError("bad"),
     )
     def test_invalid_channel_id(self, mock_validate_channel_id):
-        form = DiscordNotifyServiceForm(
-            data={
-                "server": self.discord_integration.id,
-                "channel_id": self.channel_id,
-            },
-            integrations=self.integrations,
-        )
-
-        form.full_clean()
-        assert not form.is_valid()
+        self.form.full_clean()
+        assert not self.form.is_valid()
         assert mock_validate_channel_id.call_count == 1
 
     @mock.patch(
@@ -359,4 +386,35 @@ class DiscordNotifyServiceFormTest(TestCase):
 
         form.full_clean()
         assert not form.is_valid()
+        assert mock_validate_channel_id.call_count == 1
+
+    def test_get_channel_id_bad(self):
+        form = DiscordNotifyServiceForm(
+            data={
+                "server": self.discord_integration.id,
+                "channel_id": "https://discord.com/channels/server/",
+                "tags": "environment",
+            },
+            integrations=self.integrations,
+        )
+
+        form.full_clean()
+        assert not form.is_valid()
+
+    @mock.patch(
+        "sentry.integrations.discord.actions.issue_alert.form.validate_channel_id",
+        return_value=None,
+    )
+    def test_get_channel_id_updates(self, mock_validate_channel_id):
+        form = DiscordNotifyServiceForm(
+            data={
+                "server": self.discord_integration.id,
+                "channel_id": "https://discord.com/channels/server/12345678910",
+                "tags": "environment",
+            },
+            integrations=self.integrations,
+        )
+        form.full_clean()
+        assert form.is_valid()
+        assert form.cleaned_data["channel_id"] == "12345678910"
         assert mock_validate_channel_id.call_count == 1

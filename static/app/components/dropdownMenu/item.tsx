@@ -2,17 +2,18 @@ import {forwardRef, Fragment, useContext, useEffect, useRef} from 'react';
 import {useHover, useKeyboard} from '@react-aria/interactions';
 import {useMenuItem} from '@react-aria/menu';
 import {mergeProps} from '@react-aria/utils';
-import {TreeState} from '@react-stately/tree';
-import {Node} from '@react-types/shared';
-import {LocationDescriptor} from 'history';
+import type {TreeState} from '@react-stately/tree';
+import type {Node} from '@react-types/shared';
+import type {LocationDescriptor} from 'history';
 
 import Link from 'sentry/components/links/link';
+import type {MenuListItemProps} from 'sentry/components/menuListItem';
 import MenuListItem, {
   InnerWrap as MenuListItemInnerWrap,
-  MenuListItemProps,
 } from 'sentry/components/menuListItem';
 import {IconChevron} from 'sentry/icons';
 import mergeRefs from 'sentry/utils/mergeRefs';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import usePrevious from 'sentry/utils/usePrevious';
 
 import {DropdownMenuContext} from './list';
@@ -29,7 +30,7 @@ export interface MenuItemProps extends MenuListItemProps {
    */
   children?: MenuItemProps[];
   /**
-   * Plass a class name to the menu item.
+   * Pass a class name to the menu item.
    */
   className?: string;
   /**
@@ -51,7 +52,7 @@ export interface MenuItemProps extends MenuListItemProps {
    * Function to call when user selects/clicks/taps on the menu item. The
    * item's key is passed as an argument.
    */
-  onAction?: (key: MenuItemProps['key']) => void;
+  onAction?: () => void;
   /**
    * Passed as the `menuTitle` prop onto the associated sub-menu (applicable
    * if `children` is defined and `isSubmenu` is true)
@@ -118,16 +119,23 @@ function BaseDropdownMenuItem(
   const {key, onAction, to, label, isSubmenu, trailingItems, ...itemProps} =
     node.value ?? {};
   const {size} = node.props;
+  const {rootOverlayState} = useContext(DropdownMenuContext);
+  const navigate = useNavigate();
 
   const actionHandler = () => {
     if (to) {
+      // Close the menu after the click event has bubbled to the link
+      // Only needed on links that do not unmount the menu
+      if (closeOnSelect) {
+        requestAnimationFrame(() => rootOverlayState?.close());
+      }
       return;
     }
     if (isSubmenu) {
       state.selectionManager.toggleSelection(node.key);
       return;
     }
-    key && onAction?.(key);
+    onAction?.();
   };
 
   // Open submenu on hover
@@ -160,11 +168,19 @@ function BaseDropdownMenuItem(
   const {keyboardProps} = useKeyboard({
     onKeyDown: e => {
       if (e.key === 'Enter' && to) {
-        const mouseEvent = new MouseEvent('click', {
-          ctrlKey: e.ctrlKey,
-          metaKey: e.metaKey,
-        });
-        ref.current?.querySelector(`${MenuListItemInnerWrap}`)?.dispatchEvent(mouseEvent);
+        // If the user is holding down the meta key, we want to dispatch a mouse event
+        if (e.metaKey || e.ctrlKey) {
+          const mouseEvent = new MouseEvent('click', {
+            ctrlKey: e.ctrlKey,
+            metaKey: e.metaKey,
+          });
+          ref.current
+            ?.querySelector(`${MenuListItemInnerWrap}`)
+            ?.dispatchEvent(mouseEvent);
+          return;
+        }
+
+        navigate(to);
         return;
       }
 
@@ -178,7 +194,6 @@ function BaseDropdownMenuItem(
   });
 
   // Manage interactive events & create aria attributes
-  const {rootOverlayState} = useContext(DropdownMenuContext);
   const {menuItemProps, labelProps, descriptionProps} = useMenuItem(
     {
       key: node.key,
@@ -198,7 +213,7 @@ function BaseDropdownMenuItem(
   // etc. See: https://react-spectrum.adobe.com/react-aria/mergeProps.html
   const mergedProps = mergeProps(props, menuItemProps, hoverProps, keyboardProps);
   const itemLabel = node.rendered ?? label;
-  const innerWrapProps = {as: to ? Link : 'div', to};
+  const innerWrapProps = {as: to ? Link : ('div' as const), to};
 
   return (
     <MenuListItem
@@ -215,7 +230,7 @@ function BaseDropdownMenuItem(
       trailingItems={
         isSubmenu ? (
           <Fragment>
-            {trailingItems}
+            {trailingItems as React.ReactNode}
             <IconChevron size="xs" direction="right" aria-hidden="true" />
           </Fragment>
         ) : (

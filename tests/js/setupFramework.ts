@@ -31,6 +31,18 @@ failOnConsole({
       return true;
     }
 
+    // TODO: Remove this after updating jsdom, currently it cannot handle @container queries
+    if (/Error: Could not parse CSS stylesheet/.test(errorMessage)) {
+      return true;
+    }
+
+    // TODO: Remove after either the removal of AsyncComponent or migrating the tests not to use contexts
+    if (
+      /uses the legacy contextTypes API which is no longer supported/.test(errorMessage)
+    ) {
+      return true;
+    }
+
     return false;
   },
 });

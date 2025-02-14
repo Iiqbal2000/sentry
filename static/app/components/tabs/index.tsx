@@ -2,15 +2,14 @@ import 'intersection-observer'; // polyfill
 
 import {createContext, useState} from 'react';
 import styled from '@emotion/styled';
-import {AriaTabListOptions} from '@react-aria/tabs';
-import {TabListState, TabListStateOptions} from '@react-stately/tabs';
-import {Orientation} from '@react-types/shared';
+import type {AriaTabListOptions} from '@react-aria/tabs';
+import type {TabListState, TabListStateOptions} from '@react-stately/tabs';
+import type {Orientation} from '@react-types/shared';
 
-import {TabList, TabListProps} from './tabList';
-import {TabPanels} from './tabPanels';
 import {tabsShouldForwardProp} from './utils';
 
-export {TabList, TabListProps, TabPanels};
+export {TabList, type TabListProps} from './tabList';
+export {TabPanels} from './tabPanels';
 
 export interface TabsProps<T>
   extends Omit<
@@ -32,6 +31,10 @@ export interface TabsProps<T>
    * selected tab item.
    */
   defaultValue?: T;
+  /**
+   * Disable tabs from being put in the overflow menu.
+   */
+  disableOverflow?: boolean;
   disabled?: boolean;
   /**
    * Callback when the selected tab changes.
@@ -44,7 +47,7 @@ export interface TabsProps<T>
   value?: T;
 }
 
-interface TabContext {
+export interface TabContext {
   rootProps: Omit<TabsProps<any>, 'children' | 'className'>;
   setTabListState: (state: TabListState<any>) => void;
   tabListState?: TabListState<any>;
@@ -55,27 +58,42 @@ export const TabsContext = createContext<TabContext>({
   setTabListState: () => {},
 });
 
+export function TabStateProvider<T extends string | number>({
+  children,
+  ...props
+}: Omit<TabsProps<T>, 'className'>) {
+  const [tabListState, setTabListState] = useState<TabListState<any>>();
+
+  return (
+    <TabsContext.Provider
+      value={{
+        rootProps: {...props, orientation: 'horizontal'},
+        tabListState,
+        setTabListState,
+      }}
+    >
+      {children}
+    </TabsContext.Provider>
+  );
+}
+
 /**
  * Root tabs component. Provides the necessary data (via React context) for
  * child components (TabList and TabPanels) to work together. See example
  * usage in tabs.stories.js
  */
-export function Tabs<T extends React.Key>({
+export function Tabs<T extends string | number>({
   orientation = 'horizontal',
   className,
   children,
   ...props
 }: TabsProps<T>) {
-  const [tabListState, setTabListState] = useState<TabListState<any>>();
-
   return (
-    <TabsContext.Provider
-      value={{rootProps: {...props, orientation}, tabListState, setTabListState}}
-    >
+    <TabStateProvider orientation={orientation} {...props}>
       <TabsWrap orientation={orientation} className={className}>
         {children}
       </TabsWrap>
-    </TabsContext.Provider>
+    </TabStateProvider>
   );
 }
 

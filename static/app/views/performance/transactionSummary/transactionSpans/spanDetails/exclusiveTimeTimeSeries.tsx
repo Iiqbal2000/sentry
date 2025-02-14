@@ -1,5 +1,4 @@
 import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import {useTheme} from '@emotion/react';
 
 import ChartZoom from 'sentry/components/charts/chartZoom';
@@ -15,15 +14,15 @@ import Placeholder from 'sentry/components/placeholder';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
 import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import getDynamicText from 'sentry/utils/getDynamicText';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
 import useApi from 'sentry/utils/useApi';
 import {useLocation} from 'sentry/utils/useLocation';
-import useRouter from 'sentry/utils/useRouter';
+import {useNavigate} from 'sentry/utils/useNavigate';
 
 import {getExclusiveTimeDisplayedValue} from '../utils';
 
@@ -35,8 +34,8 @@ type Props = {
 };
 
 export default function ExclusiveTimeTimeSeries(props: Props) {
+  const navigate = useNavigate();
   const location = useLocation();
-  const router = useRouter();
   const {organization, eventView, spanSlug, withoutZerofill} = props;
 
   const api = useApi();
@@ -60,7 +59,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
     'percentileArray(spans_exclusive_time, 0.99)',
   ];
 
-  const handleLegendSelectChanged = legendChange => {
+  const handleLegendSelectChanged = (legendChange: any) => {
     const {selected} = legendChange;
     const unselected = Object.keys(selected).filter(key => !selected[key]);
 
@@ -71,7 +70,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
         unselectedSeries: unselected,
       },
     };
-    browserHistory.push(to);
+    navigate(to);
   };
 
   return (
@@ -86,13 +85,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
           )}
         />
       </HeaderTitleLegend>
-      <ChartZoom
-        router={router}
-        period={period}
-        start={start}
-        end={end}
-        utc={utc === 'true'}
-      >
+      <ChartZoom period={period} start={start} end={end} utc={utc === 'true'}>
         {zoomRenderProps => (
           <EventsRequest
             api={api}
@@ -135,7 +128,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
                 tooltip: {
                   trigger: 'axis' as const,
                   // p50() coerces the axis to be time based
-                  valueFormatter: (value, _seriesName) =>
+                  valueFormatter: (value: any, _seriesName: any) =>
                     tooltipFormatter(value, 'duration'),
                 },
                 xAxis: timeframe

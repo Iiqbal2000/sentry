@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest import mock
 
 import responses
 
 from sentry.integrations.bitbucket.installed import BitbucketInstalledEndpoint
 from sentry.integrations.bitbucket.integration import BitbucketIntegrationProvider, scopes
-from sentry.models.integrations.integration import Integration
+from sentry.integrations.models.integration import Integration
 from sentry.models.project import Project
 from sentry.models.repository import Repository
+from sentry.organizations.services.organization.serial import serialize_rpc_organization
 from sentry.plugins.base import plugins
 from sentry.plugins.bases.issue2 import IssueTrackingPlugin2
-from sentry.services.hybrid_cloud.organization.serial import serialize_rpc_organization
 from sentry.silo.base import SiloMode
 from sentry.testutils.cases import APITestCase
 from sentry.testutils.silo import assume_test_silo_mode, control_silo_test
@@ -23,7 +24,7 @@ class BitbucketPlugin(IssueTrackingPlugin2):
     conf_key = slug
 
 
-@control_silo_test(stable=True)
+@control_silo_test
 class BitbucketInstalledEndpointTest(APITestCase):
     def setUp(self):
         self.provider = "bitbucket"
@@ -107,6 +108,7 @@ class BitbucketInstalledEndpointTest(APITestCase):
         assert response.status_code == 200
         integration = Integration.objects.get(provider=self.provider, external_id=self.client_key)
         assert integration.name == self.username
+        del integration.metadata["webhook_secret"]
         assert integration.metadata == self.metadata
 
     def test_installed_without_public_key(self):
@@ -124,6 +126,7 @@ class BitbucketInstalledEndpointTest(APITestCase):
             provider=self.provider, external_id=self.client_key
         )
         assert integration.name == integration_after.name
+        del integration_after.metadata["webhook_secret"]
         assert integration.metadata == integration_after.metadata
 
     def test_installed_without_username(self):
@@ -136,7 +139,17 @@ class BitbucketInstalledEndpointTest(APITestCase):
         assert response.status_code == 200
         integration = Integration.objects.get(provider=self.provider, external_id=self.client_key)
         assert integration.name == self.user_display_name
+        del integration.metadata["webhook_secret"]
         assert integration.metadata == self.user_metadata
+
+    @mock.patch("sentry.integrations.bitbucket.integration.generate_token", return_value="0" * 64)
+    def test_installed_with_secret(self, mock_generate_token):
+        response = self.client.post(self.path, data=self.team_data_from_bitbucket)
+        assert mock_generate_token.called
+        assert response.status_code == 200
+        integration = Integration.objects.get(provider=self.provider, external_id=self.client_key)
+        assert integration.name == self.username
+        assert integration.metadata["webhook_secret"] == "0" * 64
 
     @responses.activate
     def test_plugin_migration(self):

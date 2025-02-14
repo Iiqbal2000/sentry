@@ -1,13 +1,13 @@
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import {CompactSelect} from 'sentry/components/compactSelect';
 import {pickBarColor} from 'sentry/components/performance/waterfall/utils';
 import {IconFilter, IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
+import type {Organization} from 'sentry/types/organization';
+import type EventView from 'sentry/utils/discover/eventView';
 import SpanOpsQuery from 'sentry/utils/performance/suspectSpans/spanOpsQuery';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
@@ -20,7 +20,7 @@ type Props = {
   transactionName: string;
 };
 
-function getMenuOptions({spanOps, isLoading, error}) {
+function getMenuOptions({spanOps, isLoading, error}: any) {
   if (isLoading) {
     return [{value: 'isLoading', disabled: true, label: t('Loading…')}];
   }
@@ -36,7 +36,7 @@ function getMenuOptions({spanOps, isLoading, error}) {
     ];
   }
 
-  return spanOps.map(spanOp => ({
+  return spanOps.map((spanOp: any) => ({
     value: spanOp.op,
     label: spanOp.op,
     leadingItems: <OperationDot backgroundColor={pickBarColor(spanOp.op)} />,

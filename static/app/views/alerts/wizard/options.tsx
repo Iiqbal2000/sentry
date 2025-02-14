@@ -1,7 +1,11 @@
 import mapValues from 'lodash/mapValues';
 
+import FeatureBadge from 'sentry/components/badge/featureBadge';
+import {STATIC_FIELD_TAGS_WITHOUT_TRANSACTION_FIELDS} from 'sentry/components/events/searchBarFieldConstants';
 import {t} from 'sentry/locale';
-import {Organization, TagCollection} from 'sentry/types';
+import ConfigStore from 'sentry/stores/configStore';
+import type {TagCollection} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
 import {
   FieldKey,
   makeTagCollection,
@@ -12,11 +16,13 @@ import {
   WebVital,
 } from 'sentry/utils/fields';
 import {ON_DEMAND_METRICS_UNSUPPORTED_TAGS} from 'sentry/utils/onDemandMetrics/constants';
+import {shouldShowOnDemandMetricAlertUI} from 'sentry/utils/onDemandMetrics/features';
 import {
   Dataset,
   EventTypes,
   SessionsAggregate,
 } from 'sentry/views/alerts/rules/metric/types';
+import {hasEAPAlerts} from 'sentry/views/insights/common/utils/hasEAPAlerts';
 
 export type AlertType =
   | 'issues'
@@ -29,9 +35,12 @@ export type AlertType =
   | 'lcp'
   | 'fid'
   | 'cls'
-  | 'custom'
   | 'crash_free_sessions'
-  | 'crash_free_users';
+  | 'crash_free_users'
+  | 'custom_transactions'
+  | 'uptime_monitor'
+  | 'crons_monitor'
+  | 'eap_metrics';
 
 export enum MEPAlertsQueryType {
   ERROR = 0,
@@ -45,14 +54,20 @@ export enum MEPAlertsDataset {
   METRICS_ENHANCED = 'metricsEnhanced',
 }
 
-export type MetricAlertType = Exclude<AlertType, 'issues'>;
+export type MetricAlertType = Exclude<
+  AlertType,
+  'issues' | 'uptime_monitor' | 'crons_monitor'
+>;
 
-export const DatasetMEPAlertQueryTypes: Record<Dataset, MEPAlertsQueryType> = {
+export const DatasetMEPAlertQueryTypes: Record<
+  Exclude<Dataset, Dataset.ISSUE_PLATFORM | Dataset.SESSIONS | Dataset.REPLAYS>, // IssuePlatform (search_issues) is not used in alerts, so we can exclude it here
+  MEPAlertsQueryType
+> = {
   [Dataset.ERRORS]: MEPAlertsQueryType.ERROR,
   [Dataset.TRANSACTIONS]: MEPAlertsQueryType.PERFORMANCE,
   [Dataset.GENERIC_METRICS]: MEPAlertsQueryType.PERFORMANCE,
   [Dataset.METRICS]: MEPAlertsQueryType.CRASH_RATE,
-  [Dataset.SESSIONS]: MEPAlertsQueryType.CRASH_RATE,
+  [Dataset.EVENTS_ANALYTICS_PLATFORM]: MEPAlertsQueryType.PERFORMANCE,
 };
 
 export const AlertWizardAlertNames: Record<AlertType, string> = {
@@ -66,50 +81,92 @@ export const AlertWizardAlertNames: Record<AlertType, string> = {
   lcp: t('Largest Contentful Paint'),
   fid: t('First Input Delay'),
   cls: t('Cumulative Layout Shift'),
-  custom: t('Custom Metric'),
+  custom_transactions: t('Custom Measurement'),
   crash_free_sessions: t('Crash Free Session Rate'),
   crash_free_users: t('Crash Free User Rate'),
+  uptime_monitor: t('Uptime Monitor'),
+  eap_metrics: t('Spans'),
+  crons_monitor: t('Cron Monitor'),
+};
+
+/**
+ * Additional elements to render after the name of the alert rule type. Useful
+ * for adding feature badges or other call-outs for newer alert types.
+ */
+export const AlertWizardExtraContent: Partial<Record<AlertType, React.ReactNode>> = {
+  eap_metrics: (
+    <FeatureBadge
+      type="beta"
+      title={t('This feature is available for early adopters and the UX may change')}
+    />
+  ),
+  uptime_monitor: <FeatureBadge type="new" />,
 };
 
 type AlertWizardCategory = {
   categoryHeading: string;
   options: AlertType[];
 };
-export const getAlertWizardCategories = (org: Organization): AlertWizardCategory[] => [
-  {
-    categoryHeading: t('Errors'),
-    options: ['issues', 'num_errors', 'users_experiencing_errors'],
-  },
-  ...(org.features.includes('crash-rate-alerts')
-    ? [
-        {
-          categoryHeading: t('Sessions'),
-          options: ['crash_free_sessions', 'crash_free_users'] as AlertType[],
-        },
-      ]
-    : []),
-  {
-    categoryHeading: t('Performance'),
-    options: [
-      'throughput',
-      'trans_duration',
-      'apdex',
-      'failure_rate',
-      'lcp',
-      'fid',
-      'cls',
-    ],
-  },
-  {
-    categoryHeading: t('Other'),
-    options: ['custom'],
-  },
-];
+export const getAlertWizardCategories = (org: Organization) => {
+  const result: AlertWizardCategory[] = [
+    {
+      categoryHeading: t('Errors'),
+      options: ['issues', 'num_errors', 'users_experiencing_errors'],
+    },
+  ];
+  const isSelfHostedErrorsOnly = ConfigStore.get('isSelfHostedErrorsOnly');
+  if (!isSelfHostedErrorsOnly) {
+    if (org.features.includes('crash-rate-alerts')) {
+      result.push({
+        categoryHeading: t('Sessions'),
+        options: ['crash_free_sessions', 'crash_free_users'] satisfies AlertType[],
+      });
+    }
+    result.push({
+      categoryHeading: t('Performance'),
+      options: [
+        'throughput',
+        'trans_duration',
+        'apdex',
+        'failure_rate',
+        'lcp',
+        'fid',
+        'cls',
+
+        ...(hasEAPAlerts(org) ? ['eap_metrics' as const] : []),
+      ],
+    });
+
+    if (
+      org.features.includes('uptime') &&
+      !org.features.includes('uptime-create-disabled')
+    ) {
+      result.push({
+        categoryHeading: t('Uptime Monitoring'),
+        options: ['uptime_monitor'],
+      });
+    }
+
+    if (org.features.includes('insights-crons')) {
+      result.push({
+        categoryHeading: t('Cron Monitoring'),
+        options: ['crons_monitor'],
+      });
+    }
+
+    result.push({
+      categoryHeading: t('Custom'),
+      options: ['custom_transactions'],
+    });
+  }
+  return result;
+};
 
 export type WizardRuleTemplate = {
   aggregate: string;
   dataset: Dataset;
   eventTypes: EventTypes;
+  query?: string;
 };
 
 export const AlertWizardRuleTemplates: Record<
@@ -161,22 +218,25 @@ export const AlertWizardRuleTemplates: Record<
     dataset: Dataset.TRANSACTIONS,
     eventTypes: EventTypes.TRANSACTION,
   },
-  custom: {
+  custom_transactions: {
     aggregate: 'p95(measurements.fp)',
-    dataset: Dataset.TRANSACTIONS,
+    dataset: Dataset.GENERIC_METRICS,
     eventTypes: EventTypes.TRANSACTION,
   },
   crash_free_sessions: {
     aggregate: SessionsAggregate.CRASH_FREE_SESSIONS,
-    // TODO(scttcper): Use Dataset.Metric on GA of alert-crash-free-metrics
-    dataset: Dataset.SESSIONS,
+    dataset: Dataset.METRICS,
     eventTypes: EventTypes.SESSION,
   },
   crash_free_users: {
     aggregate: SessionsAggregate.CRASH_FREE_USERS,
-    // TODO(scttcper): Use Dataset.Metric on GA of alert-crash-free-metrics
-    dataset: Dataset.SESSIONS,
+    dataset: Dataset.METRICS,
     eventTypes: EventTypes.USER,
+  },
+  eap_metrics: {
+    aggregate: 'count(span.duration)',
+    dataset: Dataset.EVENTS_ANALYTICS_PLATFORM,
+    eventTypes: EventTypes.TRANSACTION,
   },
 };
 
@@ -234,15 +294,23 @@ const INDEXED_PERFORMANCE_ALERTS_OMITTED_TAGS = [
   ...Object.values(ReplayClickFieldKey),
 ];
 
+const ERROR_SUPPORTED_TAGS = [
+  FieldKey.IS,
+  ...Object.keys(STATIC_FIELD_TAGS_WITHOUT_TRANSACTION_FIELDS).map(
+    key => key as FieldKey
+  ),
+];
+
 // Some data sets support a very limited number of tags. For these cases,
 // define all supported tags explicitly
 export function datasetSupportedTags(
   dataset: Dataset,
   org: Organization
 ): TagCollection | undefined {
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   return mapValues(
     {
-      [Dataset.ERRORS]: undefined,
+      [Dataset.ERRORS]: ERROR_SUPPORTED_TAGS,
       [Dataset.TRANSACTIONS]: org.features.includes('alert-allow-indexed')
         ? undefined
         : transactionSupportedTags(org),
@@ -259,8 +327,8 @@ export function datasetSupportedTags(
 }
 
 function transactionSupportedTags(org: Organization) {
-  if (org.features.includes('on-demand-metrics-extraction')) {
-    // on-demand metrics support all tags
+  if (shouldShowOnDemandMetricAlertUI(org)) {
+    // on-demand metrics support all tags, except the ones defined in ommited tags
     return undefined;
   }
   return TRANSACTION_SUPPORTED_TAGS;
@@ -281,6 +349,7 @@ export function datasetOmittedTags(
       | ReplayClickFieldKey
     >
   | undefined {
+  // @ts-expect-error TS(2339): Property 'events_analytics_platform' does not exis... Remove this comment to see the full error message
   return {
     [Dataset.ERRORS]: [
       FieldKey.EVENT_TYPE,
@@ -304,7 +373,7 @@ export function datasetOmittedTags(
 }
 
 function transactionOmittedTags(org: Organization) {
-  if (org.features.includes('on-demand-metrics-extraction')) {
+  if (shouldShowOnDemandMetricAlertUI(org)) {
     return [...ON_DEMAND_METRICS_UNSUPPORTED_TAGS];
   }
   return org.features.includes('alert-allow-indexed')
@@ -312,17 +381,29 @@ function transactionOmittedTags(org: Organization) {
     : undefined;
 }
 
-export function getSupportedAndOmittedTags(dataset: Dataset, organization: Organization) {
+export function getSupportedAndOmittedTags(
+  dataset: Dataset,
+  organization: Organization
+): {
+  omitTags?: string[];
+  supportedTags?: TagCollection;
+} {
   const omitTags = datasetOmittedTags(dataset, organization);
   const supportedTags = datasetSupportedTags(dataset, organization);
 
   const result = {omitTags, supportedTags};
 
   // remove undefined values, since passing explicit undefined to the SeachBar overrides its defaults
-  return Object.keys({omitTags, supportedTags}).reduce((acc, key) => {
+  return Object.keys({omitTags, supportedTags}).reduce<{
+    omitTags?: string[];
+    supportedTags?: TagCollection;
+  }>((acc, key) => {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     if (result[key] !== undefined) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       acc[key] = result[key];
     }
+
     return acc;
   }, {});
 }
@@ -341,7 +422,7 @@ export function getMEPAlertsDataset(
   }
 
   if (dataset === Dataset.GENERIC_METRICS) {
-    return MEPAlertsDataset.METRICS;
+    return MEPAlertsDataset.METRICS_ENHANCED;
   }
 
   return MEPAlertsDataset.DISCOVER;

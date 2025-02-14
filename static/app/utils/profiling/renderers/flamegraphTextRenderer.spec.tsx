@@ -27,7 +27,7 @@ const makeBaseFlamegraph = (): Flamegraph => {
     {type: 'flamechart'}
   );
 
-  return new Flamegraph(profile, 0, {inverted: false, sort: 'call order'});
+  return new Flamegraph(profile, {inverted: false, sort: 'call order'});
 };
 
 describe('TextRenderer', () => {
@@ -55,7 +55,7 @@ describe('TextRenderer', () => {
     textRenderer.maybeInvalidateCache();
     textRenderer.maybeInvalidateCache();
 
-    expect(textRenderer.textCache.test).toBe(undefined);
+    expect(textRenderer.textCache.test).toBeUndefined();
     expect(textRenderer.textCache).toEqual({
       'Who knows if this changed, font-display: swap wont tell me': {
         width: 20,
@@ -105,7 +105,7 @@ describe('TextRenderer', () => {
       {type: 'flamechart'}
     );
 
-    const flamegraph = new Flamegraph(profile, 0, {inverted: false, sort: 'call order'});
+    const flamegraph = new Flamegraph(profile, {inverted: false, sort: 'call order'});
 
     const context: Partial<CanvasRenderingContext2D> = {
       measureText: jest.fn().mockReturnValue({width: 10}),
@@ -146,7 +146,7 @@ describe('TextRenderer', () => {
       {type: 'flamechart'}
     );
 
-    const flamegraph = new Flamegraph(profile, 0, {inverted: false, sort: 'call order'});
+    const flamegraph = new Flamegraph(profile, {inverted: false, sort: 'call order'});
 
     const context: Partial<CanvasRenderingContext2D> = {
       measureText: jest.fn().mockImplementation(n => {
@@ -201,7 +201,7 @@ describe('TextRenderer', () => {
       {type: 'flamechart'}
     );
 
-    const flamegraph = new Flamegraph(profile, 0, {inverted: false, sort: 'call order'});
+    const flamegraph = new Flamegraph(profile, {inverted: false, sort: 'call order'});
 
     const context: Partial<CanvasRenderingContext2D> = {
       measureText: jest.fn().mockImplementation(n => {

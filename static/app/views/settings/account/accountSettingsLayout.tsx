@@ -1,9 +1,8 @@
-import {Component} from 'react';
+import {Component, Fragment} from 'react';
 
 import {fetchOrganizationDetails} from 'sentry/actionCreators/organizations';
-import {Client} from 'sentry/api';
-import SentryTypes from 'sentry/sentryTypes';
-import {Organization} from 'sentry/types';
+import type {Client} from 'sentry/api';
+import type {Organization} from 'sentry/types/organization';
 import withApi from 'sentry/utils/withApi';
 import withLatestContext from 'sentry/utils/withLatestContext';
 import AccountSettingsNavigation from 'sentry/views/settings/account/accountSettingsNavigation';
@@ -11,20 +10,10 @@ import SettingsLayout from 'sentry/views/settings/components/settingsLayout';
 
 type Props = React.ComponentProps<typeof SettingsLayout> & {
   api: Client;
-  organization: Organization;
+  organization?: Organization;
 };
 
 class AccountSettingsLayout extends Component<Props> {
-  static childContextTypes = {
-    organization: SentryTypes.Organization,
-  };
-
-  getChildContext() {
-    return {
-      organization: this.props.organization,
-    };
-  }
-
   componentDidUpdate(prevProps: Props) {
     const {api, organization} = this.props;
     if (prevProps.organization === organization) {
@@ -44,6 +33,17 @@ class AccountSettingsLayout extends Component<Props> {
 
   render() {
     const {organization} = this.props;
+
+    const hasNavigationV2 = organization?.features.includes('navigation-sidebar-v2');
+
+    if (hasNavigationV2) {
+      return (
+        <Fragment>
+          <AccountSettingsNavigation organization={organization} />
+          <SettingsLayout {...this.props}>{this.props.children}</SettingsLayout>
+        </Fragment>
+      );
+    }
 
     return (
       <SettingsLayout

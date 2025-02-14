@@ -9,9 +9,9 @@ import {
   makeColorMapBySystemVsApplicationFrame,
   makeStackToColor,
 } from 'sentry/utils/profiling/colors/utils';
-import {FlamegraphColorCodings} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphPreferences';
-import {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
-import {Frame} from 'sentry/utils/profiling/frame';
+import type {FlamegraphColorCodings} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphPreferences';
+import type {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import type {Frame} from 'sentry/utils/profiling/frame';
 import {hexToColorChannels} from 'sentry/utils/profiling/gl/utils';
 import {darkTheme, lightTheme} from 'sentry/utils/theme';
 
@@ -35,7 +35,7 @@ export interface LCH {
 export type ColorChannels = [number, number, number] | [number, number, number, number];
 
 export type ColorMapFn = (
-  frames: ReadonlyArray<FlamegraphFrame>,
+  frames: readonly FlamegraphFrame[],
   colorBucket: FlamegraphTheme['COLORS']['COLOR_BUCKET'],
   theme: FlamegraphTheme,
   sortByKey?: (a: FlamegraphFrame, b: FlamegraphFrame) => number
@@ -57,7 +57,7 @@ export interface FlamegraphTheme {
     DIFFERENTIAL_INCREASE: ColorChannels;
     FOCUSED_FRAME_BORDER_COLOR: string;
     FRAME_APPLICATION_COLOR: ColorChannels;
-    FRAME_GRAYSCALE_COLOR: ColorChannels;
+    FRAME_FALLBACK_COLOR: ColorChannels;
     FRAME_SYSTEM_COLOR: ColorChannels;
     GRID_FRAME_BACKGROUND_COLOR: string;
     GRID_LINE_COLOR: string;
@@ -78,12 +78,12 @@ export interface FlamegraphTheme {
     SPAN_FRAME_LINE_PATTERN: string;
     SPAN_FRAME_LINE_PATTERN_BACKGROUND: string;
     STACK_TO_COLOR: (
-      frames: ReadonlyArray<FlamegraphFrame>,
+      frames: readonly FlamegraphFrame[],
       colorMapFn: ColorMapFn,
       colorBucketFn: FlamegraphTheme['COLORS']['COLOR_BUCKET'],
       theme: FlamegraphTheme
     ) => {
-      colorBuffer: Array<number>;
+      colorBuffer: number[];
       colorMap: Map<Frame['key'], ColorChannels>;
     };
     UI_FRAME_COLOR_FROZEN: [number, number, number, number];
@@ -94,6 +94,7 @@ export interface FlamegraphTheme {
     FRAME_FONT: string;
   };
   SIZES: {
+    AGGREGATE_FLAMEGRAPH_DEPTH_OFFSET: number;
     BAR_FONT_SIZE: number;
     BAR_HEIGHT: number;
     BAR_PADDING: number;
@@ -102,7 +103,7 @@ export interface FlamegraphTheme {
     CPU_CHART_HEIGHT: number;
     FLAMEGRAPH_DEPTH_OFFSET: number;
     GRID_LINE_WIDTH: number;
-    HIGHLIGHTED_FRAME_BORDER_WIDTH;
+    HIGHLIGHTED_FRAME_BORDER_WIDTH: any;
     HOVERED_FRAME_BORDER_WIDTH: number;
     INTERNAL_SAMPLE_TICK_LINE_WIDTH: number;
     LABEL_FONT_PADDING: number;
@@ -153,6 +154,7 @@ const SPANS_LCH_DARK = {
 };
 
 const SIZES: FlamegraphTheme['SIZES'] = {
+  AGGREGATE_FLAMEGRAPH_DEPTH_OFFSET: 4,
   BAR_FONT_SIZE: 11,
   BAR_HEIGHT: 20,
   BAR_PADDING: 4,
@@ -209,10 +211,10 @@ export const LightFlamegraphTheme: FlamegraphTheme = {
     CHART_CURSOR_INDICATOR: 'rgba(31,35,58,.75)',
     CHART_LABEL_COLOR: 'rgba(31,35,58,.75)',
     CURSOR_CROSSHAIR: '#bbbbbb',
-    DIFFERENTIAL_DECREASE: [0.309, 0.2058, 0.98],
-    DIFFERENTIAL_INCREASE: [0.98, 0.2058, 0.4381],
+    DIFFERENTIAL_DECREASE: [0.309, 0.2558, 0.78],
+    DIFFERENTIAL_INCREASE: [0.84, 0.3, 0.33],
     FOCUSED_FRAME_BORDER_COLOR: lightTheme.focus,
-    FRAME_GRAYSCALE_COLOR: [0.5, 0.5, 0.6, 0.1],
+    FRAME_FALLBACK_COLOR: [0.5, 0.5, 0.6, 0.1],
     FRAME_APPLICATION_COLOR: [0.1, 0.1, 0.8, 0.2],
     FRAME_SYSTEM_COLOR: [0.7, 0.1, 0.1, 0.2],
     SPAN_FALLBACK_COLOR: [0, 0, 0, 0.1],
@@ -266,7 +268,7 @@ export const DarkFlamegraphTheme: FlamegraphTheme = {
     DIFFERENTIAL_DECREASE: [0.309, 0.2058, 0.98],
     DIFFERENTIAL_INCREASE: [0.98, 0.2058, 0.4381],
     FOCUSED_FRAME_BORDER_COLOR: darkTheme.focus,
-    FRAME_GRAYSCALE_COLOR: [0.5, 0.5, 0.5, 0.4],
+    FRAME_FALLBACK_COLOR: [0.5, 0.5, 0.5, 0.4],
     FRAME_APPLICATION_COLOR: [0.1, 0.1, 0.5, 0.4],
     FRAME_SYSTEM_COLOR: [0.6, 0.15, 0.25, 0.3],
     SPAN_FALLBACK_COLOR: [1, 1, 1, 0.3],

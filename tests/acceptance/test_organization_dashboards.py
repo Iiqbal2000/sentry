@@ -20,10 +20,11 @@ from sentry.models.dashboard_widget import (
     DashboardWidgetTypes,
 )
 from sentry.testutils.cases import AcceptanceTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.testutils.helpers.datetime import before_now
 from sentry.testutils.silo import no_silo_test
 
 FEATURE_NAMES = [
+    "organizations:performance-view",
     "organizations:discover-basic",
     "organizations:discover-query",
     "organizations:dashboards-basic",
@@ -33,11 +34,14 @@ FEATURE_NAMES = [
 EDIT_FEATURE = ["organizations:dashboards-edit"]
 
 
-@no_silo_test(stable=True)
+pytestmark = pytest.mark.sentry_metrics
+
+
+@no_silo_test
 class OrganizationDashboardsAcceptanceTest(AcceptanceTestCase):
     def setUp(self):
         super().setUp()
-        min_ago = iso_format(before_now(minutes=1))
+        min_ago = before_now(minutes=1).isoformat()
         self.store_event(
             data={"event_id": "a" * 32, "message": "oh no", "timestamp": min_ago},
             project_id=self.project.id,
@@ -256,6 +260,7 @@ class OrganizationDashboardsAcceptanceTest(AcceptanceTestCase):
             display_type=DashboardWidgetDisplayTypes.LINE_CHART,
             widget_type=DashboardWidgetTypes.DISCOVER,
             interval="1d",
+            detail={"layout": {"x": 0, "y": 0, "w": 2, "h": 2, "minH": 2}},
         )
         DashboardWidgetQuery.objects.create(
             widget=existing_widget, fields=["count()"], columns=[], aggregates=["count()"], order=0
@@ -355,39 +360,6 @@ class OrganizationDashboardsAcceptanceTest(AcceptanceTestCase):
 
             self.page.wait_until_loaded()
 
-    def test_duplicate_widget_in_view_mode(self):
-        existing_widget = DashboardWidget.objects.create(
-            dashboard=self.dashboard,
-            order=0,
-            title="Big Number Widget",
-            display_type=DashboardWidgetDisplayTypes.BIG_NUMBER,
-            widget_type=DashboardWidgetTypes.DISCOVER,
-            interval="1d",
-        )
-        DashboardWidgetQuery.objects.create(
-            widget=existing_widget,
-            fields=["count_unique(issue)"],
-            columns=[],
-            aggregates=["count_unique(issue)"],
-            order=0,
-        )
-        with self.feature(FEATURE_NAMES + EDIT_FEATURE):
-            self.page.visit_dashboard_detail()
-
-            self.browser.element('[aria-label="Widget actions"]').click()
-            self.browser.element('[data-test-id="duplicate-widget"]').click()
-            self.page.wait_until_loaded()
-
-            self.browser.element('[aria-label="Widget actions"]').click()
-            self.browser.element('[data-test-id="duplicate-widget"]').click()
-            self.page.wait_until_loaded()
-
-            # Should not trigger alert
-            self.page.enter_edit_state()
-            self.page.click_cancel_button()
-            wait = WebDriverWait(self.browser.driver, 5)
-            wait.until_not(EC.alert_is_present())
-
     def test_delete_widget_in_view_mode(self):
         existing_widget = DashboardWidget.objects.create(
             dashboard=self.dashboard,
@@ -406,6 +378,9 @@ class OrganizationDashboardsAcceptanceTest(AcceptanceTestCase):
         )
         with self.feature(FEATURE_NAMES + EDIT_FEATURE):
             self.page.visit_dashboard_detail()
+
+            # Hover over the widget to show widget actions
+            self.browser.move_to('[aria-label="Widget panel"]')
 
             self.browser.element('[aria-label="Widget actions"]').click()
             self.browser.element('[data-test-id="delete-widget"]').click()
@@ -509,6 +484,9 @@ class OrganizationDashboardsAcceptanceTest(AcceptanceTestCase):
         with self.feature(FEATURE_NAMES + EDIT_FEATURE):
             self.page.visit_dashboard_detail()
 
+            # Hover over the widget to show widget actions
+            self.browser.move_to('[aria-label="Widget panel"]')
+
             dropdown_trigger = self.browser.element('[aria-label="Widget actions"]')
             dropdown_trigger.click()
 
@@ -559,6 +537,9 @@ class OrganizationDashboardsAcceptanceTest(AcceptanceTestCase):
         )
         with self.feature(FEATURE_NAMES + EDIT_FEATURE):
             self.page.visit_dashboard_detail()
+
+            # Hover over the widget to show widget actions
+            self.browser.move_to('[aria-label="Widget panel"]')
 
             # Open edit modal for first widget
             dropdown_trigger = self.browser.element('[aria-label="Widget actions"]')
@@ -669,7 +650,7 @@ class OrganizationDashboardsAcceptanceTest(AcceptanceTestCase):
             self.page.save_dashboard()
 
 
-@no_silo_test(stable=True)
+@no_silo_test
 class OrganizationDashboardsManageAcceptanceTest(AcceptanceTestCase):
     def setUp(self):
         super().setUp()

@@ -1,16 +1,17 @@
-import {RouteComponentProps} from 'react-router';
-
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
+import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import SelectField from 'sentry/components/forms/fields/selectField';
 import Form from 'sentry/components/forms/form';
 import NarrowLayout from 'sentry/components/narrowLayout';
+import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t, tct} from 'sentry/locale';
 import ConfigStore from 'sentry/stores/configStore';
-import {Organization, Project} from 'sentry/types';
-import DeprecatedAsyncView from 'sentry/views/deprecatedAsyncView';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 
-type Props = RouteComponentProps<{}, {}>;
+type Props = RouteComponentProps;
 
 type TransferDetails = {
   organizations: Organization[];
@@ -19,23 +20,38 @@ type TransferDetails = {
 
 type State = {
   transferDetails: TransferDetails | null;
-} & DeprecatedAsyncView['state'];
+} & DeprecatedAsyncComponent['state'];
 
-class AcceptProjectTransfer extends DeprecatedAsyncView<Props, State> {
+class AcceptProjectTransfer extends DeprecatedAsyncComponent<Props, State> {
   disableErrorReport = false;
 
-  getEndpoints(): ReturnType<DeprecatedAsyncView['getEndpoints']> {
+  get regionHost(): string | undefined {
+    // Because this route happens outside of OrganizationContext we
+    // need to use initial data to decide which host to send the request to
+    // as `/accept-transfer/` cannot be resolved to a region.
+    const initialData = window.__initialData;
+    let host: string | undefined = undefined;
+    if (initialData && initialData.links?.regionUrl !== initialData.links?.sentryUrl) {
+      host = initialData.links.regionUrl;
+    }
+
+    return host;
+  }
+
+  getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
     const query = this.props.location.query;
-    return [['transferDetails', '/accept-transfer/', {query}]];
+    const host = this.regionHost;
+    return [['transferDetails', '/accept-transfer/', {query, host}]];
   }
 
   getTitle() {
     return t('Accept Project Transfer');
   }
 
-  handleSubmit = formData => {
+  handleSubmit = (formData: any) => {
     this.api.request('/accept-transfer/', {
       method: 'POST',
+      host: this.regionHost,
       data: {
         data: this.props.location.query.data,
         organization: formData.organization,
@@ -53,7 +69,7 @@ class AcceptProjectTransfer extends DeprecatedAsyncView<Props, State> {
       },
       error: error => {
         const errorMsg =
-          error && error.responseJSON && typeof error.responseJSON.detail === 'string'
+          error?.responseJSON && typeof error.responseJSON.detail === 'string'
             ? error.responseJSON.detail
             : '';
 
@@ -64,11 +80,11 @@ class AcceptProjectTransfer extends DeprecatedAsyncView<Props, State> {
     });
   };
 
-  renderError(error) {
+  renderError(error: any) {
     let disableLog = false;
     // Check if there is an error message with `transferDetails` endpoint
     // If so, show as toast and ignore, otherwise log to sentry
-    if (error && error.responseJSON && typeof error.responseJSON.detail === 'string') {
+    if (error?.responseJSON && typeof error.responseJSON.detail === 'string') {
       addErrorMessage(error.responseJSON.detail);
       disableLog = true;
     }
@@ -86,6 +102,7 @@ class AcceptProjectTransfer extends DeprecatedAsyncView<Props, State> {
 
     return (
       <NarrowLayout>
+        <SentryDocumentTitle title={t('Accept Project Transfer')} />
         <SettingsPageHeader title={t('Approve Transfer Project Request')} />
         <p>
           {tct(

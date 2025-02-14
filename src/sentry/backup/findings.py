@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass
 from enum import IntEnum, auto, unique
-from typing import Optional
+from typing import Any, NamedTuple
 
-from sentry.backup.dependencies import NormalizedModelName
 from sentry.utils import json
 
 
-@dataclass
-class InstanceID:
+class InstanceID(NamedTuple):
     """Every entry in the generated backup JSON file should have a unique model+ordinal combination,
     which serves as its identifier."""
 
@@ -20,13 +18,6 @@ class InstanceID:
     # number of models of each kind are present on both the left and right side when validating, we
     # can use the ordinal as a unique identifier.
     ordinal: int | None = None
-
-    def __init__(self, model: NormalizedModelName, ordinal: Optional[int] = None):
-        self.model = str(model)
-        self.ordinal = ordinal
-
-    def __hash__(self):
-        return hash((self.model, self.ordinal))
 
     def pretty(self) -> str:
         out = f"InstanceID(model: {self.model!r}"
@@ -45,6 +36,9 @@ class ComparatorFindingKind(FindingKind):
 
     # The instances of a particular model did not maintain total ordering of pks (that is, pks did not appear in ascending order, or appear multiple times).
     UnorderedInput = auto()
+
+    # Multiple instances of the same custom ordinal signature exist in the input.
+    DuplicateCustomOrdinal = auto()
 
     # The number of instances of a particular model on the left and right side of the input were not
     # equal.
@@ -81,6 +75,12 @@ class ComparatorFindingKind(FindingKind):
     # `None`.
     EmailObfuscatingComparatorExistenceCheck = auto()
 
+    # The fields were both present but unequal.
+    EqualOrRemovedComparator = auto()
+
+    # The left field does not exist.
+    EqualOrRemovedComparatorExistenceCheck = auto()
+
     # Hash equality comparison failed.
     HashObfuscatingComparator = auto()
 
@@ -98,10 +98,6 @@ class ComparatorFindingKind(FindingKind):
     # Failed to compare an ignored field.
     IgnoredComparator = auto()
 
-    # Failed to compare an ignored field because one of the fields being compared was not present or
-    # `None`.
-    IgnoredComparatorExistenceCheck = auto()
-
     # Secret token fields did not match their regex specification.
     SecretHexComparator = auto()
 
@@ -115,6 +111,13 @@ class ComparatorFindingKind(FindingKind):
     # Failed to compare a subscription id field because one of the fields being compared was not
     # present or `None`.
     SubscriptionIDComparatorExistenceCheck = auto()
+
+    # Unordered list fields did not match.
+    UnorderedListComparator = auto()
+
+    # Failed to compare a unordered list field because one of the fields being compared was not
+    # present or `None`.
+    UnorderedListComparatorExistenceCheck = auto()
 
     # UUID4 fields did not match their regex specification.
     UUID4Comparator = auto()
@@ -132,9 +135,11 @@ class ComparatorFindingKind(FindingKind):
 
 
 @dataclass(frozen=True)
-class Finding:
+class Finding(ABC):
     """
-    A JSON serializable and user-reportable finding for an import/export operation.
+    A JSON serializable and user-reportable finding for an import/export operation. Don't use this
+    class directly - inherit from it, set a specific `kind` type, and define your own pretty
+    printer!
     """
 
     on: InstanceID
@@ -147,6 +152,31 @@ class Finding:
 
     reason: str = ""
 
+    def get_finding_name(self) -> str:
+        return self.__class__.__name__
+
+    def _pretty_inner(self) -> str:
+        """
+        Pretty print only the fields on the shared `Finding` portion.
+        """
+
+        out = f"\n    on: {self.on.pretty()}"
+        if self.left_pk:
+            out += f",\n    left_pk: {self.left_pk}"
+        if self.right_pk:
+            out += f",\n    right_pk: {self.right_pk}"
+        if self.reason:
+            out += f",\n    reason: {self.reason}"
+        return out
+
+    @abstractmethod
+    def pretty(self) -> str:
+        pass
+
+    @abstractmethod
+    def to_dict(self) -> dict[str, Any]:
+        pass
+
 
 @dataclass(frozen=True)
 class ComparatorFinding(Finding):
@@ -157,14 +187,10 @@ class ComparatorFinding(Finding):
     kind: ComparatorFindingKind = ComparatorFindingKind.Unknown
 
     def pretty(self) -> str:
-        out = f"Finding(\n\tkind: {self.kind.name},\n\ton: {self.on.pretty()}"
-        if self.left_pk:
-            out += f",\n\tleft_pk: {self.left_pk}"
-        if self.right_pk:
-            out += f",\n\tright_pk: {self.right_pk}"
-        if self.reason:
-            out += f",\n\treason: {self.reason}"
-        return out + "\n)"
+        return f"ComparatorFinding(\n    kind: {self.kind.name},{self._pretty_inner()}\n)"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 class ComparatorFindings:
@@ -191,11 +217,12 @@ class FindingJSONEncoder(json.JSONEncoder):
 
     def default(self, obj):
         if isinstance(obj, Finding):
-            d = deepcopy(obj.__dict__)
-            kind = d.get("kind")
+            kind = getattr(obj, "kind", None)
+            d = obj.to_dict()
+            d["finding"] = obj.get_finding_name()
             if isinstance(kind, FindingKind):
                 d["kind"] = kind.name
+            elif isinstance(kind, str):
+                d["kind"] = kind
             return d
-        if isinstance(obj, InstanceID):
-            return obj.__dict__
         return super().default(obj)

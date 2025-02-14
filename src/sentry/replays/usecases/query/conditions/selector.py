@@ -4,6 +4,7 @@ This module demonstrates how funky condition visitors can become.  We're perform
 row-wise operations against a complex type and aggregating the result into a single integer before
 asking whether any row in the aggregation set contained a result.
 """
+
 from __future__ import annotations
 
 from snuba_sdk import Column, Condition, Function, Op
@@ -143,6 +144,11 @@ class SumOfClickArray(GenericBase):
         return does_not_contain(ClickArray.visit_in(expression, value))
 
 
+#
+# Selector condition classes.
+#
+
+
 class ClickSelectorComposite(ComputedBase):
     """Click selector composite condition class."""
 
@@ -163,8 +169,37 @@ class ClickSelectorComposite(ComputedBase):
             return Condition(search_selector(value), Op.EQ, 0)
 
 
+class DeadClickSelectorComposite(ComputedBase):
+    """Dead selector composite condition class."""
+
+    @staticmethod
+    def visit_eq(value: list[QueryType]) -> Condition:
+        return is_dead_click(ClickSelectorComposite.visit_eq(value))
+
+    @staticmethod
+    def visit_neq(value: list[QueryType]) -> Condition:
+        return is_dead_click(ClickSelectorComposite.visit_neq(value))
+
+
+class RageClickSelectorComposite(ComputedBase):
+    """Rage selector composite condition class."""
+
+    @staticmethod
+    def visit_eq(value: list[QueryType]) -> Condition:
+        return is_rage_click(ClickSelectorComposite.visit_eq(value))
+
+    @staticmethod
+    def visit_neq(value: list[QueryType]) -> Condition:
+        return is_rage_click(ClickSelectorComposite.visit_neq(value))
+
+
+#
+# Streaming selector condition classes.
+#
+
+
 class SumOfClickSelectorComposite(ComputedBase):
-    """Click selector composite condition class."""
+    """Streaming click selector composite condition class."""
 
     @staticmethod
     def visit_eq(value: list[QueryType]) -> Condition:
@@ -176,27 +211,27 @@ class SumOfClickSelectorComposite(ComputedBase):
 
 
 class SumOfDeadClickSelectorComposite(ComputedBase):
-    """Click selector composite condition class."""
+    """Streaming dead click selector composite condition class."""
 
     @staticmethod
     def visit_eq(value: list[QueryType]) -> Condition:
-        return contains(is_dead_click(ClickSelectorComposite.visit_eq(value)))
+        return contains(DeadClickSelectorComposite.visit_eq(value))
 
     @staticmethod
     def visit_neq(value: list[QueryType]) -> Condition:
-        return does_not_contain(is_dead_click(ClickSelectorComposite.visit_eq(value)))
+        return does_not_contain(DeadClickSelectorComposite.visit_eq(value))
 
 
 class SumOfRageClickSelectorComposite(ComputedBase):
-    """Click selector composite condition class."""
+    """Streaming rage click selector composite condition class."""
 
     @staticmethod
     def visit_eq(value: list[QueryType]) -> Condition:
-        return contains(is_rage_click(ClickSelectorComposite.visit_eq(value)))
+        return contains(RageClickSelectorComposite.visit_eq(value))
 
     @staticmethod
     def visit_neq(value: list[QueryType]) -> Condition:
-        return does_not_contain(is_rage_click(ClickSelectorComposite.visit_eq(value)))
+        return does_not_contain(RageClickSelectorComposite.visit_eq(value))
 
 
 # We are not targetting an aggregated result set.  We are targetting a row.  We're asking does
@@ -217,6 +252,8 @@ def search_selector(queries: list[QueryType]) -> Function:
         if query.classes:
             has_all = Function("hasAll", parameters=[Column("click_class"), query.classes])
             cmp_functions.append(equals(has_all, 1))
+        if query.component_name:
+            cmp_functions.append(equals(Column("click_component_name"), query.component_name))
         if query.id:
             cmp_functions.append(equals(Column("click_id"), query.id))
         if query.role:

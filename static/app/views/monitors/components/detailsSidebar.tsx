@@ -1,33 +1,38 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
+import ActorAvatar from 'sentry/components/avatar/actorAvatar';
 import {SectionHeading} from 'sentry/components/charts/styles';
 import {KeyValueTable, KeyValueTableRow} from 'sentry/components/keyValueTable';
+import ExternalLink from 'sentry/components/links/externalLink';
+import QuestionTooltip from 'sentry/components/questionTooltip';
 import Text from 'sentry/components/text';
 import TimeSince from 'sentry/components/timeSince';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconCopy} from 'sentry/icons';
-import {t, tn} from 'sentry/locale';
+import {t, tct, tn} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {defined} from 'sentry/utils';
 import {getFormattedDate} from 'sentry/utils/dates';
 import useCopyToClipboard from 'sentry/utils/useCopyToClipboard';
-import {DEFAULT_MAX_RUNTIME} from 'sentry/views/monitors/components/monitorForm';
-import MonitorIcon from 'sentry/views/monitors/components/monitorIcon';
 import {
-  Monitor,
-  MonitorEnvironment,
-  MonitorStatus,
-  ScheduleType,
-} from 'sentry/views/monitors/types';
-import {scheduleAsText} from 'sentry/views/monitors/utils';
+  DEFAULT_CHECKIN_MARGIN,
+  DEFAULT_MAX_RUNTIME,
+} from 'sentry/views/monitors/components/monitorForm';
+import {MonitorIndicator} from 'sentry/views/monitors/components/monitorIndicator';
+import type {Monitor, MonitorEnvironment} from 'sentry/views/monitors/types';
+import {CheckInStatus, ScheduleType} from 'sentry/views/monitors/types';
+import {scheduleAsText} from 'sentry/views/monitors/utils/scheduleAsText';
 
 interface Props {
   monitor: Monitor;
   monitorEnv?: MonitorEnvironment;
+  /**
+   * Include the UNKNOWN status in the check-in type legend
+   */
+  showUnknownLegend?: boolean;
 }
 
-export default function DetailsSidebar({monitorEnv, monitor}: Props) {
+export function DetailsSidebar({monitorEnv, monitor, showUnknownLegend}: Props) {
   const {checkin_margin, schedule, schedule_type, max_runtime, timezone} = monitor.config;
   const {onClick, label} = useCopyToClipboard({text: monitor.slug});
 
@@ -57,7 +62,7 @@ export default function DetailsSidebar({monitorEnv, monitor}: Props) {
           )}
         </div>
         <div>
-          {monitorEnv?.nextCheckIn ? (
+          {monitor.status !== 'disabled' && monitorEnv?.nextCheckIn ? (
             <TimeSince
               unitStyle="regular"
               liveUpdateInterval="second"
@@ -70,38 +75,73 @@ export default function DetailsSidebar({monitorEnv, monitor}: Props) {
       </CheckIns>
       <SectionHeading>{t('Schedule')}</SectionHeading>
       <Schedule>
-        <Text>{scheduleAsText(monitor.config)}</Text>
+        <Text>
+          {scheduleAsText(monitor.config)}{' '}
+          {schedule_type === ScheduleType.CRONTAB && `(${timezone})`}
+        </Text>
         {schedule_type === ScheduleType.CRONTAB && (
           <CrontabText>({schedule})</CrontabText>
         )}
       </Schedule>
-      <SectionHeading>{t('Thresholds')}</SectionHeading>
-      <Thresholds>
-        <MonitorIcon status={MonitorStatus.MISSED_CHECKIN} size={12} />
-        <Text>
-          {defined(checkin_margin)
-            ? tn(
-                'Check-ins missed after %s min',
-                'Check-ins missed after %s mins',
-                checkin_margin
-              )
-            : t('Check-ins that are missed')}
-        </Text>
-        <MonitorIcon status={MonitorStatus.ERROR} size={12} />
-        <Text>
-          {tn(
-            'Check-ins longer than %s min or errors',
-            'Check-ins longer than %s mins or errors',
-            max_runtime ?? DEFAULT_MAX_RUNTIME
-          )}
-        </Text>
-      </Thresholds>
+      <SectionHeading>{t('Legend')}</SectionHeading>
+      <CheckInLegend>
+        <CheckInLegendItem>
+          <MonitorIndicator status={CheckInStatus.MISSED} size={12} />
+          <Text>
+            {tn(
+              'Check-in missed after %s min',
+              'Check-in missed after %s mins',
+              checkin_margin ?? DEFAULT_CHECKIN_MARGIN
+            )}
+          </Text>
+        </CheckInLegendItem>
+        <CheckInLegendItem>
+          <MonitorIndicator status={CheckInStatus.ERROR} size={12} />
+          <Text>{t('Check-in reported as failed')}</Text>
+        </CheckInLegendItem>
+        <CheckInLegendItem>
+          <MonitorIndicator status={CheckInStatus.TIMEOUT} size={12} />
+          <Text>
+            {tn(
+              'Check-in timed out after %s min',
+              'Check-in timed out after %s mins',
+              max_runtime ?? DEFAULT_MAX_RUNTIME
+            )}
+          </Text>
+        </CheckInLegendItem>
+        {showUnknownLegend && (
+          <CheckInLegendItem>
+            <MonitorIndicator status={CheckInStatus.UNKNOWN} size={12} />
+            <UnknownText>
+              {t('Unknown Status')}
+              <QuestionTooltip
+                size="sm"
+                title={tct(
+                  'Sentry was unable to determine the check-in status. [link:Learn More].',
+                  {
+                    link: (
+                      <ExternalLink href="https://docs.sentry.io/product/crons/monitor-details/#check-in-statuses" />
+                    ),
+                  }
+                )}
+              />
+            </UnknownText>
+          </CheckInLegendItem>
+        )}
+      </CheckInLegend>
       <SectionHeading>{t('Cron Details')}</SectionHeading>
       <KeyValueTable>
         <KeyValueTableRow keyName={t('Monitor Slug')} value={slug} />
-        {schedule_type === ScheduleType.CRONTAB && (
-          <KeyValueTableRow keyName={t('Timezone')} value={timezone} />
-        )}
+        <KeyValueTableRow
+          keyName={t('Owner')}
+          value={
+            monitor.owner ? (
+              <ActorAvatar size={24} actor={monitor.owner} />
+            ) : (
+              t('Unassigned')
+            )
+          }
+        />
         <KeyValueTableRow
           keyName={t('Date created')}
           value={getFormattedDate(monitor.dateCreated, 'MMM D, YYYY')}
@@ -115,6 +155,10 @@ const CheckIns = styled('div')`
   display: grid;
   grid-template-columns: 1fr 1fr;
   margin-bottom: ${space(2)};
+
+  h4 {
+    margin-top: 0;
+  }
 `;
 
 const Schedule = styled('div')`
@@ -129,12 +173,25 @@ const CrontabText = styled(Text)`
   color: ${p => p.theme.subText};
 `;
 
-const Thresholds = styled('div')`
+const CheckInLegend = styled('ul')`
   display: grid;
   grid-template-columns: max-content 1fr;
   margin-bottom: ${space(2)};
-  align-items: center;
+  padding: 0;
   gap: ${space(1)};
+`;
+
+const CheckInLegendItem = styled('li')`
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  grid-column: 1 / -1;
+`;
+
+const UnknownText = styled(Text)`
+  display: flex;
+  gap: ${space(1)};
+  align-items: center;
 `;
 
 const MonitorSlug = styled('button')`

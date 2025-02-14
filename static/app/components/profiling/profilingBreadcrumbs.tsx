@@ -1,10 +1,12 @@
 import {useMemo} from 'react';
-import {Location} from 'history';
+import type {Location} from 'history';
 import omit from 'lodash/omit';
 
-import _Breadcrumbs, {Crumb} from 'sentry/components/breadcrumbs';
+import type {Crumb} from 'sentry/components/breadcrumbs';
+import _Breadcrumbs from 'sentry/components/breadcrumbs';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {
   generateProfileFlamechartRouteWithQuery,
   generateProfileSummaryRouteWithQuery,
@@ -39,7 +41,7 @@ function trailToCrumb(
           // cursor and query are not used in the landing page
           // and break the API call as the qs gets forwarded to the API
           query: omit(trail.payload.query, ['cursor', 'query']),
-          orgSlug: organization.slug,
+          organization,
         }),
         label: t('Profiling'),
         preservePageFilters: true,
@@ -51,7 +53,7 @@ function trailToCrumb(
           // cursor and query are not used in the summary page
           // and break the API call as the qs gets forwarded to the API
           query: omit(trail.payload.query, ['cursor', 'query']),
-          orgSlug: organization.slug,
+          organization,
           projectSlug: trail.payload.projectSlug,
           transaction: trail.payload.transaction,
         }),
@@ -63,7 +65,7 @@ function trailToCrumb(
       return {
         to: generateProfileFlamechartRouteWithQuery({
           query: trail.payload.query,
-          orgSlug: organization.slug,
+          organization,
           projectSlug: trail.payload.projectSlug,
           profileId: trail.payload.profileId,
         }),

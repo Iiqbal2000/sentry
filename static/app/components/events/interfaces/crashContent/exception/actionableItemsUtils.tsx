@@ -1,26 +1,26 @@
-import {EventErrorData} from 'sentry/components/events/errorItem';
+import type {EventErrorData} from 'sentry/components/events/errorItem';
 import findBestThread from 'sentry/components/events/interfaces/threads/threadSelector/findBestThread';
 import getThreadException from 'sentry/components/events/interfaces/threads/threadSelector/getThreadException';
 import ExternalLink from 'sentry/components/links/externalLink';
+import type {HttpProcessingErrors} from 'sentry/constants/eventErrors';
 import {
   CocoaProcessingErrors,
   GenericSchemaErrors,
-  HttpProcessingErrors,
   JavascriptProcessingErrors,
   NativeProcessingErrors,
   ProguardProcessingErrors,
 } from 'sentry/constants/eventErrors';
-import {tct} from 'sentry/locale';
-import {Project} from 'sentry/types';
-import {DebugFile} from 'sentry/types/debugFiles';
-import {Image} from 'sentry/types/debugImage';
-import {EntryType, Event, ExceptionValue, Thread} from 'sentry/types/event';
+import {t, tct} from 'sentry/locale';
+import type {DebugFile} from 'sentry/types/debugFiles';
+import type {Image} from 'sentry/types/debugImage';
+import type {Event, ExceptionValue, Thread} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import {useApiQuery} from 'sentry/utils/queryClient';
 import useOrganization from 'sentry/utils/useOrganization';
-import {semverCompare} from 'sentry/utils/versions';
-import {projectProcessingIssuesMessages} from 'sentry/views/settings/project/projectProcessingIssues';
+import {semverCompare} from 'sentry/utils/versions/semverCompare';
 
 const MINIFIED_DATA_JAVA_EVENT_REGEX_MATCH =
   /^(([\w\$]\.[\w\$]{1,2})|([\w\$]{2}\.[\w\$]\.[\w\$]))(\.|$)/g;
@@ -35,10 +35,15 @@ export type ActionableItemTypes =
 export const ActionableItemWarning = [
   ProguardProcessingErrors.PROGUARD_MISSING_LINENO,
   NativeProcessingErrors.NATIVE_MISSING_OPTIONALLY_BUNDLED_DSYM,
+  NativeProcessingErrors.NATIVE_SYMBOLICATOR_FAILED,
+  NativeProcessingErrors.NATIVE_INTERNAL_FAILURE,
   GenericSchemaErrors.FUTURE_TIMESTAMP,
   GenericSchemaErrors.CLOCK_DRIFT,
   GenericSchemaErrors.PAST_TIMESTAMP,
   GenericSchemaErrors.VALUE_TOO_LONG,
+  GenericSchemaErrors.INVALID_DATA,
+  GenericSchemaErrors.INVALID_ATTRIBUTE,
+  GenericSchemaErrors.MISSING_ATTRIBUTE,
 ];
 
 interface BaseActionableItem {
@@ -61,6 +66,14 @@ interface NativeMissingDSYMError extends BaseActionableItem {
 }
 interface NativeBadDSYMError extends BaseActionableItem {
   type: NativeProcessingErrors.NATIVE_BAD_DSYM;
+}
+
+interface NativeSymbolicatorFailedError extends BaseActionableItem {
+  type: NativeProcessingErrors.NATIVE_SYMBOLICATOR_FAILED;
+}
+
+interface NativeInternalFailureError extends BaseActionableItem {
+  type: NativeProcessingErrors.NATIVE_INTERNAL_FAILURE;
 }
 
 interface JSMissingSourcesContentError extends BaseActionableItem {
@@ -106,6 +119,8 @@ export type ActionableItemErrors =
   | NativeMissingOptionalBundledDSYMError
   | NativeMissingDSYMError
   | NativeBadDSYMError
+  | NativeSymbolicatorFailedError
+  | NativeInternalFailureError
   | JSMissingSourcesContentError
   | FetchGenericError
   | RestrictedIpError
@@ -128,6 +143,20 @@ export function shouldErrorBeShown(error: EventErrorData, event: Event) {
     // The Cocoa SDK sends wrong values for contexts.trace.sampled before 8.7.4
     return false;
   }
+  // Hide unactionable source context errors that happen in flutter web: https://github.com/getsentry/sentry-dart/issues/1764
+  if (
+    event.sdk?.name === 'sentry.dart.flutter' &&
+    error.type === JavascriptProcessingErrors.JS_MISSING_SOURCES_CONTENT
+  ) {
+    const source: string | undefined = error.data?.source;
+    if (
+      source &&
+      (source.includes('org-dartlang-sdk:///dart-sdk/lib/') ||
+        source.includes('flutter/packages/flutter/lib'))
+    ) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -144,23 +173,21 @@ const hasThreadOrExceptionMinifiedFrameData = (
   bestThread?: Thread
 ) => {
   if (!bestThread) {
-    const exceptionValues: Array<ExceptionValue> =
+    const exceptionValues: ExceptionValue[] =
       definedEvent.entries?.find(e => e.type === EntryType.EXCEPTION)?.data?.values ?? [];
 
-    return exceptionValues.some(
-      exceptionValue =>
-        exceptionValue.stacktrace?.frames?.some(frame => isDataMinified(frame.module))
+    return exceptionValues.some(exceptionValue =>
+      exceptionValue.stacktrace?.frames?.some(frame => isDataMinified(frame.module))
     );
   }
 
   const threadExceptionValues = getThreadException(definedEvent, bestThread)?.values;
 
   return threadExceptionValues
-    ? threadExceptionValues.some(
-        threadExceptionValue =>
-          threadExceptionValue.stacktrace?.frames?.some(frame =>
-            isDataMinified(frame.module)
-          )
+    ? threadExceptionValues.some(threadExceptionValue =>
+        threadExceptionValue.stacktrace?.frames?.some(frame =>
+          isDataMinified(frame.module)
+        )
       )
     : bestThread?.stacktrace?.frames?.some(frame => isDataMinified(frame.module));
 };
@@ -180,7 +207,7 @@ export const useFetchProguardMappingFiles = ({
   );
 
   const debugImages = event.entries?.find(e => e.type === EntryType.DEBUGMETA)?.data
-    .images as undefined | Array<Image>;
+    .images as undefined | Image[];
 
   // When debugImages contains a 'proguard' entry, it must always be only one entry
   const proGuardImage = debugImages?.find(debugImage => debugImage?.type === 'proguard');
@@ -196,7 +223,7 @@ export const useFetchProguardMappingFiles = ({
   const {
     data: proguardMappingFiles,
     isSuccess,
-    isLoading,
+    isPending,
   } = useApiQuery<DebugFile[]>(
     [
       `/projects/${organization.slug}/${project.slug}/files/dsyms/`,
@@ -227,13 +254,13 @@ export const useFetchProguardMappingFiles = ({
       return [
         {
           type: 'proguard_missing_mapping',
-          message: projectProcessingIssuesMessages.proguard_missing_mapping,
+          message: t('A proguard mapping file was missing.'),
           data: {mapping_uuid: proGuardImageUuid},
         },
       ];
     }
 
-    const threads: Array<Thread> =
+    const threads: Thread[] =
       event.entries?.find(e => e.type === EntryType.THREADS)?.data?.values ?? [];
 
     const bestThread = findBestThread(threads);
@@ -272,7 +299,7 @@ export const useFetchProguardMappingFiles = ({
   }
 
   return {
-    proguardErrorsLoading: shouldFetch && isLoading,
+    proguardErrorsLoading: shouldFetch && isPending,
     proguardErrors: getProguardErrorsFromMappingFiles(),
   };
 };

@@ -1,7 +1,8 @@
 import {t} from 'sentry/locale';
 import HookStore from 'sentry/stores/hookStore';
-import {Organization} from 'sentry/types';
-import {NavigationSection} from 'sentry/views/settings/types';
+import type {Organization} from 'sentry/types/organization';
+import {getUserOrgNavigationConfiguration} from 'sentry/views/settings/organization/userOrgNavigationConfiguration';
+import type {NavigationSection} from 'sentry/views/settings/types';
 
 const pathPrefix = '/settings/account';
 
@@ -10,6 +11,12 @@ type ConfigParams = {
 };
 
 function getConfiguration({organization}: ConfigParams): NavigationSection[] {
+  const hasNavigationV2 = organization?.features.includes('navigation-sidebar-v2');
+
+  if (organization && hasNavigationV2) {
+    return getUserOrgNavigationConfiguration({organization});
+  }
+
   return [
     {
       name: t('Account'),

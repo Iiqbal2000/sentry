@@ -1,4 +1,4 @@
-import {ReactNode} from 'react';
+import type {ReactNode} from 'react';
 import styled from '@emotion/styled';
 
 import {space} from 'sentry/styles/space';
@@ -6,7 +6,7 @@ import {space} from 'sentry/styles/space';
 const SectionWrapper = styled('section')`
   display: flex;
   flex-direction: column;
-  gap: ${space(3)};
+  gap: ${space(1)};
 `;
 
 const SectionTitle = styled('h3')`
@@ -18,23 +18,37 @@ const SectionTitle = styled('h3')`
   display: flex;
   gap: ${space(0.5)};
   align-items: center;
+  justify-content: space-between;
+`;
+
+const LeftAlignedContent = styled('div')`
+  display: flex;
+  align-items: center;
+  gap: ${space(0.5)};
 `;
 
 export default function Section({
   children,
   icon,
   title,
+  contentRight,
 }: {
   children: ReactNode;
-  title: string;
+  contentRight?: ReactNode;
   icon?: ReactNode;
+  title?: ReactNode;
 }) {
   return (
     <SectionWrapper>
-      <SectionTitle>
-        {icon}
-        <span>{title}</span>
-      </SectionTitle>
+      {title ? (
+        <SectionTitle>
+          <LeftAlignedContent>
+            {icon}
+            {title}
+          </LeftAlignedContent>
+          {contentRight}
+        </SectionTitle>
+      ) : null}
       {children}
     </SectionWrapper>
   );

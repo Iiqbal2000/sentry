@@ -1,4 +1,5 @@
 import {useState} from 'react';
+import {css} from '@emotion/react';
 
 import type {ModalRenderProps} from 'sentry/actionCreators/modal';
 import {Button} from 'sentry/components/button';
@@ -7,7 +8,8 @@ import TimeSince from 'sentry/components/timeSince';
 import Version from 'sentry/components/version';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {Commit, ResolvedStatusDetails} from 'sentry/types';
+import type {ResolvedStatusDetails} from 'sentry/types/group';
+import type {Commit} from 'sentry/types/integrations';
 
 interface CustomCommitsResolutionModalProps extends ModalRenderProps {
   onSelected: (x: ResolvedStatusDetails) => void;
@@ -70,11 +72,18 @@ function CustomCommitsResolutionModal({
           placeholder={t('e.g. d86b832')}
           url={`/projects/${orgSlug}/${projectSlug}/commits/`}
           onResults={onAsyncFieldResults}
-          onQuery={query => ({query})}
+          onQuery={(query: any) => ({
+            query,
+          })}
         />
       </Body>
       <Footer>
-        <Button css={{marginRight: space(1.5)}} onClick={closeModal}>
+        <Button
+          css={css`
+            margin-right: ${space(1.5)};
+          `}
+          onClick={closeModal}
+        >
           {t('Cancel')}
         </Button>
         <Button type="submit" priority="primary">

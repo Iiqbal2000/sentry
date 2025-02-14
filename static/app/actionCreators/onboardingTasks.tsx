@@ -1,16 +1,10 @@
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import ConfigStore from 'sentry/stores/configStore';
 import OrganizationStore from 'sentry/stores/organizationStore';
-import {OnboardingTask, OnboardingTaskStatus, Organization} from 'sentry/types';
-
-interface UpdatedTask extends Partial<Pick<OnboardingTask, 'status' | 'data'>> {
-  task: OnboardingTask['task'];
-  /**
-   * Marks completion seen. This differs from the OnboardingTask
-   * completionSeen type as that returns the date completion was seen.
-   */
-  completionSeen?: boolean;
-}
+import type {OnboardingTaskStatus, UpdatedTask} from 'sentry/types/onboarding';
+import type {Organization} from 'sentry/types/organization';
+import {isDemoModeEnabled} from 'sentry/utils/demoMode';
+import {updateDemoWalkthroughTask} from 'sentry/utils/demoMode/guides';
 
 /**
  * Update an onboarding task.
@@ -23,6 +17,10 @@ export function updateOnboardingTask(
   organization: Organization,
   updatedTask: UpdatedTask
 ) {
+  if (isDemoModeEnabled()) {
+    updateDemoWalkthroughTask(updatedTask);
+    return;
+  }
   if (api !== null) {
     api.requestPromise(`/organizations/${organization.slug}/onboarding-tasks/`, {
       method: 'POST',

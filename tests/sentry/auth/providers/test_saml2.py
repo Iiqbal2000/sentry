@@ -25,10 +25,10 @@ class DummySAML2Provider(SAML2Provider):
     name = "dummy"
 
     def get_saml_setup_pipeline(self):
-        pass
+        raise NotImplementedError
 
 
-@control_silo_test(stable=True)
+@control_silo_test
 class SAML2ProviderTest(TestCase):
     def setUp(self):
         auth_provider = AuthProvider.objects.create(

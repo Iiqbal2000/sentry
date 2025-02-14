@@ -3,22 +3,23 @@ from django.db import router
 from django.db.transaction import get_connection
 
 from sentry import deletions
+from sentry.deletions.tasks.hybrid_cloud import schedule_hybrid_cloud_foreign_key_jobs
 from sentry.models.apigrant import ApiGrant
 from sentry.models.apitoken import ApiToken
-from sentry.models.integrations.sentry_app_installation import SentryAppInstallation
-from sentry.models.integrations.sentry_app_installation_for_provider import (
+from sentry.sentry_apps.installations import SentryAppInstallationCreator
+from sentry.sentry_apps.models.sentry_app_installation import SentryAppInstallation
+from sentry.sentry_apps.models.sentry_app_installation_for_provider import (
     SentryAppInstallationForProvider,
 )
-from sentry.models.servicehook import ServiceHook
-from sentry.sentry_apps.installations import SentryAppInstallationCreator
+from sentry.sentry_apps.models.servicehook import ServiceHook
 from sentry.silo.base import SiloMode
-from sentry.tasks.deletion.hybrid_cloud import schedule_hybrid_cloud_foreign_key_jobs
+from sentry.silo.safety import unguarded_write
 from sentry.testutils.cases import TestCase
 from sentry.testutils.outbox import outbox_runner
 from sentry.testutils.silo import assume_test_silo_mode, control_silo_test
 
 
-@control_silo_test(stable=True)
+@control_silo_test
 class TestSentryAppInstallationDeletionTask(TestCase):
     def setUp(self):
         self.user = self.create_user()
@@ -44,14 +45,17 @@ class TestSentryAppInstallationDeletionTask(TestCase):
 
     def test_deletes_without_grant(self):
         assert self.install.api_grant is not None
-        self.install.api_grant.delete()
+        with unguarded_write(router.db_for_write(ApiGrant)):
+            self.install.api_grant.delete()
         self.install.update(api_grant=None)
         deletions.exec_sync(self.install)
 
     def test_deletes_api_tokens(self):
         internal_app = self.create_internal_integration(organization=self.org)
+        api_token = self.create_internal_integration_token(
+            user=self.user, internal_integration=internal_app
+        )
         install = SentryAppInstallation.objects.get(sentry_app_id=internal_app.id)
-        api_token = install.api_token
 
         deletions.exec_sync(install)
 

@@ -1,10 +1,11 @@
-import {Theme} from '@emotion/react';
+import type {Theme} from '@emotion/react';
 
-import {EventTag, Measurement} from 'sentry/types/event';
-import {
+import type {EventTag, Measurement} from 'sentry/types/event';
+import type {
   DiscoverQueryProps,
   GenericChildrenProps,
 } from 'sentry/utils/discover/genericDiscoverQuery';
+import type {TraceTree} from 'sentry/views/performance/newTraceDetails/traceModels/traceTree';
 
 /**
  * `EventLite` represents the type of a simplified event from
@@ -19,6 +20,7 @@ export type EventLite = {
   project_id: number;
   project_slug: string;
   span_id: string;
+  timestamp: number;
   transaction: string;
   'transaction.duration': number;
 };
@@ -28,6 +30,7 @@ export type TraceError = {
   issue: string;
   issue_id: number;
   level: keyof Theme['level'];
+  message: string;
   project_id: number;
   project_slug: string;
   span: string;
@@ -35,6 +38,7 @@ export type TraceError = {
   event_type?: string;
   generation?: number;
   timestamp?: number;
+  type?: number;
 };
 
 export type TracePerformanceIssue = Omit<TraceError, 'issue' | 'span'> & {
@@ -46,6 +50,7 @@ export type TracePerformanceIssue = Omit<TraceError, 'issue' | 'span'> & {
   type: number;
   issue_short_id?: string;
 };
+export type TraceErrorOrIssue = TracePerformanceIssue | TraceError;
 
 export type TraceLite = EventLite[];
 
@@ -73,7 +78,8 @@ export type TraceFull = Omit<QuickTraceEvent, 'generation' | 'errors'> & {
  * additional information by setting `detailed=1`.
  */
 export type TraceFullDetailed = Omit<TraceFull, 'children'> & {
-  children: TraceFullDetailed[];
+  children: TraceTree.Transaction[];
+  sdk_name: string;
   start_timestamp: number;
   timestamp: number;
   'transaction.op': string;
@@ -81,6 +87,7 @@ export type TraceFullDetailed = Omit<TraceFull, 'children'> & {
   measurements?: Record<string, Measurement>;
   profile_id?: string;
   tags?: EventTag[];
+  transaction?: string;
 };
 
 export type TraceSplitResults<U extends TraceFull | TraceFullDetailed | EventLite> = {
@@ -131,5 +138,8 @@ export type TraceMeta = {
   errors: number;
   performance_issues: number;
   projects: number;
+  span_count: number;
+  span_count_map: Record<string, number>;
+  transaction_child_count_map: Record<string, number>;
   transactions: number;
 };

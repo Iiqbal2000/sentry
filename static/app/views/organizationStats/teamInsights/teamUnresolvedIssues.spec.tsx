@@ -1,4 +1,6 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {TeamFixture} from 'sentry-fixture/team';
 
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
@@ -6,9 +8,10 @@ import {TeamUnresolvedIssues} from './teamUnresolvedIssues';
 
 describe('TeamUnresolvedIssues', () => {
   it('should render graph with table with % change', async () => {
-    const team = TestStubs.Team();
-    const project = TestStubs.Project();
-    const organization = Organization({projects: [project]});
+    const team = TeamFixture();
+    const project = ProjectFixture();
+    const organization = OrganizationFixture();
+    const lastDayCount = 37;
     const issuesApi = MockApiClient.addMockResponse({
       url: `/teams/${organization.slug}/${team.slug}/all-unresolved-issues/`,
       body: {
@@ -24,16 +27,16 @@ describe('TeamUnresolvedIssues', () => {
           '2021-12-18T00:00:00+00:00': {unresolved: 44},
           '2021-12-19T00:00:00+00:00': {unresolved: 43},
           '2021-12-20T00:00:00+00:00': {unresolved: 40},
-          '2021-12-21T00:00:00+00:00': {unresolved: 37},
+          '2021-12-21T00:00:00+00:00': {unresolved: 38},
           '2021-12-22T00:00:00+00:00': {unresolved: 36},
-          '2021-12-23T00:00:00+00:00': {unresolved: 37},
+          '2021-12-23T00:00:00+00:00': {unresolved: lastDayCount},
         },
       },
     });
     render(
       <TeamUnresolvedIssues
         organization={organization}
-        projects={organization.projects}
+        projects={[project]}
         teamSlug={team.slug}
         period="14d"
       />
@@ -42,6 +45,7 @@ describe('TeamUnresolvedIssues', () => {
     // Project
     expect(await screen.findByText('project-slug')).toBeInTheDocument();
     expect(screen.getByText('-14%')).toBeInTheDocument();
+    expect(screen.getByText(lastDayCount)).toBeInTheDocument();
     expect(issuesApi).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,16 +1,25 @@
-import {browserHistory} from 'react-router';
 import type {Location} from 'history';
+import {
+  ReplayNavigationFrameFixture,
+  ReplayNavigationPushFrameFixture,
+  ReplayRequestFrameFixture,
+  ReplayResourceFrameFixture,
+} from 'sentry-fixture/replay/replaySpanFrameData';
+import {ReplayRecordFixture} from 'sentry-fixture/replayRecord';
 
-import {reactHooks} from 'sentry-test/reactTestingLibrary';
+import {renderHook} from 'sentry-test/reactTestingLibrary';
 
 import hydrateSpans from 'sentry/utils/replays/hydrateSpans';
 import {useLocation} from 'sentry/utils/useLocation';
+import {useNavigate} from 'sentry/utils/useNavigate';
 
-import useNetworkFilters, {FilterFields, NetworkSelectOption} from './useNetworkFilters';
+import type {FilterFields, NetworkSelectOption} from './useNetworkFilters';
+import useNetworkFilters from './useNetworkFilters';
 
-jest.mock('react-router');
 jest.mock('sentry/utils/useLocation');
+jest.mock('sentry/utils/useNavigate');
 
+const mockUseNavigate = jest.mocked(useNavigate);
 const mockUseLocation = jest.mocked(useLocation);
 
 const [
@@ -23,8 +32,8 @@ const [
   SPAN_6_PUSH,
   SPAN_7_FETCH_GET,
   SPAN_8_FETCH_POST,
-] = hydrateSpans(TestStubs.ReplayRecord(), [
-  TestStubs.Replay.NavigationFrame({
+] = hydrateSpans(ReplayRecordFixture(), [
+  ReplayNavigationFrameFixture({
     op: 'navigation.navigate',
     description: 'http://localhost:3000/',
     startTimestamp: new Date(1663131080.5554),
@@ -33,19 +42,19 @@ const [
       size: 1334,
     },
   }),
-  TestStubs.Replay.ResourceFrame({
+  ReplayResourceFrameFixture({
     op: 'resource.link',
     description: 'http://localhost:3000/static/css/main.1856e8e3.chunk.css',
     startTimestamp: new Date(1663131080.5767),
     endTimestamp: new Date(1663131080.5951),
   }),
-  TestStubs.Replay.ResourceFrame({
+  ReplayResourceFrameFixture({
     op: 'resource.script',
     description: 'http://localhost:3000/static/js/2.3b866bed.chunk.js',
     startTimestamp: new Date(1663131080.5770998),
     endTimestamp: new Date(1663131080.5979),
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     description: 'https://pokeapi.co/api/v2/pokemon',
     startTimestamp: new Date(1663131080.641),
@@ -55,26 +64,26 @@ const [
       statusCode: 200,
     },
   }),
-  TestStubs.Replay.ResourceFrame({
+  ReplayResourceFrameFixture({
     op: 'resource.img',
     description: 'http://localhost:3000/static/media/logo.ddd5084d.png',
     startTimestamp: new Date(1663131080.6422),
     endTimestamp: new Date(1663131080.6441),
   }),
-  TestStubs.Replay.ResourceFrame({
+  ReplayResourceFrameFixture({
     op: 'resource.css',
     description:
       'http://localhost:3000/static/media/glyphicons-halflings-regular.448c34a5.woff2',
     startTimestamp: new Date(1663131080.6447997),
     endTimestamp: new Date(1663131080.6548998),
   }),
-  TestStubs.Replay.NavigationPushFrame({
+  ReplayNavigationPushFrameFixture({
     op: 'navigation.push',
     description: '/mypokemon',
     startTimestamp: new Date(1663131082.346),
     endTimestamp: new Date(1663131082.346),
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     description: 'https://pokeapi.co/api/v2/pokemon/pikachu',
     startTimestamp: new Date(1663131092.471),
@@ -84,7 +93,7 @@ const [
       statusCode: 200,
     },
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     description: 'https://pokeapi.co/api/v2/pokemon/mewtu',
     startTimestamp: new Date(1663131120.198),
@@ -98,22 +107,20 @@ const [
 
 describe('useNetworkFilters', () => {
   const networkFrames = [
-    SPAN_0_NAVIGATE,
-    SPAN_1_LINK,
-    SPAN_2_SCRIPT,
-    SPAN_3_FETCH,
-    SPAN_4_IMG,
-    SPAN_5_CSS,
-    SPAN_6_PUSH,
-    SPAN_7_FETCH_GET,
-    SPAN_8_FETCH_POST,
+    SPAN_0_NAVIGATE!,
+    SPAN_1_LINK!,
+    SPAN_2_SCRIPT!,
+    SPAN_3_FETCH!,
+    SPAN_4_IMG!,
+    SPAN_5_CSS!,
+    SPAN_6_PUSH!,
+    SPAN_7_FETCH_GET!,
+    SPAN_8_FETCH_POST!,
   ];
 
-  beforeEach(() => {
-    jest.mocked(browserHistory.push).mockReset();
-  });
-
   it('should update the url when setters are called', () => {
+    const mockNavigate = jest.fn();
+    mockUseNavigate.mockReturnValue(mockNavigate);
     const TYPE_OPTION: NetworkSelectOption = {
       value: 'resource.fetch',
       label: 'resource.fetch',
@@ -140,46 +147,58 @@ describe('useNetworkFilters', () => {
         query: {f_n_type: [TYPE_OPTION.value], f_n_status: [STATUS_OPTION.value]},
       } as Location<FilterFields>);
 
-    const {result, rerender} = reactHooks.renderHook(useNetworkFilters, {
+    const {result, rerender} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 
     result.current.setFilters([TYPE_OPTION]);
-    expect(browserHistory.push).toHaveBeenLastCalledWith({
-      pathname: '/',
-      query: {
-        f_n_method: [],
-        f_n_status: [],
-        f_n_type: [TYPE_OPTION.value],
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      {
+        pathname: '/',
+        query: {
+          f_n_method: [],
+          f_n_status: [],
+          f_n_type: [TYPE_OPTION.value],
+        },
       },
-    });
+      {replace: true}
+    );
 
-    rerender();
+    rerender({networkFrames});
 
     result.current.setFilters([TYPE_OPTION, STATUS_OPTION]);
-    expect(browserHistory.push).toHaveBeenLastCalledWith({
-      pathname: '/',
-      query: {
-        f_n_method: [],
-        f_n_status: [STATUS_OPTION.value],
-        f_n_type: [TYPE_OPTION.value],
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      {
+        pathname: '/',
+        query: {
+          f_n_method: [],
+          f_n_status: [STATUS_OPTION.value],
+          f_n_type: [TYPE_OPTION.value],
+        },
       },
-    });
+      {replace: true}
+    );
 
-    rerender();
+    rerender({networkFrames});
 
     result.current.setSearchTerm(SEARCH_FILTER);
-    expect(browserHistory.push).toHaveBeenLastCalledWith({
-      pathname: '/',
-      query: {
-        f_n_type: [TYPE_OPTION.value],
-        f_n_status: [STATUS_OPTION.value],
-        f_n_search: SEARCH_FILTER,
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      {
+        pathname: '/',
+        query: {
+          f_n_type: [TYPE_OPTION.value],
+          f_n_status: [STATUS_OPTION.value],
+          f_n_search: SEARCH_FILTER,
+        },
       },
-    });
+      {replace: true}
+    );
   });
 
   it('should clear details params when setters are called', () => {
+    const mockNavigate = jest.fn();
+    mockUseNavigate.mockReturnValue(mockNavigate);
+
     const TYPE_OPTION: NetworkSelectOption = {
       value: 'resource.fetch',
       label: 'resource.fetch',
@@ -218,43 +237,52 @@ describe('useNetworkFilters', () => {
         },
       } as Location<FilterFields>);
 
-    const {result, rerender} = reactHooks.renderHook(useNetworkFilters, {
+    const {result, rerender} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 
     result.current.setFilters([TYPE_OPTION]);
-    expect(browserHistory.push).toHaveBeenLastCalledWith({
-      pathname: '/',
-      query: {
-        f_n_method: [],
-        f_n_status: [],
-        f_n_type: [TYPE_OPTION.value],
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      {
+        pathname: '/',
+        query: {
+          f_n_method: [],
+          f_n_status: [],
+          f_n_type: [TYPE_OPTION.value],
+        },
       },
-    });
+      {replace: true}
+    );
 
-    rerender();
+    rerender({networkFrames});
 
     result.current.setFilters([TYPE_OPTION, STATUS_OPTION]);
-    expect(browserHistory.push).toHaveBeenLastCalledWith({
-      pathname: '/',
-      query: {
-        f_n_method: [],
-        f_n_status: [STATUS_OPTION.value],
-        f_n_type: [TYPE_OPTION.value],
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      {
+        pathname: '/',
+        query: {
+          f_n_method: [],
+          f_n_status: [STATUS_OPTION.value],
+          f_n_type: [TYPE_OPTION.value],
+        },
       },
-    });
+      {replace: true}
+    );
 
-    rerender();
+    rerender({networkFrames});
 
     result.current.setSearchTerm(SEARCH_FILTER);
-    expect(browserHistory.push).toHaveBeenLastCalledWith({
-      pathname: '/',
-      query: {
-        f_n_status: [STATUS_OPTION.value],
-        f_n_type: [TYPE_OPTION.value],
-        f_n_search: SEARCH_FILTER,
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      {
+        pathname: '/',
+        query: {
+          f_n_status: [STATUS_OPTION.value],
+          f_n_type: [TYPE_OPTION.value],
+          f_n_search: SEARCH_FILTER,
+        },
       },
-    });
+      {replace: true}
+    );
   });
 
   it('should not filter anything when no values are set', () => {
@@ -263,7 +291,7 @@ describe('useNetworkFilters', () => {
       query: {},
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
     expect(result.current.items).toHaveLength(9);
@@ -277,7 +305,7 @@ describe('useNetworkFilters', () => {
       },
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
     expect(result.current.items).toStrictEqual([SPAN_8_FETCH_POST]);
@@ -291,7 +319,7 @@ describe('useNetworkFilters', () => {
       },
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
     expect(result.current.items).toHaveLength(8);
@@ -305,7 +333,7 @@ describe('useNetworkFilters', () => {
       },
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
     expect(result.current.items).toHaveLength(2);
@@ -319,7 +347,7 @@ describe('useNetworkFilters', () => {
       },
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
     expect(result.current.items).toHaveLength(3);
@@ -333,7 +361,7 @@ describe('useNetworkFilters', () => {
       },
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
     expect(result.current.items).toHaveLength(1);
@@ -349,7 +377,7 @@ describe('useNetworkFilters', () => {
       },
     } as Location<FilterFields>);
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
     expect(result.current.items).toHaveLength(1);
@@ -358,9 +386,9 @@ describe('useNetworkFilters', () => {
 
 describe('getMethodTypes', () => {
   it('should default to having GET in the list of method types', () => {
-    const networkFrames = [];
+    const networkFrames: any[] = [];
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 
@@ -370,9 +398,9 @@ describe('getMethodTypes', () => {
   });
 
   it('should return a sorted list of method types', () => {
-    const networkFrames = [SPAN_8_FETCH_POST, SPAN_7_FETCH_GET];
+    const networkFrames = [SPAN_8_FETCH_POST!, SPAN_7_FETCH_GET!];
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 
@@ -383,9 +411,9 @@ describe('getMethodTypes', () => {
   });
 
   it('should deduplicate BreadcrumbType', () => {
-    const networkFrames = [SPAN_2_SCRIPT, SPAN_3_FETCH, SPAN_7_FETCH_GET];
+    const networkFrames = [SPAN_2_SCRIPT!, SPAN_3_FETCH!, SPAN_7_FETCH_GET!];
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 
@@ -397,9 +425,9 @@ describe('getMethodTypes', () => {
 
 describe('getResourceTypes', () => {
   it('should default to having fetch in the list of span types', () => {
-    const networkFrames = [];
+    const networkFrames: any[] = [];
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 
@@ -409,9 +437,9 @@ describe('getResourceTypes', () => {
   });
 
   it('should return a sorted list of BreadcrumbType', () => {
-    const networkFrames = [SPAN_0_NAVIGATE, SPAN_1_LINK, SPAN_2_SCRIPT];
+    const networkFrames = [SPAN_0_NAVIGATE!, SPAN_1_LINK!, SPAN_2_SCRIPT!];
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 
@@ -425,14 +453,14 @@ describe('getResourceTypes', () => {
 
   it('should deduplicate BreadcrumbType', () => {
     const networkFrames = [
-      SPAN_0_NAVIGATE,
-      SPAN_1_LINK,
-      SPAN_2_SCRIPT,
-      SPAN_3_FETCH,
-      SPAN_7_FETCH_GET,
+      SPAN_0_NAVIGATE!,
+      SPAN_1_LINK!,
+      SPAN_2_SCRIPT!,
+      SPAN_3_FETCH!,
+      SPAN_7_FETCH_GET!,
     ];
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 
@@ -448,13 +476,13 @@ describe('getResourceTypes', () => {
 describe('getStatusTypes', () => {
   it('should return a sorted list of BreadcrumbType', () => {
     const networkFrames = [
-      SPAN_0_NAVIGATE,
-      SPAN_1_LINK,
-      SPAN_2_SCRIPT,
-      SPAN_8_FETCH_POST,
+      SPAN_0_NAVIGATE!,
+      SPAN_1_LINK!,
+      SPAN_2_SCRIPT!,
+      SPAN_8_FETCH_POST!,
     ];
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 
@@ -471,15 +499,15 @@ describe('getStatusTypes', () => {
 
   it('should deduplicate BreadcrumbType', () => {
     const networkFrames = [
-      SPAN_0_NAVIGATE,
-      SPAN_1_LINK,
-      SPAN_2_SCRIPT,
-      SPAN_3_FETCH,
-      SPAN_7_FETCH_GET,
-      SPAN_8_FETCH_POST,
+      SPAN_0_NAVIGATE!,
+      SPAN_1_LINK!,
+      SPAN_2_SCRIPT!,
+      SPAN_3_FETCH!,
+      SPAN_7_FETCH_GET!,
+      SPAN_8_FETCH_POST!,
     ];
 
-    const {result} = reactHooks.renderHook(useNetworkFilters, {
+    const {result} = renderHook(useNetworkFilters, {
       initialProps: {networkFrames},
     });
 

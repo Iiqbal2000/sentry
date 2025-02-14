@@ -1,55 +1,38 @@
-import {useMemo} from 'react';
-import styled from '@emotion/styled';
-import {Location} from 'history';
-import moment from 'moment';
+import {useMemo, useState} from 'react';
 
-import EmptyStateWarning from 'sentry/components/emptyStateWarning';
-import {DataSection} from 'sentry/components/events/styles';
-import GridEditable, {
-  COL_WIDTH_UNDEFINED,
-  GridColumnOrder,
-} from 'sentry/components/gridEditable';
-import Link from 'sentry/components/links/link';
-import LoadingIndicator from 'sentry/components/loadingIndicator';
-import TextOverflow from 'sentry/components/textOverflow';
-import {Tooltip} from 'sentry/components/tooltip';
-import {t, tct} from 'sentry/locale';
-import {Event, Organization} from 'sentry/types';
-import {defined} from 'sentry/utils';
+import {COL_WIDTH_UNDEFINED} from 'sentry/components/gridEditable';
+import {SegmentedControl} from 'sentry/components/segmentedControl';
+import {t} from 'sentry/locale';
+import type {Event} from 'sentry/types/event';
+import type {Project} from 'sentry/types/project';
+import {useRelativeDateTime} from 'sentry/utils/profiling/hooks/useRelativeDateTime';
 import {useApiQuery} from 'sentry/utils/queryClient';
+import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
+import {useSpanMetrics} from 'sentry/views/insights/common/queries/useDiscover';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
 import {spanDetailsRouteWithQuery} from 'sentry/views/performance/transactionSummary/transactionSpans/spanDetails/utils';
 
+import {EventRegressionTable} from './eventRegressionTable';
+
 interface SpanDiff {
-  duration_after: number;
-  duration_before: number;
-  duration_delta: number;
-  freq_after: number;
-  freq_before: number;
-  freq_delta: number;
-  sample_event_id: string;
-  score_delta: number;
+  p95_after: number;
+  p95_before: number;
+  score: number;
   span_description: string;
   span_group: string;
   span_op: string;
+  spm_after: number;
+  spm_before: number;
 }
 
 interface UseFetchAdvancedAnalysisProps {
   breakpoint: string;
+  enabled: boolean;
   end: string;
   projectId: string;
-  start: string;
-  transaction: string;
-}
-
-interface RenderBodyCellProps {
-  column: GridColumnOrder<string>;
-  end: string;
-  location: Location;
-  organization: Organization;
-  projectId: string;
-  row: SpanDiff;
   start: string;
   transaction: string;
 }
@@ -60,6 +43,7 @@ function useFetchAdvancedAnalysis({
   end,
   breakpoint,
   projectId,
+  enabled,
 }: UseFetchAdvancedAnalysisProps) {
   const organization = useOrganization();
   return useApiQuery<SpanDiff[]>(
@@ -79,193 +63,193 @@ function useFetchAdvancedAnalysis({
     {
       staleTime: 60000,
       retry: false,
+      enabled,
     }
   );
 }
 
-function getColumns() {
-  return [
-    {key: 'span_op', name: t('Operation'), width: COL_WIDTH_UNDEFINED},
-    {key: 'span_description', name: t('Description'), width: 400},
+const ADDITIONAL_COLUMNS = [
+  {key: 'operation', name: t('Operation'), width: 120},
+  {key: 'description', name: t('Description'), width: COL_WIDTH_UNDEFINED},
+];
 
-    // TODO: Relative Frequency should be replaced with Throughput
-    {key: 'freq_after', name: t('Relative Frequency'), width: COL_WIDTH_UNDEFINED},
-    {key: 'freq_delta', name: t('Change'), width: COL_WIDTH_UNDEFINED},
-    {key: 'duration_after', name: t('P95'), width: COL_WIDTH_UNDEFINED},
-    {key: 'duration_delta', name: t('Change'), width: COL_WIDTH_UNDEFINED},
-  ];
+interface AggregateSpanDiffProps {
+  event: Event;
+  project: Project;
 }
 
-function renderHeadCell(column: GridColumnOrder<string>) {
-  if (
-    ['freq_after', 'freq_delta', 'duration_after', 'duration_delta'].includes(column.key)
-  ) {
-    if (column.key === 'freq_after') {
-      return (
-        <Tooltip
-          title={t(
-            'Relative Frequency is the number of times the span appeared divided by the number of transactions observed'
-          )}
-          skipWrapper
-        >
-          <NumericColumnLabel>{column.name}</NumericColumnLabel>
-        </Tooltip>
-      );
-    }
-
-    return <NumericColumnLabel>{column.name}</NumericColumnLabel>;
-  }
-  return column.name;
-}
-
-function renderBodyCell({
-  column,
-  row,
-  organization,
-  transaction,
-  projectId,
-  location,
-  start,
-  end,
-}: RenderBodyCellProps) {
-  if (column.key === 'span_description') {
-    const label = row[column.key] || t('unnamed span');
-    return (
-      <Tooltip title={label} showOnlyOnOverflow>
-        <TextOverflow>
-          <Link
-            to={spanDetailsRouteWithQuery({
-              orgSlug: organization.slug,
-              spanSlug: {op: row.span_op, group: row.span_group},
-              transaction,
-              projectID: projectId,
-              query: {
-                ...location.query,
-                statsPeriod: undefined,
-                query: undefined,
-                start,
-                end,
-              },
-            })}
-          >
-            {label}
-          </Link>
-        </TextOverflow>
-      </Tooltip>
-    );
-  }
-
-  if (['duration_delta', 'freq_delta'].includes(column.key)) {
-    if (row[column.key] === 0) {
-      return <NumericColumnLabel>-</NumericColumnLabel>;
-    }
-
-    const prefix = column.key.split('_delta')[0];
-    const unitSuffix = prefix === 'duration' ? 'ms' : '';
-    const percentDelta = (row[column.key] / row[`${prefix}_before`]) * 100;
-    const strippedLabel = Math.abs(percentDelta).toFixed(2);
-    const isPositive = percentDelta > 0;
-
-    const labelContent =
-      row[`${prefix}_before`] !== 0
-        ? `${isPositive ? '+' : '-'}${strippedLabel}%`
-        : t('Added');
-    return (
-      <Tooltip
-        title={tct('From [before] to [after]', {
-          before: `${row[`${prefix}_before`].toFixed(2)}${unitSuffix}`,
-          after: `${row[`${prefix}_after`].toFixed(2)}${unitSuffix}`,
-        })}
-      >
-        <ChangeLabel isPositive={isPositive}>{labelContent}</ChangeLabel>
-      </Tooltip>
-    );
-  }
-
-  if (typeof row[column.key] === 'number') {
-    const unitSuffix = column.key === 'duration_after' ? 'ms' : '';
-    return (
-      <NumericColumnLabel>{`${row[column.key].toFixed(
-        2
-      )}${unitSuffix}`}</NumericColumnLabel>
-    );
-  }
-
-  return row[column.key];
-}
-
-function AggregateSpanDiff({event, projectId}: {event: Event; projectId: string}) {
+function AggregateSpanDiff({event, project}: AggregateSpanDiffProps) {
   const location = useLocation();
   const organization = useOrganization();
-  const now = useMemo(() => Date.now(), []);
-  const retentionPeriodMs = moment().subtract(90, 'days').valueOf();
-  const {transaction, dataStart, breakpoint} = event?.occurrence?.evidenceData ?? {};
+  const isSpansOnly = organization.features.includes(
+    'statistical-detectors-rca-spans-only'
+  );
 
-  const start = new Date(Math.max(dataStart * 1000, retentionPeriodMs)).toISOString();
-  const end = new Date(now).toISOString();
+  const [causeType, setCauseType] = useState<'duration' | 'throughput'>('duration');
+
+  const {transaction, breakpoint} = event?.occurrence?.evidenceData ?? {};
   const breakpointTimestamp = new Date(breakpoint * 1000).toISOString();
-  const {data, isLoading, isError} = useFetchAdvancedAnalysis({
-    transaction,
-    start,
-    end,
-    breakpoint: breakpointTimestamp,
-    projectId,
+
+  const {start, end} = useRelativeDateTime({
+    anchor: breakpoint,
+    relativeDays: 7,
+    retentionDays: 30,
   });
 
-  if (isLoading) {
-    return <LoadingIndicator />;
-  }
+  const {
+    data: rcaData,
+    isPending: isRcaLoading,
+    isError: isRcaError,
+  } = useFetchAdvancedAnalysis({
+    transaction,
+    start: (start as Date).toISOString(),
+    end: (end as Date).toISOString(),
+    breakpoint: breakpointTimestamp,
+    projectId: project.id,
+    enabled: !isSpansOnly,
+  });
 
-  let content;
-  if (isError) {
-    content = (
-      <EmptyStateWarning>
-        <p>{t('Oops! Something went wrong fetching span diffs')}</p>
-      </EmptyStateWarning>
+  // Initialize the search query with has:span.group because only
+  // specific operations have their span.group recorded in the span
+  // metrics dataset
+  const search = new MutableSearch('has:span.group');
+  search.addFilterValue('transaction', transaction);
+
+  const {
+    data: spansData,
+    isPending: isSpansDataLoading,
+    isError: isSpansDataError,
+  } = useSpanMetrics(
+    {
+      search,
+      fields: [
+        'span.op',
+        'any(span.description)',
+        'span.group',
+        `regression_score(span.self_time,${breakpoint})`,
+        `avg_by_timestamp(span.self_time,less,${breakpoint})`,
+        `avg_by_timestamp(span.self_time,greater,${breakpoint})`,
+        `epm_by_timestamp(less,${breakpoint})`,
+        `epm_by_timestamp(greater,${breakpoint})`,
+      ],
+      sorts: [{field: `regression_score(span.self_time,${breakpoint})`, kind: 'desc'}],
+      limit: 10,
+      enabled: isSpansOnly,
+    },
+    'api.performance.transactions.statistical-detector-root-cause-analysis'
+  );
+
+  const tableData = useMemo(() => {
+    if (isSpansOnly) {
+      return spansData?.map(row => {
+        const commonProps = {
+          operation: row['span.op'],
+          group: row['span.group'],
+          description: row['any(span.description)'] || undefined,
+        };
+
+        if (causeType === 'throughput') {
+          const throughputBefore = row[`epm_by_timestamp(less,${breakpoint})`]!;
+          const throughputAfter = row[`epm_by_timestamp(greater,${breakpoint})`]!;
+          return {
+            ...commonProps,
+            throughputBefore,
+            throughputAfter,
+            percentageChange: throughputAfter / throughputBefore - 1,
+          };
+        }
+
+        const durationBefore =
+          row[`avg_by_timestamp(span.self_time,less,${breakpoint})`]! / 1e3;
+        const durationAfter =
+          row[`avg_by_timestamp(span.self_time,greater,${breakpoint})`]! / 1e3;
+        return {
+          ...commonProps,
+          durationBefore,
+          durationAfter,
+          percentageChange: durationAfter / durationBefore - 1,
+        };
+      });
+    }
+
+    return (
+      rcaData?.map(row => {
+        if (causeType === 'throughput') {
+          return {
+            operation: row.span_op,
+            group: row.span_group,
+            description: row.span_description,
+            throughputBefore: row.spm_before,
+            throughputAfter: row.spm_after,
+            percentageChange: row.spm_after / row.spm_before - 1,
+          };
+        }
+
+        return {
+          operation: row.span_op,
+          group: row.span_group,
+          description: row.span_description,
+          durationBefore: row.p95_before / 1e3,
+          durationAfter: row.p95_after / 1e3,
+          percentageChange: row.p95_after / row.p95_before - 1,
+        };
+      }) || []
     );
-  } else if (!defined(data) || data.length === 0) {
-    content = (
-      <EmptyStateWarning>
-        <p>{t('Unable to find significant differences in spans')}</p>
-      </EmptyStateWarning>
-    );
-  } else {
-    content = (
-      <GridEditable
-        isLoading={isLoading}
-        data={data}
-        location={location}
-        columnOrder={getColumns()}
-        columnSortBy={[]}
-        grid={{
-          renderHeadCell,
-          renderBodyCell: (column, row) =>
-            renderBodyCell({
-              column,
-              row,
-              organization,
-              transaction,
-              projectId,
-              location,
-              start,
-              end,
-            }),
-        }}
+  }, [isSpansOnly, rcaData, spansData, causeType, breakpoint]);
+
+  const tableOptions = useMemo(() => {
+    return {
+      description: {
+        defaultValue: t('(unnamed span)'),
+        link: (dataRow: any) => ({
+          target: spanDetailsRouteWithQuery({
+            organization,
+            spanSlug: {op: dataRow.operation, group: dataRow.group},
+            transaction,
+            projectID: project.id,
+            query: {
+              ...location.query,
+              statsPeriod: undefined,
+              query: undefined,
+              start: (start as Date).toISOString(),
+              end: (end as Date).toISOString(),
+            },
+          }),
+        }),
+      },
+    };
+  }, [location, organization, project, transaction, start, end]);
+
+  return (
+    <InterimSection
+      type={SectionKey.REGRESSION_POTENTIAL_CAUSES}
+      title={t('Potential Causes')}
+      actions={
+        <SegmentedControl
+          size="xs"
+          aria-label={t('Duration or Throughput')}
+          value={causeType}
+          onChange={setCauseType}
+        >
+          <SegmentedControl.Item key="duration">
+            {isSpansOnly ? t('Average Duration') : t('Duration (P95)')}
+          </SegmentedControl.Item>
+          <SegmentedControl.Item key="throughput">
+            {t('Throughput')}
+          </SegmentedControl.Item>
+        </SegmentedControl>
+      }
+    >
+      <EventRegressionTable
+        causeType={causeType}
+        columns={ADDITIONAL_COLUMNS}
+        data={tableData}
+        isLoading={isSpansOnly ? isSpansDataLoading : isRcaLoading}
+        isError={isSpansOnly ? isSpansDataError : isRcaError}
+        options={tableOptions}
       />
-    );
-  }
-
-  return <DataSection>{content}</DataSection>;
+    </InterimSection>
+  );
 }
 
 export default AggregateSpanDiff;
-
-const ChangeLabel = styled('div')<{isPositive: boolean}>`
-  color: ${p => (p.isPositive ? p.theme.red300 : p.theme.green300)};
-  text-align: right;
-`;
-
-const NumericColumnLabel = styled('div')`
-  text-align: right;
-  width: 100%;
-`;

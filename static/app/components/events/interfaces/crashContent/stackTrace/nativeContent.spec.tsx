@@ -1,14 +1,32 @@
-import {EventEntryStacktrace} from 'sentry-fixture/eventEntryStacktrace';
-import {Organization} from 'sentry-fixture/organization';
+import {EventFixture} from 'sentry-fixture/event';
+import {EventEntryStacktraceFixture} from 'sentry-fixture/eventEntryStacktrace';
+import {EventStacktraceFrameFixture} from 'sentry-fixture/eventStacktraceFrame';
+import {GitHubIntegrationFixture} from 'sentry-fixture/githubIntegration';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {RepositoryFixture} from 'sentry-fixture/repository';
+import {RepositoryProjectPathConfigFixture} from 'sentry-fixture/repositoryProjectPathConfig';
 
-import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
+import {render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary';
 
 import StackTraceContent from 'sentry/components/events/interfaces/crashContent/stackTrace/content';
-import {EventOrGroupType} from 'sentry/types';
-import {StacktraceType} from 'sentry/types/stacktrace';
+import {NativeContent} from 'sentry/components/events/interfaces/crashContent/stackTrace/nativeContent';
+import {SymbolicatorStatus} from 'sentry/components/events/interfaces/types';
+import ProjectsStore from 'sentry/stores/projectsStore';
+import {EventOrGroupType} from 'sentry/types/event';
+import type {StacktraceType} from 'sentry/types/stacktrace';
 
-const eventEntryStacktrace = EventEntryStacktrace();
-const event = TestStubs.Event({
+const organization = OrganizationFixture();
+const project = ProjectFixture();
+
+const integration = GitHubIntegrationFixture();
+const repo = RepositoryFixture({integrationId: integration.id});
+
+const config = RepositoryProjectPathConfigFixture({project, repo, integration});
+
+const eventEntryStacktrace = EventEntryStacktraceFixture();
+const event = EventFixture({
+  projectID: project.id,
   entries: [eventEntryStacktrace],
   type: EventOrGroupType.ERROR,
 });
@@ -30,14 +48,26 @@ function renderedComponent(
     />
   );
 }
-describe('with stacktrace improvements feature flag enabled', function () {
-  const organization = Organization({
-    features: ['issue-details-stacktrace-improvements'],
+describe('Native StackTrace', function () {
+  beforeEach(() => {
+    MockApiClient.clearMockResponses();
+    const promptResponse = {
+      dismissed_ts: undefined,
+      snoozed_ts: undefined,
+    };
+    MockApiClient.addMockResponse({
+      url: `/organizations/${organization.slug}/prompts-activity/`,
+      body: promptResponse,
+    });
+    MockApiClient.addMockResponse({
+      url: `/projects/${organization.slug}/${project.slug}/stacktrace-link/`,
+      body: {config, sourceUrl: 'https://something.io', integrations: [integration]},
+    });
+    ProjectsStore.loadInitialData([project]);
   });
-
   it('does not render non in app tags', function () {
     const dataFrames = [...data.frames];
-    dataFrames[0] = {...dataFrames[0], inApp: false};
+    dataFrames[0] = {...dataFrames[0]!, inApp: false};
 
     const newData = {
       ...data,
@@ -45,7 +75,6 @@ describe('with stacktrace improvements feature flag enabled', function () {
     };
 
     renderedComponent({
-      organization,
       data: newData,
     });
 
@@ -54,7 +83,7 @@ describe('with stacktrace improvements feature flag enabled', function () {
 
   it('displays a toggle button when there is more than one non-inapp frame', function () {
     const dataFrames = [...data.frames];
-    dataFrames[0] = {...dataFrames[0], inApp: true};
+    dataFrames[0] = {...dataFrames[0]!, inApp: true};
 
     const newData = {
       ...data,
@@ -62,7 +91,6 @@ describe('with stacktrace improvements feature flag enabled', function () {
     };
 
     renderedComponent({
-      organization,
       data: newData,
       includeSystemFrames: false,
     });
@@ -72,11 +100,11 @@ describe('with stacktrace improvements feature flag enabled', function () {
 
   it('shows/hides frames when toggle button clicked', async function () {
     const dataFrames = [...data.frames];
-    dataFrames[0] = {...dataFrames[0], inApp: true};
-    dataFrames[1] = {...dataFrames[1], function: 'non-in-app-frame'};
-    dataFrames[2] = {...dataFrames[2], function: 'non-in-app-frame'};
-    dataFrames[3] = {...dataFrames[3], function: 'non-in-app-frame'};
-    dataFrames[4] = {...dataFrames[4], function: 'non-in-app-frame'};
+    dataFrames[0] = {...dataFrames[0]!, inApp: true};
+    dataFrames[1] = {...dataFrames[1]!, function: 'non-in-app-frame'};
+    dataFrames[2] = {...dataFrames[2]!, function: 'non-in-app-frame'};
+    dataFrames[3] = {...dataFrames[3]!, function: 'non-in-app-frame'};
+    dataFrames[4] = {...dataFrames[4]!, function: 'non-in-app-frame'};
 
     const newData = {
       ...data,
@@ -84,7 +112,6 @@ describe('with stacktrace improvements feature flag enabled', function () {
     };
 
     renderedComponent({
-      organization,
       data: newData,
       includeSystemFrames: false,
     });
@@ -96,9 +123,9 @@ describe('with stacktrace improvements feature flag enabled', function () {
 
   it('does not display a toggle button when there is only one non-inapp frame', function () {
     const dataFrames = [...data.frames];
-    dataFrames[0] = {...dataFrames[0], inApp: true};
-    dataFrames[2] = {...dataFrames[2], inApp: true};
-    dataFrames[4] = {...dataFrames[4], inApp: true};
+    dataFrames[0] = {...dataFrames[0]!, inApp: true};
+    dataFrames[2] = {...dataFrames[2]!, inApp: true};
+    dataFrames[4] = {...dataFrames[4]!, inApp: true};
 
     const newData = {
       ...data,
@@ -106,11 +133,75 @@ describe('with stacktrace improvements feature flag enabled', function () {
     };
 
     renderedComponent({
-      organization,
       data: newData,
       includeSystemFrames: false,
     });
 
     expect(screen.queryByText(/Show .* more frames*/)).not.toBeInTheDocument();
+  });
+
+  it('displays correct icons from frame symbolicatorStatus when image does not exist', function () {
+    const newData = {
+      ...data,
+      frames: [
+        EventStacktraceFrameFixture({
+          symbolicatorStatus: SymbolicatorStatus.MISSING,
+          function: 'missing()',
+        }),
+        EventStacktraceFrameFixture({
+          symbolicatorStatus: SymbolicatorStatus.UNKNOWN_IMAGE,
+          function: 'unknown_image()',
+        }),
+        EventStacktraceFrameFixture({
+          symbolicatorStatus: SymbolicatorStatus.SYMBOLICATED,
+          function: 'symbolicated()',
+        }),
+      ],
+    };
+
+    render(
+      <NativeContent data={newData} platform="cocoa" event={event} includeSystemFrames />
+    );
+
+    const frames = screen.getAllByTestId('stack-trace-frame');
+
+    expect(
+      within(frames[0]!).getByTestId('symbolication-error-icon')
+    ).toBeInTheDocument();
+    expect(
+      within(frames[1]!).getByTestId('symbolication-warning-icon')
+    ).toBeInTheDocument();
+    expect(within(frames[2]!).queryByTestId(/symbolication/)).not.toBeInTheDocument();
+  });
+
+  it('expands the first in app frame', function () {
+    const newData = {
+      ...data,
+      frames: [
+        EventStacktraceFrameFixture({
+          symbolicatorStatus: SymbolicatorStatus.MISSING,
+          function: 'missing()',
+          inApp: true,
+        }),
+        EventStacktraceFrameFixture({
+          symbolicatorStatus: SymbolicatorStatus.UNKNOWN_IMAGE,
+          function: 'unknown_image()',
+          inApp: false,
+        }),
+        EventStacktraceFrameFixture({
+          symbolicatorStatus: SymbolicatorStatus.SYMBOLICATED,
+          function: 'symbolicated()',
+          inApp: true,
+        }),
+      ],
+    };
+
+    render(
+      <NativeContent data={newData} platform="cocoa" event={event} includeSystemFrames />
+    );
+
+    expect(screen.getByRole('button', {name: 'Collapse Context'})).toBeInTheDocument();
+    const collapsed = screen.getAllByRole('button', {name: 'Expand Context'});
+    expect(collapsed).toHaveLength(2);
   });
 });

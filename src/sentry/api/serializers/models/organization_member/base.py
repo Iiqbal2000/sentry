@@ -1,18 +1,16 @@
 from collections import defaultdict
-from typing import Any, Mapping, MutableMapping, Optional, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
+from typing import Any
 
-from django.db.models import Prefetch, prefetch_related_objects
+from django.contrib.auth.models import AnonymousUser
 
 from sentry import roles
 from sentry.api.serializers import Serializer, register, serialize
-from sentry.api.serializers.models.role import OrganizationRoleSerializer
-from sentry.models.integrations.external_actor import ExternalActor
+from sentry.integrations.models.external_actor import ExternalActor
 from sentry.models.organizationmember import OrganizationMember
-from sentry.models.team import Team
-from sentry.models.user import User
-from sentry.roles import organization_roles
-from sentry.services.hybrid_cloud.user import RpcUser
-from sentry.services.hybrid_cloud.user.service import user_service
+from sentry.users.models.user import User
+from sentry.users.services.user.model import RpcUser
+from sentry.users.services.user.service import user_service
 
 from .response import OrganizationMemberResponse
 from .utils import get_organization_id
@@ -20,49 +18,20 @@ from .utils import get_organization_id
 
 @register(OrganizationMember)
 class OrganizationMemberSerializer(Serializer):
-    def __init__(self, expand: Optional[Sequence[str]] = None) -> None:
+    def __init__(self, expand: Sequence[str] | None = None) -> None:
         self.expand = expand or []
 
-    def __sorted_org_roles_for_user(self, item: OrganizationMember) -> Sequence[Mapping[str, Any]]:
-        org_roles = [
-            (team.slug, organization_roles.get(team.org_role)) for team in item.team_role_prefetch
-        ]
-
-        sorted_org_roles = sorted(
-            org_roles,
-            key=lambda r: r[1].priority,
-            reverse=True,
-        )
-
-        return [
-            {
-                "teamSlug": slug,
-                "role": serialize(
-                    role,
-                    serializer=OrganizationRoleSerializer(organization=item.organization),
-                ),
-            }
-            for slug, role in sorted_org_roles
-        ]
-
     def get_attrs(
-        self, item_list: Sequence[OrganizationMember], user: User, **kwargs: Any
+        self,
+        item_list: Sequence[OrganizationMember],
+        user: User | RpcUser | AnonymousUser,
+        **kwargs: Any,
     ) -> MutableMapping[OrganizationMember, MutableMapping[str, Any]]:
         """
         Fetch all of the associated Users and ExternalActors needed to serialize
         the organization_members in `item_list`.
         TODO(dcramer): assert on relations
         """
-
-        # Preload to avoid fetching each team individually
-        prefetch_related_objects(
-            item_list,
-            Prefetch(
-                "teams",
-                queryset=Team.objects.all().exclude(org_role=None),
-                to_attr="team_role_prefetch",
-            ),
-        )
 
         # Bulk load users
         users_set = sorted(
@@ -75,6 +44,8 @@ class OrganizationMemberSerializer(Serializer):
         users_by_id: MutableMapping[str, Any] = {}
         email_map: MutableMapping[str, str] = {}
         for u in user_service.serialize_many(filter={"user_ids": users_set}):
+            # Filter out the emails from the user data
+            u.pop("emails", None)
             users_by_id[u["id"]] = u
             email_map[u["id"]] = u["email"]
 
@@ -86,7 +57,7 @@ class OrganizationMemberSerializer(Serializer):
             }
         )
         inviters_by_id: Mapping[int, RpcUser] = {
-            u.id: u for u in user_service.get_many(filter={"user_ids": inviters_set})
+            u.id: u for u in user_service.get_many_by_id(ids=inviters_set)
         }
 
         external_users_map = defaultdict(list)
@@ -105,36 +76,62 @@ class OrganizationMemberSerializer(Serializer):
 
         attrs: MutableMapping[OrganizationMember, MutableMapping[str, Any]] = {}
         for item in item_list:
-            user = users_by_id.get(str(item.user_id), None)
-            user_id = user["id"] if user else ""
-            inviter = inviters_by_id.get(item.inviter_id, None)
+            user_dct = users_by_id.get(str(item.user_id), None)
+            user_id = user_dct["id"] if user_dct else ""
+            if item.inviter_id is not None:
+                inviter = inviters_by_id.get(item.inviter_id, None)
+            else:
+                inviter = None
             external_users = external_users_map.get(user_id, [])
             attrs[item] = {
-                "user": user,
+                "user": user_dct,
                 "externalUsers": external_users,
-                "groupOrgRoles": self.__sorted_org_roles_for_user(item),
                 "inviter": inviter,
                 "email": email_map.get(user_id, item.email),
             }
         return attrs
 
     def serialize(
-        self, obj: OrganizationMember, attrs: Mapping[str, Any], user: Any, **kwargs: Any
+        self,
+        obj: OrganizationMember,
+        attrs: Mapping[str, Any],
+        user: User | RpcUser | AnonymousUser,
+        **kwargs: Any,
     ) -> OrganizationMemberResponse:
+        serialized_user = attrs["user"]
+        if obj.user_id:
+            # if the OrganizationMember has a user_id, the user has an account
+            # `email` on the OrganizationMember will be null, so we need to pull
+            # the email address from the user's actual account
+            email = serialized_user["email"] if serialized_user else obj.email
+        else:
+            # when there is no user_id, the OrganizationMember is an invited user
+            # and the email field on OrganizationMember will be populated, so we
+            # will use it directly
+            email = obj.email
+
+        # helping mypy - the email will always be populated at this point
+        # in the case that it is a user that has an account, we pull the email
+        # address above from the serialized_user. The email field on OrganizationMember
+        # is null in the case, so it is necessary.
+        #
+        # invited users do not yet have a full account and the email field
+        # on OrganizationMember will be populated in such cases
+        assert email is not None
+
         inviter_name = None
         if obj.inviter_id:
             inviter = attrs["inviter"]
             if inviter:
                 inviter_name = inviter.get_display_name()
-        user = attrs["user"]
-        email = attrs["email"]
+
+        name = serialized_user["name"] if serialized_user else email
+
         data: OrganizationMemberResponse = {
             "id": str(obj.id),
             "email": email,
-            "name": user["name"] if user else email,
+            "name": name,
             "user": attrs["user"],
-            "role": obj.role,  # Deprecated, use orgRole instead
-            "roleName": roles.get(obj.role).name,  # Deprecated
             "orgRole": obj.role,
             "pending": obj.is_pending,
             "expired": obj.token_expired,
@@ -144,15 +141,14 @@ class OrganizationMemberSerializer(Serializer):
                 "sso:linked": bool(getattr(obj.flags, "sso:linked")),
                 "sso:invalid": bool(getattr(obj.flags, "sso:invalid")),
                 "member-limit:restricted": bool(getattr(obj.flags, "member-limit:restricted")),
+                "partnership:restricted": bool(getattr(obj.flags, "partnership:restricted")),
             },
             "dateCreated": obj.date_added,
             "inviteStatus": obj.get_invite_status_name(),
             "inviterName": inviter_name,
+            "role": obj.role,  # Deprecated, use orgRole instead
+            "roleName": roles.get(obj.role).name,  # Deprecated
         }
-
-        groupOrgRoles = attrs.get("groupOrgRoles")
-        if groupOrgRoles:
-            data["groupOrgRoles"] = groupOrgRoles
 
         if "externalUsers" in self.expand:
             data["externalUsers"] = attrs.get("externalUsers", [])

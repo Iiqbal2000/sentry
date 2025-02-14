@@ -9,12 +9,16 @@ import {
 import {Button} from 'sentry/components/button';
 import CircleIndicator from 'sentry/components/circleIndicator';
 import Confirm from 'sentry/components/confirm';
-import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
+import type DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import SentryAppIcon from 'sentry/components/sentryAppIcon';
 import {IconSubtract} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {IntegrationFeature, SentryApp, SentryAppInstallation} from 'sentry/types';
+import type {
+  IntegrationFeature,
+  SentryApp,
+  SentryAppInstallation,
+} from 'sentry/types/integrations';
 import {toPermissions} from 'sentry/utils/consolidatedScopes';
 import {getSentryAppInstallStatus} from 'sentry/utils/integrationUtil';
 import {addQueryParamsToExistingUrl} from 'sentry/utils/queryString';
@@ -190,6 +194,7 @@ class SentryAppDetailedView extends AbstractIntegrationDetailedView<
 
   renderPermissions() {
     const permissions = this.permissions;
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     if (!Object.keys(permissions).some(scope => permissions[scope].length > 0)) {
       return null;
     }
@@ -300,10 +305,10 @@ const PermissionWrapper = styled('div')`
 
 const Title = styled('p')`
   margin-bottom: ${space(1)};
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
 `;
 
-const Indicator = styled(p => <CircleIndicator size={7} {...p} />)`
+const Indicator = styled((p: any) => <CircleIndicator size={7} {...p} />)`
   align-self: center;
   color: ${p => p.theme.success};
 `;

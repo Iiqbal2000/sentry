@@ -1,6 +1,10 @@
+import Badge from 'sentry/components/badge/badge';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
-import {NavigationSection} from 'sentry/views/settings/types';
+import ConfigStore from 'sentry/stores/configStore';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {hasTempestAccess} from 'sentry/utils/tempest/features';
+import type {NavigationSection} from 'sentry/views/settings/types';
 
 type ConfigParams = {
   debugFilesNeedsReview?: boolean;
@@ -15,7 +19,9 @@ export default function getConfiguration({
   organization,
   debugFilesNeedsReview,
 }: ConfigParams): NavigationSection[] {
-  const plugins = ((project && project.plugins) || []).filter(plugin => plugin.enabled);
+  const plugins = (project?.plugins || []).filter(plugin => plugin.enabled);
+  const isSelfHostedErrorsOnly = ConfigStore.get('isSelfHostedErrorsOnly');
+  const isSelfHosted = ConfigStore.get('isSelfHosted');
   return [
     {
       name: t('Project'),
@@ -38,8 +44,8 @@ export default function getConfiguration({
         },
         {
           path: `${pathPrefix}/tags/`,
-          title: t('Tags'),
-          description: t("View and manage a  project's tags"),
+          title: t('Tags & Context'),
+          description: t("View and manage a project's tags and context"),
         },
         {
           path: `${pathPrefix}/environments/`,
@@ -48,14 +54,23 @@ export default function getConfiguration({
         },
         {
           path: `${pathPrefix}/ownership/`,
-          title: organization?.features?.includes('streamline-targeting-context')
-            ? t('Ownership Rules')
-            : t('Issue Owners'),
+          title: t('Ownership Rules'),
           description: t('Manage ownership rules for a project'),
         },
         {
           path: `${pathPrefix}/data-forwarding/`,
           title: t('Data Forwarding'),
+        },
+        {
+          path: `${pathPrefix}/user-feedback/`,
+          title: t('User Feedback'),
+          show: () => !isSelfHostedErrorsOnly,
+        },
+        {
+          path: `${pathPrefix}/toolbar/`,
+          title: t('Dev Toolbar'),
+          show: () => !!organization?.features?.includes('dev-toolbar-ui'),
+          badge: () => <Badge type="beta">Beta</Badge>,
         },
       ],
     },
@@ -81,20 +96,6 @@ export default function getConfiguration({
           title: t('Issue Grouping'),
         },
         {
-          path: `${pathPrefix}/processing-issues/`,
-          title: t('Processing Issues'),
-          // eslint-disable-next-line @typescript-eslint/no-shadow
-          badge: ({project}) => {
-            if (!project) {
-              return null;
-            }
-            if (project.processingIssues <= 0) {
-              return null;
-            }
-            return project.processingIssues > 99 ? '99+' : project.processingIssues;
-          },
-        },
-        {
           path: `${pathPrefix}/debug-symbols/`,
           title: t('Debug Files'),
           badge: debugFilesNeedsReview ? () => 'warning' : undefined,
@@ -110,7 +111,23 @@ export default function getConfiguration({
         {
           path: `${pathPrefix}/performance/`,
           title: t('Performance'),
-          show: () => !!organization?.features?.includes('performance-view'),
+          show: () =>
+            !!organization?.features?.includes('performance-view') &&
+            !isSelfHostedErrorsOnly,
+        },
+
+        {
+          path: `${pathPrefix}/replays/`,
+          title: t('Replays'),
+          show: () =>
+            !!organization?.features?.includes('session-replay-ui') &&
+            !isSelfHostedErrorsOnly,
+        },
+        {
+          path: `${pathPrefix}/playstation/`,
+          title: t('PlayStation'),
+          badge: () => <Badge type="beta">Beta</Badge>,
+          show: () => !!(organization && hasTempestAccess(organization)) && !isSelfHosted,
         },
       ],
     },
@@ -135,11 +152,6 @@ export default function getConfiguration({
           path: `${pathPrefix}/security-headers/`,
           title: t('Security Headers'),
         },
-        {
-          path: `${pathPrefix}/user-feedback/`,
-          title: t('User Feedback'),
-          description: t('Configure user feedback reporting feature'),
-        },
       ],
     },
     {
@@ -155,7 +167,7 @@ export default function getConfiguration({
         ...plugins.map(plugin => ({
           path: `${pathPrefix}/plugins/${plugin.id}/`,
           title: plugin.name,
-          show: opts => opts?.access?.has('project:write') && !plugin.isDeprecated,
+          show: (opts: any) => opts?.access?.has('project:write') && !plugin.isDeprecated,
           id: 'plugin_details',
           recordAnalytics: true,
         })),

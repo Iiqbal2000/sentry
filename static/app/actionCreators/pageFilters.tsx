@@ -1,6 +1,5 @@
-import {InjectedRouter} from 'react-router';
 import * as Sentry from '@sentry/react';
-import {Location} from 'history';
+import type {Location} from 'history';
 import isInteger from 'lodash/isInteger';
 import omit from 'lodash/omit';
 import pick from 'lodash/pick';
@@ -14,22 +13,24 @@ import {
   getPageFilterStorage,
   setPageFiltersStorage,
 } from 'sentry/components/organizations/pageFilters/persistence';
-import {PageFiltersStringified} from 'sentry/components/organizations/pageFilters/types';
+import type {PageFiltersStringified} from 'sentry/components/organizations/pageFilters/types';
 import {getDefaultSelection} from 'sentry/components/organizations/pageFilters/utils';
-import {DATE_TIME_KEYS, URL_PARAM} from 'sentry/constants/pageFilters';
+import {parseStatsPeriod} from 'sentry/components/timeRangeSelector/utils';
+import {
+  ALL_ACCESS_PROJECTS,
+  DATE_TIME_KEYS,
+  URL_PARAM,
+} from 'sentry/constants/pageFilters';
 import OrganizationStore from 'sentry/stores/organizationStore';
 import PageFiltersStore from 'sentry/stores/pageFiltersStore';
-import {
-  DateString,
-  Environment,
-  MinimalProject,
-  Organization,
-  PageFilters,
-  PinnedPageFilter,
-  Project,
-} from 'sentry/types';
-import {defined, valueIsEqual} from 'sentry/utils';
+import type {DateString, PageFilters, PinnedPageFilter} from 'sentry/types/core';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Environment, MinimalProject, Project} from 'sentry/types/project';
+import {defined} from 'sentry/utils';
 import {getUtcDateString} from 'sentry/utils/dates';
+import {DAY} from 'sentry/utils/formatters';
+import {valueIsEqual} from 'sentry/utils/object/valueIsEqual';
 
 type EnvironmentId = Environment['id'];
 
@@ -115,12 +116,17 @@ function mergeDatetime(
 
 export type InitializeUrlStateParams = {
   memberProjects: Project[];
+  nonMemberProjects: Project[];
   organization: Organization;
   queryParams: Location['query'];
   router: InjectedRouter;
   shouldEnforceSingleProject: boolean;
   defaultSelection?: Partial<PageFilters>;
   forceProject?: MinimalProject | null;
+  /**
+   * When set, the stats period will fallback to the `maxPickableDays` days if the stored selection exceeds the limit.
+   */
+  maxPickableDays?: number;
   shouldForceProject?: boolean;
   /**
    * Whether to save changes to local storage. This setting should be page-specific:
@@ -160,8 +166,10 @@ export function initializeUrlState({
   queryParams,
   router,
   memberProjects,
+  nonMemberProjects,
   skipLoadLastUsed,
   skipLoadLastUsedEnvironment,
+  maxPickableDays,
   shouldPersist = true,
   shouldForceProject,
   shouldEnforceSingleProject,
@@ -199,15 +207,58 @@ export function initializeUrlState({
   const hasProjectOrEnvironmentInUrl =
     Object.keys(pick(queryParams, [URL_PARAM.PROJECT, URL_PARAM.ENVIRONMENT])).length > 0;
 
+  // We should only check and update the desync state if the site has just been loaded
+  // (not counting route changes). To check this, we can use the `isReady` state: if it's
+  // false, then the site was just loaded. Once it's true, `isReady` stays true
+  // through route changes.
+  let shouldCheckDesyncedURLState = !PageFiltersStore.getState().isReady;
+
+  /**
+   * Check to make sure that the project ID exists in the projects list. Invalid project
+   * IDs (project was deleted/moved to another org) can still exist in local storage or
+   * shared links.
+   */
+  function validateProjectId(projectId: number): boolean {
+    if (projectId === ALL_ACCESS_PROJECTS) {
+      return !shouldEnforceSingleProject;
+    }
+
+    return (
+      !!memberProjects?.some(mp => String(mp.id) === String(projectId)) ||
+      !!nonMemberProjects?.some(nmp => String(nmp.id) === String(projectId))
+    );
+  }
+
+  /**
+   * Check to make sure that the environment exists. Invalid environments (due to being
+   * hidden) can still exist in local storage or shared links.
+   */
+  function validateEnvironment(env: string): boolean {
+    return (
+      !!memberProjects?.some(mp => mp.environments.includes(env)) ||
+      !!nonMemberProjects?.some(nmp => nmp.environments.includes(env))
+    );
+  }
+
   if (hasProjectOrEnvironmentInUrl) {
-    pageFilters.projects = parsed.project || [];
-    pageFilters.environments = parsed.environment || [];
+    pageFilters.projects = parsed.project?.filter(validateProjectId) || [];
+    pageFilters.environments = parsed.environment?.filter(validateEnvironment) || [];
+
+    if (
+      pageFilters.projects.length < (parsed.project?.length ?? 0) ||
+      pageFilters.environments.length < (parsed.environment?.length ?? 0)
+    ) {
+      // don't check desync state since we're going to remove invalid projects/envs from
+      // the URL query
+      shouldCheckDesyncedURLState = false;
+    }
   }
 
   const storedPageFilters = skipLoadLastUsed
     ? null
     : getPageFilterStorage(orgSlug, storageNamespace);
   let shouldUsePinnedDatetime = false;
+  let shouldUpdateLocalStorage = false;
 
   // We may want to restore some page filters from local storage. In the new
   // world when they are pinned, and in the old world as long as
@@ -216,7 +267,12 @@ export function initializeUrlState({
     const {state: storedState, pinnedFilters} = storedPageFilters;
 
     if (!hasProjectOrEnvironmentInUrl && pinnedFilters.has('projects')) {
-      pageFilters.projects = storedState.project ?? [];
+      pageFilters.projects = storedState.project?.filter(validateProjectId) ?? [];
+
+      if (pageFilters.projects.length < (storedState.project?.length ?? 0)) {
+        shouldUpdateLocalStorage = true; // update storage to remove invalid projects
+        shouldCheckDesyncedURLState = false;
+      }
     }
 
     if (
@@ -224,7 +280,13 @@ export function initializeUrlState({
       !hasProjectOrEnvironmentInUrl &&
       pinnedFilters.has('environments')
     ) {
-      pageFilters.environments = storedState.environment ?? [];
+      pageFilters.environments =
+        storedState.environment?.filter(validateEnvironment) ?? [];
+
+      if (pageFilters.environments.length < (storedState.environment?.length ?? 0)) {
+        shouldUpdateLocalStorage = true; // update storage to remove invalid environments
+        shouldCheckDesyncedURLState = false;
+      }
     }
 
     if (!hasDatetimeInUrl && pinnedFilters.has('datetime')) {
@@ -257,7 +319,7 @@ export function initializeUrlState({
     if (projects && projects.length > 0) {
       // If there is a list of projects from URL params, select first project
       // from that list
-      newProject = typeof projects === 'string' ? [Number(projects)] : [projects[0]];
+      newProject = typeof projects === 'string' ? [Number(projects)] : [projects[0]!];
     } else {
       // When we have finished loading the organization into the props,  i.e.
       // the organization slug is consistent with the URL param--Sentry will
@@ -272,17 +334,39 @@ export function initializeUrlState({
     project = newProject;
   }
 
+  let shouldUseMaxPickableDays = false;
+
+  if (maxPickableDays && pageFilters.datetime) {
+    let {start, end} = pageFilters.datetime;
+
+    if (pageFilters.datetime.period) {
+      const parsedPeriod = parseStatsPeriod(pageFilters.datetime.period);
+      start = parsedPeriod.start;
+      end = parsedPeriod.end;
+    }
+
+    if (start && end) {
+      const difference = new Date(end).getTime() - new Date(start).getTime();
+      if (difference > maxPickableDays * DAY) {
+        shouldUseMaxPickableDays = true;
+        pageFilters.datetime = {
+          period: `${maxPickableDays}d`,
+          start: null,
+          end: null,
+          utc: datetime.utc,
+        };
+      }
+    }
+  }
+
   const pinnedFilters = organization.features.includes('new-page-filter')
     ? new Set<PinnedPageFilter>(['projects', 'environments', 'datetime'])
     : storedPageFilters?.pinnedFilters ?? new Set();
 
-  // We should only check and update the desync state if the site has just been loaded
-  // (not counting route changes). To check this, we can use the `isReady` state: if it's
-  // false, then the site was just loaded. Once it's true, `isReady` stays true
-  // through route changes.
-  const shouldCheckDesyncedURLState = !PageFiltersStore.getState().isReady;
-
   PageFiltersStore.onInitializeUrlState(pageFilters, pinnedFilters, shouldPersist);
+  if (shouldUpdateLocalStorage) {
+    setPageFiltersStorage(organization.slug, new Set(['projects', 'environments']));
+  }
 
   if (shouldCheckDesyncedURLState) {
     checkDesyncedUrlState(router, shouldForceProject);
@@ -291,14 +375,21 @@ export function initializeUrlState({
     PageFiltersStore.updateDesyncedFilters(new Set());
   }
 
-  const newDatetime = {
-    ...datetime,
-    period:
-      parsed.start || parsed.end || parsed.period || shouldUsePinnedDatetime
-        ? datetime.period
-        : null,
-    utc: parsed.utc || shouldUsePinnedDatetime ? datetime.utc : null,
-  };
+  const newDatetime = shouldUseMaxPickableDays
+    ? {
+        period: `${maxPickableDays}d`,
+        start: null,
+        end: null,
+        utc: datetime.utc,
+      }
+    : {
+        ...datetime,
+        period:
+          parsed.start || parsed.end || parsed.period || shouldUsePinnedDatetime
+            ? datetime.period
+            : null,
+        utc: parsed.utc || shouldUsePinnedDatetime ? datetime.utc : null,
+      };
 
   if (!skipInitializeUrlParams) {
     updateParams({project, environment, ...newDatetime}, router, {
@@ -424,7 +515,7 @@ function updateParams(obj: PageFiltersUpdate, router?: Router, options?: Options
  * Pinned state is always persisted.
  */
 async function persistPageFilters(filter: PinnedPageFilter | null, options?: Options) {
-  if (!options?.save || !PageFiltersStore.shouldPersist) {
+  if (!options?.save || !PageFiltersStore.getState().shouldPersist) {
     return;
   }
 
@@ -458,7 +549,7 @@ async function persistPageFilters(filter: PinnedPageFilter | null, options?: Opt
  */
 async function checkDesyncedUrlState(router?: Router, shouldForceProject?: boolean) {
   // Cannot compare URL state without the router
-  if (!router || !PageFiltersStore.shouldPersist) {
+  if (!router || !PageFiltersStore.getState().shouldPersist) {
     return;
   }
 
@@ -538,7 +629,7 @@ async function checkDesyncedUrlState(router?: Router, shouldForceProject?: boole
  * Commits the new desynced filter values and clears the desynced filters list.
  */
 export function saveDesyncedFilters() {
-  const {desyncedFilters} = PageFiltersStore;
+  const {desyncedFilters} = PageFiltersStore.getState();
   [...desyncedFilters].forEach(filter => persistPageFilters(filter, {save: true}));
   PageFiltersStore.updateDesyncedFilters(new Set());
 }

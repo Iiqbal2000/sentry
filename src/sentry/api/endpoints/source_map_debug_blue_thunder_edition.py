@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional, Union
+from typing import Literal, TypedDict
 
 import sentry_sdk
 from django.db.models import QuerySet
@@ -8,9 +8,8 @@ from packaging.version import Version
 from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.response import Response
-from typing_extensions import TypedDict
 
-from sentry import eventstore, features
+from sentry import eventstore
 from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
@@ -40,14 +39,14 @@ from sentry.utils.safe import get_path
 from sentry.utils.urls import non_standard_url_join
 
 MIN_JS_SDK_VERSION_FOR_DEBUG_IDS = "7.56.0"
+MIN_REACT_NATIVE_SDK_VERSION_FOR_DEBUG_IDS = "5.11.1"
+MIN_ELECTRON_SDK_VERSION_FOR_DEBUG_IDS = "4.6.0"
+MIN_NEXTJS_AND_SVELTEKIT_SDK_VERSION_FOR_DEBUG_IDS = "8.0.0"
 
 NO_DEBUG_ID_SDKS = {
     "sentry.javascript.capacitor",
-    "sentry.javascript.react-native",
     "sentry.javascript.wasm",
     "sentry.javascript.cordova",
-    "sentry.javascript.nextjs",
-    "sentry.javascript.sveltekit",
 }
 
 # This number will equate to an upper bound of file lookups/downloads
@@ -76,49 +75,46 @@ class ScrapingResultFailure(TypedDict):
         "download_error",
         "other",
     ]
-    details: Optional[str]
+    details: str | None
 
 
 class SourceMapScrapingProcessResult(TypedDict):
-    source_file: Optional[
-        Union[ScrapingResultSuccess, ScrapingResultNotAttempted, ScrapingResultFailure]
-    ]
-    source_map: Optional[
-        Union[ScrapingResultSuccess, ScrapingResultNotAttempted, ScrapingResultFailure]
-    ]
+    source_file: None | (ScrapingResultSuccess | ScrapingResultNotAttempted | ScrapingResultFailure)
+    source_map: None | (ScrapingResultSuccess | ScrapingResultNotAttempted | ScrapingResultFailure)
 
 
 class SourceMapDebugIdProcessResult(TypedDict):
-    debug_id: Optional[str]
+    debug_id: str | None
     uploaded_source_file_with_correct_debug_id: bool
     uploaded_source_map_with_correct_debug_id: bool
 
 
 class SourceMapReleaseProcessResult(TypedDict):
     abs_path: str
-    matching_source_file_names: List[str]
-    matching_source_map_name: Optional[str]
-    source_map_reference: Optional[str]
+    matching_source_file_names: list[str]
+    matching_source_map_name: str | None
+    source_map_reference: str | None
     source_file_lookup_result: Literal["found", "wrong-dist", "unsuccessful"]
     source_map_lookup_result: Literal["found", "wrong-dist", "unsuccessful"]
 
 
 class SourceMapDebugFrame(TypedDict):
     debug_id_process: SourceMapDebugIdProcessResult
-    release_process: Optional[SourceMapReleaseProcessResult]
+    release_process: SourceMapReleaseProcessResult | None
     scraping_process: SourceMapScrapingProcessResult
 
 
 class SourceMapDebugException(TypedDict):
-    frames: List[SourceMapDebugFrame]
+    frames: list[SourceMapDebugFrame]
 
 
 class SourceMapDebugResponse(TypedDict):
-    dist: Optional[str]
-    release: Optional[str]
-    exceptions: List[SourceMapDebugException]
+    dist: str | None
+    release: str | None
+    exceptions: list[SourceMapDebugException]
     has_debug_ids: bool
-    sdk_version: Optional[str]
+    min_debug_id_sdk_version: str | None
+    sdk_version: str | None
     project_has_some_artifact_bundle: bool
     release_has_some_artifact: bool
     has_uploaded_some_artifact_with_a_debug_id: bool
@@ -138,8 +134,8 @@ class SourceMapDebugBlueThunderEditionEndpoint(ProjectEndpoint):
     @extend_schema(
         operation_id="Get Debug Information Related to Source Maps for a Given Event",
         parameters=[
-            GlobalParams.ORG_SLUG,
-            GlobalParams.PROJECT_SLUG,
+            GlobalParams.ORG_ID_OR_SLUG,
+            GlobalParams.PROJECT_ID_OR_SLUG,
             EventParams.EVENT_ID,
         ],
         request=None,
@@ -154,15 +150,6 @@ class SourceMapDebugBlueThunderEditionEndpoint(ProjectEndpoint):
         """
         Return a list of source map errors for a given event.
         """
-
-        if not features.has(
-            "organizations:source-maps-debugger-blue-thunder-edition",
-            project.organization,
-            actor=request.user,
-        ):
-            raise NotFound(
-                detail="Endpoint not available without 'organizations:source-maps-debugger-blue-thunder-edition' feature flag"
-            )
 
         event = eventstore.backend.get_event_by_id(project.id, event_id)
         if event is None:
@@ -243,9 +230,9 @@ class SourceMapDebugBlueThunderEditionEndpoint(ProjectEndpoint):
             for exception_value in exception_values:
                 processed_frames = []
                 frames = get_path(exception_value, "raw_stacktrace", "frames")
-                frames = frames or get_path(exception_value, "stacktrace", "frames")
+                stacktrace_frames = get_path(exception_value, "stacktrace", "frames")
                 if frames is not None:
-                    for frame in frames:
+                    for frame_index, frame in enumerate(frames):
                         abs_path = get_path(frame, "abs_path")
                         debug_id = next(
                             (
@@ -267,11 +254,13 @@ class SourceMapDebugBlueThunderEditionEndpoint(ProjectEndpoint):
                                 },
                                 "release_process": release_process_abs_path_data.get(abs_path),
                                 "scraping_process": get_scraping_data_for_frame(
-                                    scraping_attempt_map, frame
+                                    scraping_attempt_map, frame, frame_index, stacktrace_frames
                                 ),
                             }
                         )
                 processed_exceptions.append({"frames": processed_frames})
+
+        sdk_debug_id_support, min_debug_id_sdk_version = get_sdk_debug_id_support(event_data)
 
         return Response(
             {
@@ -284,27 +273,36 @@ class SourceMapDebugBlueThunderEditionEndpoint(ProjectEndpoint):
                 "release_has_some_artifact": has_uploaded_release_bundle_with_release
                 or has_uploaded_artifact_bundle_with_release,
                 "has_uploaded_some_artifact_with_a_debug_id": has_uploaded_some_artifact_with_a_debug_id,
-                "sdk_debug_id_support": get_sdk_debug_id_support(event_data),
+                "sdk_debug_id_support": sdk_debug_id_support,
+                "min_debug_id_sdk_version": min_debug_id_sdk_version,
                 "has_scraping_data": event_data.get("scraping_attempts") is not None,
             }
         )
 
 
-def get_scraping_data_for_frame(scraping_attempt_map, frame):
-    abs_path = get_path(frame, "abs_path")
+def get_scraping_data_for_frame(
+    scraping_attempt_map, raw_frame, raw_frame_index, stacktrace_frames
+):
+    scraping_data = {"source_file": None, "source_map": None}
+
+    abs_path = get_path(raw_frame, "abs_path")
     if abs_path is None:
-        return {"source_file": None, "source_map": None}
+        return scraping_data
 
-    source_file_data = scraping_attempt_map.get(abs_path)
-    source_map_data = None
+    scraping_data["source_file"] = scraping_attempt_map.get(abs_path)
 
-    data = frame.get("data", {})
-    source_map_url = data.get("sourcemap")
+    frame = None
+    if stacktrace_frames is not None:
+        try:
+            frame = stacktrace_frames[raw_frame_index]
+        except IndexError:
+            pass
 
+    source_map_url = get_path(frame, "data", "sourcemap")
     if source_map_url is not None:
-        source_map_data = scraping_attempt_map.get(source_map_url)
+        scraping_data["source_map"] = scraping_attempt_map.get(source_map_url)
 
-    return {"source_file": source_file_data, "source_map": source_map_data}
+    return scraping_data
 
 
 class ReleaseLookupData:
@@ -317,34 +315,34 @@ class ReleaseLookupData:
         self.matching_source_file_names = ReleaseFile.normalize(abs_path)
 
         # Source file lookup result variables
-        self.source_file_lookup_result: Literal[
-            "found", "wrong-dist", "unsuccessful"
-        ] = "unsuccessful"
-        self.found_source_file_name: Optional[
-            str
-        ] = None  # The name of the source file artifact that was found, e.g. "~/static/bundle.min.js"
-        self.source_map_reference: Optional[
-            str
-        ] = None  # The source map reference as found in the source file or its headers, e.g. "https://example.com/static/bundle.min.js.map"
-        self.matching_source_map_name: Optional[
-            str
-        ] = None  # The location where Sentry will look for the source map (relative to the source file), e.g. "bundle.min.js.map"
+        self.source_file_lookup_result: Literal["found", "wrong-dist", "unsuccessful"] = (
+            "unsuccessful"
+        )
+        self.found_source_file_name: None | (str) = (
+            None  # The name of the source file artifact that was found, e.g. "~/static/bundle.min.js"
+        )
+        self.source_map_reference: None | (str) = (
+            None  # The source map reference as found in the source file or its headers, e.g. "https://example.com/static/bundle.min.js.map"
+        )
+        self.matching_source_map_name: None | (str) = (
+            None  # The location where Sentry will look for the source map (relative to the source file), e.g. "bundle.min.js.map"
+        )
 
         # Cached db objects across operations
-        self.artifact_index_release_files: Optional[Union[QuerySet, List[ReleaseFile]]] = None
-        self.dist_matched_artifact_index_release_file: Optional[ReleaseFile] = None
+        self.artifact_index_release_files: QuerySet | list[ReleaseFile] | None = None
+        self.dist_matched_artifact_index_release_file: ReleaseFile | None = None
 
         self._find_source_file_in_basic_uploaded_files()
         self._find_source_file_in_artifact_indexes()
         self._find_source_file_in_artifact_bundles()
 
         # Source map lookup result variable
-        self.source_map_lookup_result: Literal[
-            "found", "wrong-dist", "unsuccessful"
-        ] = "unsuccessful"
+        self.source_map_lookup_result: Literal["found", "wrong-dist", "unsuccessful"] = (
+            "unsuccessful"
+        )
 
-        if self.source_map_reference is not None and self.found_source_file_name is not None:  # type: ignore
-            if self.source_map_reference.startswith("data:"):  # type: ignore
+        if self.source_map_reference is not None and self.found_source_file_name is not None:  # type: ignore[unreachable]
+            if self.source_map_reference.startswith("data:"):  # type: ignore[unreachable]
                 self.source_map_reference = "Inline Sourcemap"
                 self.source_map_lookup_result = "found"
             else:
@@ -485,6 +483,7 @@ class ReleaseLookupData:
                             matching_file, headers = archive.get_file_by_url(
                                 potential_source_file_name
                             )
+                            headers = ArtifactBundleArchive.normalize_headers(headers)
                             self.source_file_lookup_result = "found"
                             self.found_source_file_name = potential_source_file_name
                             sourcemap_header = headers.get("sourcemap", headers.get("x-sourcemap"))
@@ -625,16 +624,17 @@ def get_sdk_debug_id_support(event_data):
         ]
     except Exception as e:
         sentry_sdk.capture_exception(e)
-        pass
 
     if official_sdks is None or len(official_sdks) == 0:
         # Fallback list if release registry is not available
         official_sdks = [
             "sentry.javascript.angular",
             "sentry.javascript.angular-ivy",
+            "sentry.javascript.astro",
             "sentry.javascript.browser",
             "sentry.javascript.capacitor",
             "sentry.javascript.cordova",
+            "sentry.javascript.cloudflare",
             "sentry.javascript.electron",
             "sentry.javascript.gatsby",
             "sentry.javascript.nextjs",
@@ -643,24 +643,60 @@ def get_sdk_debug_id_support(event_data):
             "sentry.javascript.react",
             "sentry.javascript.react-native",
             "sentry.javascript.remix",
+            "sentry.javascript.solid",
             "sentry.javascript.svelte",
             "sentry.javascript.sveltekit",
             "sentry.javascript.vue",
         ]
 
     if sdk_name not in official_sdks or sdk_name is None:
-        return "unofficial-sdk"
-    elif sdk_name in NO_DEBUG_ID_SDKS:
-        return "not-supported"
+        return "unofficial-sdk", None
+
+    if sdk_name in NO_DEBUG_ID_SDKS:
+        return "not-supported", None
 
     sdk_version = get_path(event_data, "sdk", "version")
     if sdk_version is None:
-        return "unofficial-sdk"
+        return "unofficial-sdk", None
+
+    if sdk_name == "sentry.javascript.react-native":
+        return (
+            (
+                "full"
+                if Version(sdk_version) >= Version(MIN_REACT_NATIVE_SDK_VERSION_FOR_DEBUG_IDS)
+                else "needs-upgrade"
+            ),
+            MIN_REACT_NATIVE_SDK_VERSION_FOR_DEBUG_IDS,
+        )
+
+    if sdk_name == "sentry.javascript.electron":
+        return (
+            (
+                "full"
+                if Version(sdk_version) >= Version(MIN_ELECTRON_SDK_VERSION_FOR_DEBUG_IDS)
+                else "needs-upgrade"
+            ),
+            MIN_ELECTRON_SDK_VERSION_FOR_DEBUG_IDS,
+        )
+
+    if sdk_name == "sentry.javascript.nextjs" or sdk_name == "sentry.javascript.sveltekit":
+        return (
+            (
+                "full"
+                if Version(sdk_version)
+                >= Version(MIN_NEXTJS_AND_SVELTEKIT_SDK_VERSION_FOR_DEBUG_IDS)
+                else "needs-upgrade"
+            ),
+            MIN_NEXTJS_AND_SVELTEKIT_SDK_VERSION_FOR_DEBUG_IDS,
+        )
 
     return (
-        "full"
-        if Version(sdk_version) >= Version(MIN_JS_SDK_VERSION_FOR_DEBUG_IDS)
-        else "needs-upgrade"
+        (
+            "full"
+            if Version(sdk_version) >= Version(MIN_JS_SDK_VERSION_FOR_DEBUG_IDS)
+            else "needs-upgrade"
+        ),
+        MIN_JS_SDK_VERSION_FOR_DEBUG_IDS,
     )
 
 
@@ -669,10 +705,7 @@ def get_abs_paths_in_event(event_data):
     exception_values = get_path(event_data, "exception", "values")
     if exception_values is not None:
         for exception_value in exception_values:
-            stacktrace = get_path(exception_value, "raw_stacktrace") or get_path(
-                exception_value, "stacktrace"
-            )
-            frames = get_path(stacktrace, "frames")
+            frames = get_path(exception_value, "raw_stacktrace", "frames")
             if frames is not None:
                 for frame in frames:
                     abs_path = get_path(frame, "abs_path")

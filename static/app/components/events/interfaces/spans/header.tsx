@@ -1,6 +1,8 @@
 import {Component, Fragment, PureComponent} from 'react';
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 
+import {DEMO_HEADER_HEIGHT_PX} from 'sentry/components/demo/demoHeader';
 import {
   getDataPoints,
   MIN_DATA_POINTS,
@@ -19,13 +21,12 @@ import {
   pickBarColor,
   rectOfContent,
 } from 'sentry/components/performance/waterfall/utils';
-import ConfigStore from 'sentry/stores/configStore';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import {AggregateEventTransaction, EventTransaction} from 'sentry/types/event';
+import type {AggregateEventTransaction, EventTransaction} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
+import {isDemoModeEnabled} from 'sentry/utils/demoMode';
 import toPercent from 'sentry/utils/number/toPercent';
-import theme from 'sentry/utils/theme';
 import {ProfileContext} from 'sentry/views/profiling/profilesProvider';
 
 import {
@@ -37,33 +38,26 @@ import {
 } from './constants';
 import * as CursorGuideHandler from './cursorGuideHandler';
 import * as DividerHandlerManager from './dividerHandlerManager';
-import {DragManagerChildrenProps} from './dragManager';
-import {ActiveOperationFilter} from './filter';
+import type {DragManagerChildrenProps} from './dragManager';
+import type {ActiveOperationFilter} from './filter';
 import MeasurementsPanel from './measurementsPanel';
 import * as ScrollbarManager from './scrollbarManager';
-import {
-  EnhancedProcessedSpanType,
-  ParsedTraceType,
-  RawSpanType,
-  TickAlignment,
-} from './types';
-import {
-  boundsGenerator,
-  getMeasurements,
-  getSpanOperation,
-  SpanBoundsType,
-  SpanGeneratedBoundsType,
-} from './utils';
+import type {EnhancedProcessedSpanType, ParsedTraceType, RawSpanType} from './types';
+import {TickAlignment} from './types';
+import type {SpanBoundsType, SpanGeneratedBoundsType} from './utils';
+import {boundsGenerator, getMeasurements, getSpanOperation} from './utils';
 
 type PropType = {
   dragProps: DragManagerChildrenProps;
   event: EventTransaction | AggregateEventTransaction;
   generateBounds: (bounds: SpanBoundsType) => SpanGeneratedBoundsType;
+  isEmbedded: boolean;
   minimapInteractiveRef: React.RefObject<HTMLDivElement>;
   operationNameFilters: ActiveOperationFilter;
   organization: Organization;
   rootSpan: RawSpanType;
   spans: EnhancedProcessedSpanType[];
+  theme: Theme;
   trace: ParsedTraceType;
   traceViewHeaderRef: React.RefObject<HTMLDivElement>;
   virtualScrollBarContainerRef: React.RefObject<HTMLDivElement>;
@@ -91,7 +85,6 @@ class TraceViewHeader extends Component<PropType, State> {
     if (minimapInteractiveRef.current) {
       const minimapWidth = minimapInteractiveRef.current.getBoundingClientRect().width;
       if (minimapWidth !== this.state.minimapWidth) {
-        // eslint-disable-next-line react/no-did-update-set-state
         this.setState({
           minimapWidth,
         });
@@ -472,11 +465,11 @@ class TraceViewHeader extends Component<PropType, State> {
             'metadata' in profiles.data &&
             profiles.data.metadata.platform === 'android' &&
             // Check that this profile has measurements
-            'measurements' in profiles?.data &&
+            'measurements' in profiles.data &&
             defined(profiles.data.measurements?.cpu_usage) &&
             // Check that this profile has enough data points
             getDataPoints(
-              profiles.data.measurements!.cpu_usage,
+              profiles.data.measurements.cpu_usage,
               transactionDuration * MS_PER_S
             ).length >= MIN_DATA_POINTS;
 
@@ -484,6 +477,7 @@ class TraceViewHeader extends Component<PropType, State> {
             <HeaderContainer
               ref={this.props.traceViewHeaderRef}
               hasProfileMeasurementsChart={hasProfileMeasurementsChart}
+              isEmbedded={this.props.isEmbedded}
             >
               <DividerHandlerManager.Consumer>
                 {dividerHandlerChildrenProps => {
@@ -513,6 +507,7 @@ class TraceViewHeader extends Component<PropType, State> {
                         }}
                       />
                       <ActualMinimap
+                        theme={this.props.theme}
                         spans={this.props.spans}
                         generateBounds={this.props.generateBounds}
                         dividerPosition={dividerPosition}
@@ -593,6 +588,7 @@ class ActualMinimap extends PureComponent<{
   generateBounds: (bounds: SpanBoundsType) => SpanGeneratedBoundsType;
   rootSpan: RawSpanType;
   spans: EnhancedProcessedSpanType[];
+  theme: Theme;
 }> {
   renderRootSpan(): React.ReactNode {
     const {spans, generateBounds} = this.props;
@@ -617,7 +613,9 @@ class ActualMinimap extends PureComponent<{
               key={`${payload.type}-${i}`}
               style={{
                 backgroundColor:
-                  payload.type === 'span_group_chain' ? theme.blue300 : spanBarColor,
+                  payload.type === 'span_group_chain'
+                    ? this.props.theme.blue300
+                    : spanBarColor,
                 left: spanLeft,
                 width: spanWidth,
               }}
@@ -642,7 +640,7 @@ class ActualMinimap extends PureComponent<{
                 return (
                   <MinimapSpanBar
                     style={{
-                      backgroundColor: theme.blue300,
+                      backgroundColor: this.props.theme.blue300,
                       left: spanLeft,
                       width: spanWidth,
                       minWidth: 0,
@@ -726,7 +724,7 @@ const TimeAxis = styled('div')<{hasProfileMeasurementsChart: boolean}>`
   background-color: ${p => p.theme.background};
   color: ${p => p.theme.gray300};
   font-size: 10px;
-  font-weight: 500;
+  ${p => p.theme.fontWeightNormal};
   font-variant-numeric: tabular-nums;
   overflow: hidden;
 `;
@@ -810,12 +808,15 @@ const DurationGuideBox = styled('div')<{alignLeft: boolean}>`
   }};
 `;
 
-export const HeaderContainer = styled('div')<{hasProfileMeasurementsChart: boolean}>`
+export const HeaderContainer = styled('div')<{
+  hasProfileMeasurementsChart: boolean;
+  isEmbedded: boolean;
+}>`
   width: 100%;
   position: sticky;
   left: 0;
-  top: ${p => (ConfigStore.get('demoMode') ? p.theme.demo.headerSize : 0)};
-  z-index: ${p => p.theme.zIndex.traceView.minimapContainer};
+  top: ${() => (isDemoModeEnabled() ? DEMO_HEADER_HEIGHT_PX : 0)};
+  z-index: ${p => (p.isEmbedded ? 'initial' : p.theme.zIndex.traceView.minimapContainer)};
   background-color: ${p => p.theme.background};
   border-bottom: 1px solid ${p => p.theme.border};
   height: ${p =>

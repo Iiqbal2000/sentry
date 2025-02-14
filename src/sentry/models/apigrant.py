@@ -1,13 +1,16 @@
 import secrets
 from datetime import timedelta
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from django.db import models
 from django.utils import timezone
 
 from bitfield import typed_dict_bitfield
+from sentry.backup.dependencies import NormalizedModelName, get_model_name
+from sentry.backup.sanitize import SanitizableField, Sanitizer
 from sentry.backup.scopes import RelocationScope
-from sentry.db.models import ArrayField, FlexibleForeignKey, Model, control_silo_only_model
+from sentry.db.models import ArrayField, FlexibleForeignKey, Model, control_silo_model
+from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignKey
 
 DEFAULT_EXPIRATION = timedelta(minutes=10)
 
@@ -20,7 +23,7 @@ def generate_code():
     return secrets.token_hex(nbytes=32)  # generates a 128-bit secure token
 
 
-@control_silo_only_model
+@control_silo_model
 class ApiGrant(Model):
     """
     A grant represents a token with a short lifetime that can
@@ -62,10 +65,23 @@ class ApiGrant(Model):
         )
     )
     scope_list = ArrayField(of=models.TextField)
+    # API applications should ideally get access to only one organization of user
+    # If null, the grant is about user level access and not org level
+    organization_id = HybridCloudForeignKey(
+        "sentry.Organization",
+        db_index=True,
+        null=True,
+        on_delete="CASCADE",
+    )
 
     class Meta:
         app_label = "sentry"
         db_table = "sentry_apigrant"
+
+    def __str__(self):
+        return (
+            f"api_grant_id={self.id}, user_id={self.user.id}, application_id={self.application.id}"
+        )
 
     def get_scopes(self):
         if self.scope_list:
@@ -80,3 +96,12 @@ class ApiGrant(Model):
 
     def redirect_uri_allowed(self, uri):
         return uri == self.redirect_uri
+
+    @classmethod
+    def sanitize_relocation_json(
+        cls, json: Any, sanitizer: Sanitizer, model_name: NormalizedModelName | None = None
+    ) -> None:
+        model_name = get_model_name(cls) if model_name is None else model_name
+        super().sanitize_relocation_json(json, sanitizer, model_name)
+
+        sanitizer.set_string(json, SanitizableField(model_name, "code"), lambda _: generate_code())

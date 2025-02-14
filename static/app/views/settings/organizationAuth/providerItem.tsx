@@ -3,15 +3,15 @@ import styled from '@emotion/styled';
 import Access from 'sentry/components/acl/access';
 import Feature from 'sentry/components/acl/feature';
 import FeatureDisabled from 'sentry/components/acl/featureDisabled';
+import Tag from 'sentry/components/badge/tag';
 import {Button} from 'sentry/components/button';
 import {Hovercard} from 'sentry/components/hovercard';
 import PanelItem from 'sentry/components/panels/panelItem';
-import Tag from 'sentry/components/tag';
 import {IconLock} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {AuthProvider} from 'sentry/types';
-import {FeatureDisabledHooks} from 'sentry/types/hooks';
+import type {AuthProvider} from 'sentry/types/auth';
+import type {FeatureDisabledHooks} from 'sentry/types/hooks';
 import {descopeFeatureName} from 'sentry/utils';
 
 type RenderInstallButtonProps = {
@@ -27,14 +27,6 @@ type LockedFeatureProps = {
   features: string[];
   provider: AuthProvider;
   className?: string;
-};
-
-type FeatureRenderProps = {
-  features: string[];
-  hasFeature: boolean;
-  renderDisabled: (p: LockedFeatureProps) => React.ReactNode;
-  renderInstallButton: (p: RenderInstallButtonProps) => React.ReactNode;
-  children?: (p: FeatureRenderProps) => React.ReactNode;
 };
 
 type Props = {
@@ -78,7 +70,7 @@ function ProviderItem({provider, active, onConfigure}: Props) {
 
   const featureProps = hookName ? {hookName} : {};
 
-  const getProviderDescription = providerName => {
+  const getProviderDescription = (providerName: any) => {
     if (providerName === 'SAML2') {
       return t(
         'your preferred SAML2 compliant provider like Ping Identity, Google SAML, Keycloak, or VMware Identity Manager'
@@ -103,12 +95,7 @@ function ProviderItem({provider, active, onConfigure}: Props) {
         children({...props, renderDisabled: renderDisabledLock as any})
       }
     >
-      {({
-        hasFeature,
-        features,
-        renderDisabled,
-        renderInstallButton,
-      }: FeatureRenderProps) => (
+      {({hasFeature, features, renderDisabled, renderInstallButton}) => (
         <PanelItem center>
           <ProviderInfo>
             <ProviderLogo
@@ -128,14 +115,20 @@ function ProviderItem({provider, active, onConfigure}: Props) {
           </ProviderInfo>
 
           <FeatureBadge>
-            {!hasFeature && renderDisabled({provider, features})}
+            {!hasFeature &&
+              // renderDisabled is overridden by renderDisabled above
+              (renderDisabled as typeof renderDisabledLock)({provider, features})}
           </FeatureBadge>
 
           <div>
             {active ? (
-              <ActiveIndicator />
+              <ActiveIndicator>{t('Active')}</ActiveIndicator>
             ) : (
-              (renderInstallButton ?? defaultRenderInstallButton)({provider, hasFeature})
+              // renderInstallButton is overridden by renderDisabled above
+              (
+                (renderInstallButton as typeof defaultRenderInstallButton) ??
+                defaultRenderInstallButton
+              )({provider, hasFeature})
             )}
           </div>
         </PanelItem>
@@ -162,7 +155,7 @@ const ProviderLogo = styled('div')`
 `;
 
 const ProviderName = styled('div')`
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
 `;
 
 const ProviderDescription = styled('div')`
@@ -182,10 +175,6 @@ const ActiveIndicator = styled('div')`
   font-size: 0.8em;
 `;
 
-ActiveIndicator.defaultProps = {
-  children: t('Active'),
-};
-
 const DisabledHovercard = styled(Hovercard)`
   width: 350px;
 `;
@@ -203,7 +192,7 @@ function LockedFeature({provider, features, className}: LockedFeatureProps) {
         />
       }
     >
-      <Tag role="status" icon={<IconLock isSolid />}>
+      <Tag role="status" icon={<IconLock locked />}>
         {t('disabled')}
       </Tag>
     </DisabledHovercard>

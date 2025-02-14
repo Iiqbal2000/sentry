@@ -1,8 +1,9 @@
 import {useEffect} from 'react';
 
-import {fireEvent, render, screen, waitFor} from 'sentry-test/reactTestingLibrary';
+import {act, fireEvent, render, screen, waitFor} from 'sentry-test/reactTestingLibrary';
 
-import AutoComplete, {AutoCompleteProps} from 'sentry/components/autoComplete';
+import type {AutoCompleteProps} from 'sentry/components/autoComplete';
+import AutoComplete from 'sentry/components/autoComplete';
 
 const items = [
   {
@@ -22,7 +23,7 @@ const items = [
  * "controlled" props where <AutoComplete> does not handle state
  */
 describe('AutoComplete', function () {
-  let input;
+  let input: HTMLInputElement;
   let autoCompleteState: any[] = [];
   const mocks = {
     onSelect: jest.fn(),
@@ -35,12 +36,30 @@ describe('AutoComplete', function () {
     autoCompleteState = [];
   });
 
-  function List({registerItemCount, itemCount, ...props}) {
+  function List({
+    registerItemCount,
+    itemCount,
+    ...props
+  }: {
+    children: React.ReactNode;
+    itemCount: number;
+    registerItemCount: (count?: number) => void;
+  }) {
     useEffect(() => void registerItemCount(itemCount), [itemCount, registerItemCount]);
     return <ul {...props} />;
   }
 
-  function Item({registerVisibleItem, item, index, ...props}) {
+  function Item({
+    registerVisibleItem,
+    item,
+    index,
+    ...props
+  }: {
+    children: React.ReactNode;
+    index: number;
+    item: {name?: string};
+    registerVisibleItem: (index: number, item: any) => () => void;
+  }) {
     useEffect(() => registerVisibleItem(index, item), [registerVisibleItem, index, item]);
     return <li {...props} />;
   }
@@ -133,7 +152,7 @@ describe('AutoComplete', function () {
       fireEvent.focus(input);
       fireEvent.blur(input);
       expect(screen.getByTestId('test-autocomplete')).toBeInTheDocument();
-      jest.runAllTimers();
+      act(() => jest.runAllTimers());
 
       expect(screen.queryByTestId('test-autocomplete')).not.toBeInTheDocument();
       expect(mocks.onClose).toHaveBeenCalledTimes(1);
@@ -151,11 +170,11 @@ describe('AutoComplete', function () {
     it('can open and close dropdown menu using injected actions', function () {
       createWrapper();
       const [injectedProps] = autoCompleteState;
-      injectedProps.actions.open();
+      act(() => injectedProps.actions.open());
       expect(screen.getByTestId('test-autocomplete')).toBeInTheDocument();
       expect(mocks.onOpen).toHaveBeenCalledTimes(1);
 
-      injectedProps.actions.close();
+      act(() => injectedProps.actions.close());
       expect(screen.queryByTestId('test-autocomplete')).not.toBeInTheDocument();
       expect(mocks.onClose).toHaveBeenCalledTimes(1);
     });
@@ -197,7 +216,7 @@ describe('AutoComplete', function () {
       expect(screen.getByTestId('test-autocomplete')).toBeInTheDocument();
       expect(screen.getAllByRole('option')).toHaveLength(3);
 
-      fireEvent.click(screen.getByText(items[1].name));
+      fireEvent.click(screen.getByText(items[1]!.name));
       expect(mocks.onSelect).toHaveBeenCalledWith(
         items[1],
         expect.objectContaining({inputValue: '', highlightedIndex: 0}),
@@ -310,7 +329,7 @@ describe('AutoComplete', function () {
       expect(input).toHaveValue('a');
 
       fireEvent.blur(input);
-      jest.runAllTimers();
+      act(() => jest.runAllTimers());
       expect(screen.queryByTestId('test-autocomplete')).not.toBeInTheDocument();
       expect(input).toHaveValue('');
     });
@@ -351,7 +370,7 @@ describe('AutoComplete', function () {
       jest.useFakeTimers();
       fireEvent.focus(input);
       fireEvent.blur(input);
-      jest.runAllTimers();
+      act(() => jest.runAllTimers());
       expect(screen.getByTestId('test-autocomplete')).toBeInTheDocument();
 
       // This still gets called even though menu is open
@@ -371,12 +390,12 @@ describe('AutoComplete', function () {
     it('does not open and close dropdown menu using injected actions', function () {
       createWrapper({isOpen: true});
       const [injectedProps] = autoCompleteState;
-      injectedProps.actions.open();
+      act(() => injectedProps.actions.open());
       expect(screen.getByTestId('test-autocomplete')).toBeInTheDocument();
 
       expect(mocks.onOpen).toHaveBeenCalledTimes(1);
 
-      injectedProps.actions.close();
+      act(() => injectedProps.actions.close());
       expect(screen.getByTestId('test-autocomplete')).toBeInTheDocument();
 
       expect(mocks.onClose).toHaveBeenCalledTimes(1);
@@ -400,7 +419,7 @@ describe('AutoComplete', function () {
       createWrapper({isOpen: true});
       expect(screen.getAllByRole('option')).toHaveLength(3);
 
-      fireEvent.click(screen.getByText(items[1].name));
+      fireEvent.click(screen.getByText(items[1]!.name));
       expect(mocks.onSelect).toHaveBeenCalledWith(
         items[1],
         expect.objectContaining({inputValue: '', highlightedIndex: 0}),
@@ -527,7 +546,7 @@ describe('AutoComplete', function () {
       expect(input).toHaveValue('a');
 
       fireEvent.blur(input);
-      jest.runAllTimers();
+      act(() => jest.runAllTimers());
       expect(input).toHaveValue('');
     });
   });

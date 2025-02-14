@@ -1,13 +1,14 @@
 import {useEffect} from 'react';
 
 import {trackAnalytics} from 'sentry/utils/analytics';
-import type useReplayReader from 'sentry/utils/replays/hooks/useReplayReader';
+import type useLoadReplayReader from 'sentry/utils/replays/hooks/useLoadReplayReader';
+import type {BreadcrumbFrame} from 'sentry/utils/replays/types';
 import useOrganization from 'sentry/utils/useOrganization';
 import useProjectFromSlug from 'sentry/utils/useProjectFromSlug';
 
 interface Props
   extends Pick<
-    ReturnType<typeof useReplayReader>,
+    ReturnType<typeof useLoadReplayReader>,
     'fetchError' | 'fetching' | 'projectSlug' | 'replay'
   > {}
 
@@ -27,7 +28,7 @@ function useLogReplayDataLoaded({fetchError, fetching, projectSlug, replay}: Pro
 
     // BUG(replay): This will often report the discrepancy between errors
     // accociated with the replay, and errors the replay knows about.
-    // ie: When an error is filtered server-side, it would cound as a replay with 1
+    // ie: When an error is filtered server-side, it would count as a replay with 1
     // backend error.
     const feErrorIds = replayRecord.error_ids || [];
     const beErrorCount = allErrors.filter(
@@ -45,6 +46,18 @@ function useLogReplayDataLoaded({fetchError, fetching, projectSlug, replay}: Pro
       finished_at_delta: replay.timestampDeltas.finishedAtDelta,
       replay_id: replayRecord.id,
     });
+
+    const hydrationErrorFrames = replay
+      .getChapterFrames()
+      .filter(frame => (frame as BreadcrumbFrame)?.category === 'replay.hydrate-error');
+    if (hydrationErrorFrames.length > 0) {
+      // Track when a hydration breadcrumb is present but unable to be viewed
+      trackAnalytics('replay.details-has-hydration-error', {
+        organization,
+        num_errors: hydrationErrorFrames.length,
+        replay_id: replayRecord.id,
+      });
+    }
   }, [organization, project, fetchError, fetching, projectSlug, replay]);
 }
 

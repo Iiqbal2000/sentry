@@ -1,13 +1,14 @@
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {Client} from 'sentry/api';
-import BaseChart from 'sentry/components/charts/baseChart';
-import {RenderProps} from 'sentry/components/charts/eventsRequest';
-import {DateString, Organization, OrganizationSummary} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
+import type {Client} from 'sentry/api';
+import type BaseChart from 'sentry/components/charts/baseChart';
+import type {RenderProps} from 'sentry/components/charts/eventsRequest';
+import type {DateString} from 'sentry/types/core';
+import type {Organization, OrganizationSummary} from 'sentry/types/organization';
+import type EventView from 'sentry/utils/discover/eventView';
 
-import {PerformanceWidgetContainerTypes} from './components/performanceWidgetContainer';
-import {ChartDefinition, PerformanceWidgetSetting} from './widgetDefinitions';
+import type {PerformanceWidgetContainerTypes} from './components/performanceWidgetContainer';
+import type {ChartDefinition, PerformanceWidgetSetting} from './widgetDefinitions';
 
 export enum VisualizationDataState {
   ERROR = 'error',
@@ -23,6 +24,11 @@ export enum GenericPerformanceWidgetDataType {
   LINE_LIST = 'line_list',
   TRENDS = 'trends',
   STACKED_AREA = 'stacked_area',
+  PERFORMANCE_SCORE = 'performance_score',
+  SLOW_SCREENS_BY_TTID = 'slow_screens_by_ttid',
+  PERFORMANCE_SCORE_LIST = 'performance_score_list',
+  SLOW_SCREENS_BY_COLD_START = 'slow_screens_by_cold_start',
+  SLOW_SCREENS_BY_WARM_START = 'slow_screens_by_warm_start',
 }
 
 export type PerformanceWidgetProps = {
@@ -65,10 +71,10 @@ export type QueryFC<T extends WidgetDataConstraint> = React.ComponentType<
     organization: OrganizationSummary;
     widgetData: T;
     end?: DateString;
-    environment?: Readonly<string[]>;
+    environment?: readonly string[];
     fields?: string | string[];
     period?: string | null;
-    project?: Readonly<number[]>;
+    project?: readonly number[];
     query?: string;
     referrer?: string;
     start?: DateString;
@@ -110,7 +116,7 @@ type Visualization<T> = {
   queryFields?: string[]; // Used to determine placeholder and loading sizes. Will also be passed to the component.
 };
 
-type Visualizations<T extends WidgetDataConstraint> = Readonly<Visualization<T>[]>; // Readonly because of index being used for React key.
+type Visualizations<T extends WidgetDataConstraint> = ReadonlyArray<Visualization<T>>; // Readonly because of index being used for React key.
 
 type HeaderActions<T> = React.ComponentType<{
   widgetData: T;
@@ -127,10 +133,7 @@ export type GenericPerformanceWidgetProps<T extends WidgetDataConstraint> = {
   Visualizations: Visualizations<T>;
 
   chartDefinition: ChartDefinition;
-  chartHeight: number;
-
   chartSetting: PerformanceWidgetSetting;
-  containerType: PerformanceWidgetContainerTypes;
   eventView: EventView;
 
   fields: string[];
@@ -145,7 +148,14 @@ export type GenericPerformanceWidgetProps<T extends WidgetDataConstraint> = {
 
   InteractiveTitle?: InteractiveTitle<T> | null;
   Subtitle?: Subtitle<T>;
-  subTitle?: string;
+  /**
+   * @default 200
+   */
+  chartHeight?: number;
+  /**
+   * @default 'panel'
+   */
+  containerType?: PerformanceWidgetContainerTypes;
 };
 
 export type GenericPerformanceWithData<T extends WidgetDataConstraint> =
@@ -167,7 +177,7 @@ export type QueryDefinitionWithKey<T extends WidgetDataConstraint> = QueryDefini
 export type QueryHandlerProps<T extends WidgetDataConstraint> = {
   api: Client;
   eventView: EventView;
-  queries: QueryDefinitionWithKey<T>[];
+  queries: Array<QueryDefinitionWithKey<T>>;
   queryProps: WidgetPropUnion<T>;
   children?: React.ReactNode;
 } & WidgetDataProps<T>;

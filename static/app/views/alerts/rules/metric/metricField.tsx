@@ -2,17 +2,17 @@ import {Fragment} from 'react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import {Button} from 'sentry/components/button';
-import FormField, {FormFieldProps} from 'sentry/components/forms/formField';
-import {Organization} from 'sentry/types';
+import type {FormFieldProps} from 'sentry/components/forms/formField';
+import FormField from 'sentry/components/forms/formField';
+import type {Organization} from 'sentry/types/organization';
+import type {Aggregation} from 'sentry/utils/discover/fields';
 import {
-  Aggregation,
   AGGREGATIONS,
   explodeFieldString,
   generateFieldAsString,
 } from 'sentry/utils/discover/fields';
+import type {AlertType} from 'sentry/views/alerts/wizard/options';
 import {
-  AlertType,
   hideParameterSelectorSet,
   hidePrimarySelectorSet,
 } from 'sentry/views/alerts/wizard/options';
@@ -20,10 +20,10 @@ import {QueryField} from 'sentry/views/discover/table/queryField';
 import {FieldValueKind} from 'sentry/views/discover/table/types';
 import {generateFieldOptions} from 'sentry/views/discover/utils';
 
+import type {OptionConfig} from './constants';
 import {
   errorFieldConfig,
   getWizardAlertFieldConfig,
-  OptionConfig,
   transactionFieldConfig,
 } from './constants';
 import {Dataset} from './types';
@@ -66,6 +66,7 @@ export const getFieldOptionConfig = ({
         return [key, agg];
       }
 
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       return [key, AGGREGATIONS[key]];
     })
   );
@@ -80,10 +81,15 @@ export const getFieldOptionConfig = ({
     return key;
   });
 
-  const {measurementKeys} = config;
+  const {measurementKeys, spanOperationBreakdownKeys} = config;
 
   return {
-    fieldOptionsConfig: {aggregations, fieldKeys, measurementKeys},
+    fieldOptionsConfig: {
+      aggregations,
+      fieldKeys,
+      measurementKeys,
+      spanOperationBreakdownKeys,
+    },
     hidePrimarySelector,
     hideParameterSelector,
   };
@@ -98,7 +104,7 @@ function MetricField({
 }: Props) {
   return (
     <FormField {...props}>
-      {({onChange, value, model, disabled}) => {
+      {({onChange, value, model, disabled}: any) => {
         const dataset = model.getValue('dataset');
 
         const {fieldOptionsConfig, hidePrimarySelector, hideParameterSelector} =
@@ -154,22 +160,5 @@ const StyledQueryField = styled(QueryField)<{gridColumns: number; columnWidth?: 
       width: ${p.gridColumns * p.columnWidth}px;
     `}
 `;
-
-const PresetButton = styled(Button)<{disabled: boolean}>`
-  ${p =>
-    p.disabled &&
-    css`
-      color: ${p.theme.textColor};
-      &:hover,
-      &:focus {
-        color: ${p.theme.textColor};
-      }
-    `}
-`;
-
-PresetButton.defaultProps = {
-  priority: 'link',
-  borderless: true,
-};
 
 export default MetricField;

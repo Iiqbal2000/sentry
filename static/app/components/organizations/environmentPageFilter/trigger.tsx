@@ -1,12 +1,12 @@
 import {forwardRef} from 'react';
 import styled from '@emotion/styled';
 
-import Badge from 'sentry/components/badge';
-import DropdownButton, {DropdownButtonProps} from 'sentry/components/dropdownButton';
-import {IconWindow} from 'sentry/icons';
+import Badge from 'sentry/components/badge/badge';
+import type {DropdownButtonProps} from 'sentry/components/dropdownButton';
+import DropdownButton from 'sentry/components/dropdownButton';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {trimSlug} from 'sentry/utils/trimSlug';
+import {trimSlug} from 'sentry/utils/string/trimSlug';
 
 import {DesyncedFilterIndicator} from '../pageFilters/desyncedFilter';
 
@@ -27,7 +27,7 @@ function BaseEnvironmentPageFilterTrigger(
   // Show 2 environments only if the combined string's length does not exceed 25.
   // Otherwise show only 1 environment.
   const envsToShow =
-    value[0]?.length + value[1]?.length <= 23 ? value.slice(0, 2) : value.slice(0, 1);
+    value[0]?.length! + value[1]?.length! <= 23 ? value.slice(0, 2) : value.slice(0, 1);
 
   // e.g. "production, staging"
   const enumeratedLabel = envsToShow.map(env => trimSlug(env, 25)).join(', ');
@@ -41,14 +41,12 @@ function BaseEnvironmentPageFilterTrigger(
     <DropdownButton
       {...props}
       ref={forwardedRef}
-      icon={
-        <TriggerIconWrap>
-          <IconWindow />
-          {desynced && <DesyncedFilterIndicator role="presentation" />}
-        </TriggerIconWrap>
-      }
+      data-test-id="page-filter-environment-selector"
     >
-      <TriggerLabel>{ready ? label : t('Loading\u2026')}</TriggerLabel>
+      <TriggerLabelWrap>
+        <TriggerLabel>{ready ? label : t('Loading\u2026')}</TriggerLabel>
+        {desynced && <DesyncedFilterIndicator role="presentation" />}
+      </TriggerLabelWrap>
       {remainingCount > 0 && <StyledBadge text={`+${remainingCount}`} />}
     </DropdownButton>
   );
@@ -56,15 +54,14 @@ function BaseEnvironmentPageFilterTrigger(
 
 export const EnvironmentPageFilterTrigger = forwardRef(BaseEnvironmentPageFilterTrigger);
 
+const TriggerLabelWrap = styled('span')`
+  position: relative;
+  min-width: 0;
+`;
+
 const TriggerLabel = styled('span')`
   ${p => p.theme.overflowEllipsis};
   width: auto;
-`;
-
-const TriggerIconWrap = styled('div')`
-  position: relative;
-  display: flex;
-  align-items: center;
 `;
 
 const StyledBadge = styled(Badge)`

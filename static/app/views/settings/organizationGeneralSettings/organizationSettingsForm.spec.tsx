@@ -1,13 +1,15 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
-import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
+import {act, render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import * as indicatorActions from 'sentry/actionCreators/indicator';
 import Indicators from 'sentry/components/indicators';
+import * as RegionUtils from 'sentry/utils/regions';
 import OrganizationSettingsForm from 'sentry/views/settings/organizationGeneralSettings/organizationSettingsForm';
 
 jest.mock('sentry/actionCreators/indicator');
+jest.mock('sentry/utils/regions');
 
 describe('OrganizationSettingsForm', function () {
   const {organization, routerProps} = initializeOrg();
@@ -40,8 +42,7 @@ describe('OrganizationSettingsForm', function () {
     render(
       <OrganizationSettingsForm
         {...routerProps}
-        access={new Set(['org:write'])}
-        initialData={Organization()}
+        initialData={OrganizationFixture()}
         onSave={onSave}
       />
     );
@@ -75,18 +76,22 @@ describe('OrganizationSettingsForm', function () {
       'name'
     );
 
-    const model = saveOnBlur.mock.calls[0][1];
+    const model = saveOnBlur.mock.calls[0]![1];
 
     // Test "undo" call undo directly
     expect(model.getValue('name')).toBe('New Name');
-    model.undo();
+    act(() => {
+      model.undo();
+    });
     expect(model.getValue('name')).toBe('Organization Name');
 
     // `saveOnBlurUndoMessage` saves the new field, so reimplement this
-    await model.saveField('name', 'Organization Name');
+    act(() => {
+      model.saveField('name', 'Organization Name');
+    });
 
     // Initial data should be updated to original name
-    expect(model.initialData.name).toBe('Organization Name');
+    await waitFor(() => expect(model.initialData.name).toBe('Organization Name'));
 
     putMock.mockReset();
 
@@ -107,8 +112,7 @@ describe('OrganizationSettingsForm', function () {
     render(
       <OrganizationSettingsForm
         {...routerProps}
-        access={new Set(['org:write'])}
-        initialData={Organization()}
+        initialData={OrganizationFixture()}
         onSave={onSave}
       />
     );
@@ -143,8 +147,7 @@ describe('OrganizationSettingsForm', function () {
     render(
       <OrganizationSettingsForm
         {...routerProps}
-        access={new Set(['org:write'])}
-        initialData={Organization({codecovAccess: false})}
+        initialData={OrganizationFixture({codecovAccess: false})}
         onSave={onSave}
       />,
       {
@@ -167,5 +170,64 @@ describe('OrganizationSettingsForm', function () {
         },
       })
     );
+  });
+
+  it('can toggle hideAiFeatures setting', async function () {
+    putMock = MockApiClient.addMockResponse({
+      url: `/organizations/${organization.slug}/`,
+      method: 'PUT',
+      body: {...organization, hideAiFeatures: true},
+    });
+
+    render(
+      <OrganizationSettingsForm
+        {...routerProps}
+        initialData={OrganizationFixture({hideAiFeatures: false})}
+        onSave={onSave}
+      />,
+      {
+        organization: {
+          ...organization,
+          features: ['autofix'],
+        },
+      }
+    );
+
+    await userEvent.click(screen.getByRole('checkbox', {name: 'Hide AI Features'}));
+
+    expect(putMock).toHaveBeenCalledWith(
+      '/organizations/org-slug/',
+      expect.objectContaining({
+        data: {
+          hideAiFeatures: true,
+        },
+      })
+    );
+  });
+
+  it('disables hideAiFeatures toggle and shows tooltip for DE region', function () {
+    // Mock the region util to return DE region
+    jest.mocked(RegionUtils.getRegionDataFromOrganization).mockImplementation(() => ({
+      name: 'de',
+      displayName: 'Europe (Frankfurt)',
+      url: 'https://sentry.de.example.com',
+    }));
+
+    render(
+      <OrganizationSettingsForm
+        {...routerProps}
+        initialData={OrganizationFixture()}
+        onSave={onSave}
+      />,
+      {
+        organization: {
+          ...organization,
+          features: ['autofix'],
+        },
+      }
+    );
+
+    const toggle = screen.getByRole('checkbox', {name: 'Hide AI Features'});
+    expect(toggle).toBeDisabled();
   });
 });

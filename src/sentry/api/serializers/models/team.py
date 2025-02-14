@@ -2,24 +2,12 @@ from __future__ import annotations
 
 import dataclasses
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import (
-    TYPE_CHECKING,
-    AbstractSet,
-    Any,
-    Dict,
-    FrozenSet,
-    List,
-    Mapping,
-    MutableMapping,
-    MutableSequence,
-    Optional,
-    Sequence,
-    Set,
-)
+from typing import TYPE_CHECKING, Any, TypedDict
 
+from django.contrib.auth.models import AnonymousUser
 from django.db.models import Count
-from typing_extensions import TypedDict
 
 from sentry import roles
 from sentry.api.serializers import Serializer, register, serialize
@@ -31,30 +19,31 @@ from sentry.auth.access import (
     maybe_singular_rpc_access_org_context,
 )
 from sentry.auth.superuser import is_active_superuser
-from sentry.models.avatars.team_avatar import TeamAvatar
-from sentry.models.integrations.external_actor import ExternalActor
+from sentry.integrations.models.external_actor import ExternalActor
 from sentry.models.organization import Organization
 from sentry.models.organizationaccessrequest import OrganizationAccessRequest
 from sentry.models.organizationmember import InviteStatus, OrganizationMember
 from sentry.models.organizationmemberteam import OrganizationMemberTeam
 from sentry.models.projectteam import ProjectTeam
 from sentry.models.team import Team
-from sentry.models.user import User
 from sentry.roles import organization_roles, team_roles
 from sentry.scim.endpoints.constants import SCIM_SCHEMA_GROUP
+from sentry.users.models.user import User
+from sentry.users.services.user.model import RpcUser
 from sentry.utils.query import RangeQuerySetWrapper
 
 if TYPE_CHECKING:
-    from sentry.api.serializers import OrganizationSerializerResponse, SCIMMeta
-    from sentry.api.serializers.models.external_actor import ExternalActorResponse
+    from sentry.api.serializers import SCIMMeta
+    from sentry.api.serializers.models.organization import OrganizationSerializerResponse
     from sentry.api.serializers.models.project import ProjectSerializerResponse
+    from sentry.integrations.api.serializers.models.external_actor import ExternalActorResponse
 
 
 def _get_team_memberships(
     team_list: Sequence[Team],
-    user: User,
+    user: User | RpcUser | AnonymousUser,
     optimization: SingularRpcAccessOrgOptimization | None = None,
-) -> Mapping[int, str | None]:
+) -> dict[int, str | None]:
     """Get memberships the user has in the provided team list"""
     if not user.is_authenticated:
         return {}
@@ -75,7 +64,9 @@ def _get_team_memberships(
     }
 
 
-def get_member_totals(team_list: Sequence[Team], user: User) -> Mapping[str, int]:
+def get_member_totals(
+    team_list: Sequence[Team], user: User | RpcUser | AnonymousUser
+) -> dict[int, int]:
     """Get the total number of members in each team"""
     if not user.is_authenticated:
         return {}
@@ -91,59 +82,36 @@ def get_member_totals(team_list: Sequence[Team], user: User) -> Mapping[str, int
     return {item["id"]: item["member_count"] for item in query}
 
 
-def get_member_orgs_and_roles(org_ids: Set[int], user_id: int) -> Mapping[int, Sequence[str]]:
-    org_members = OrganizationMember.objects.filter(
-        user_id=user_id, organization__in=org_ids
-    ).values_list("organization_id", "id", "role")
-
-    if not len(org_members):
-        return {}
-
-    _, org_member_ids, _ = zip(*org_members)
-
-    roles_from_teams = (
-        OrganizationMemberTeam.objects.filter(organizationmember_id__in=org_member_ids)
-        .exclude(team__org_role=None)
-        .values_list("organizationmember__organization_id", "team__org_role")
-    )
-
-    orgs_and_roles = {orgs: {role} for orgs, _, role in org_members}
-
-    for org_id, org_role in roles_from_teams:
-        orgs_and_roles[org_id].add(org_role)
-
-    return {
-        org: [r.id for r in organization_roles.get_sorted_roles(org_roles)]
-        for org, org_roles in orgs_and_roles.items()
-    }
-
-
 def get_org_roles(
-    org_ids: Set[int], user: User, optimization: SingularRpcAccessOrgOptimization | None = None
-) -> Mapping[int, Sequence[str]]:
+    org_ids: set[int],
+    user: User | RpcUser | AnonymousUser,
+    optimization: SingularRpcAccessOrgOptimization | None = None,
+) -> dict[int, str]:
     """
     Get the roles the user has in each org
-    Roles are ordered from highest to lower priority (descending priority)
     """
     if not user.is_authenticated:
         return {}
 
     if optimization:
-        if optimization.access.roles is not None:
+        if optimization.access.role is not None:
             return {
-                optimization.access.rpc_user_organization_context.organization.id: list(
-                    optimization.access.roles
-                )
+                optimization.access.api_user_organization_context.organization.id: optimization.access.role
             }
         return {}
 
     # map of org id to role
-    # can have multiple org roles through team membership
-    # return them sorted to figure out highest team role
-    return get_member_orgs_and_roles(org_ids=org_ids, user_id=user.id)
+    return {
+        om["organization_id"]: om["role"]
+        for om in OrganizationMember.objects.filter(
+            user_id=user.id, organization__in=set(org_ids)
+        ).values("role", "organization_id")
+    }
 
 
-def get_access_requests(item_list: Sequence[Team], user: User) -> AbstractSet[Team]:
+def get_access_requests(
+    item_list: Sequence[Team], user: User | RpcUser | AnonymousUser
+) -> frozenset[int]:
     if user.is_authenticated:
         return frozenset(
             OrganizationAccessRequest.objects.filter(
@@ -154,21 +122,20 @@ def get_access_requests(item_list: Sequence[Team], user: User) -> AbstractSet[Te
 
 
 class _TeamSerializerResponseOptional(TypedDict, total=False):
-    externalTeams: List[ExternalActorResponse]
+    externalTeams: list[ExternalActorResponse]
     organization: OrganizationSerializerResponse
-    projects: List[ProjectSerializerResponse]
-    orgRole: Optional[str]  # TODO(cathy): Change to new key
+    projects: list[ProjectSerializerResponse]
 
 
 class BaseTeamSerializerResponse(TypedDict):
     id: str
     slug: str
     name: str
-    dateCreated: datetime
+    dateCreated: datetime | None
     isMember: bool
-    teamRole: Optional[str]
-    flags: Dict[str, Any]
-    access: FrozenSet[str]  # scopes granted by teamRole
+    teamRole: str | None
+    flags: dict[str, Any]
+    access: frozenset[str]  # scopes granted by teamRole
     hasAccess: bool
     isPending: bool
     memberCount: int
@@ -219,10 +186,12 @@ class BaseTeamSerializer(Serializer):
         return key in self.collapse
 
     def get_attrs(
-        self, item_list: Sequence[Team], user: User, **kwargs: Any
-    ) -> MutableMapping[Team, MutableMapping[str, Any]]:
+        self, item_list: Sequence[Team], user: User | RpcUser | AnonymousUser, **kwargs: Any
+    ) -> dict[Team, dict[str, Any]]:
+        from sentry.api.serializers.models.project import ProjectSerializer
+
         request = env.request
-        org_ids: Set[int] = {t.organization_id for t in item_list}
+        org_ids = {t.organization_id for t in item_list}
 
         assert len(org_ids) == 1, "Cross organization query for teams"
 
@@ -235,22 +204,21 @@ class BaseTeamSerializer(Serializer):
         team_memberships = _get_team_memberships(item_list, user, optimization=optimization)
         access_requests = get_access_requests(item_list, user)
 
-        avatars = {a.team_id: a for a in TeamAvatar.objects.filter(team__in=item_list)}
-
         is_superuser = request and is_active_superuser(request) and request.user == user
-        result: MutableMapping[Team, MutableMapping[str, Any]] = {}
+        result: dict[Team, dict[str, Any]] = {}
         organization = Organization.objects.get_from_cache(id=list(org_ids)[0])
 
         for team in item_list:
             is_member = team.id in team_memberships
-            org_roles = roles_by_org.get(team.organization_id) or []
-            team_role_id, team_role_scopes = team_memberships.get(team.id), set()
+            org_role = roles_by_org.get(team.organization_id)
+            team_role_id = team_memberships.get(team.id)
+            team_role_scopes: frozenset[str] = frozenset()
 
             has_access = bool(
                 is_member
                 or is_superuser
                 or organization.flags.allow_joinleave
-                or any(roles.get(org_role).is_global for org_role in org_roles)
+                or (org_role and roles.get(org_role).is_global)
             )
 
             if has_access:
@@ -258,12 +226,11 @@ class BaseTeamSerializer(Serializer):
                     team_roles.get(team_role_id) if team_role_id else team_roles.get_default()
                 )
 
-                top_org_role = org_roles[0] if org_roles else None
                 if is_superuser:
-                    top_org_role = organization_roles.get_top_dog().id
+                    org_role = organization_roles.get_top_dog().id
 
-                if top_org_role:
-                    minimum_team_role = roles.get_minimum_team_role(top_org_role)
+                if org_role:
+                    minimum_team_role = roles.get_minimum_team_role(org_role)
                     if minimum_team_role.priority > effective_team_role.priority:
                         effective_team_role = minimum_team_role
 
@@ -276,7 +243,6 @@ class BaseTeamSerializer(Serializer):
                 "team_role": team_role_id if is_member else None,
                 "access": team_role_scopes,
                 "has_access": has_access,
-                "avatar": avatars.get(team.id),
                 "member_count": member_totals.get(team.id, 0),
             }
 
@@ -285,7 +251,11 @@ class BaseTeamSerializer(Serializer):
             projects = [pt.project for pt in project_teams]
 
             projects_by_id = {
-                project.id: data for project, data in zip(projects, serialize(projects, user))
+                project.id: data
+                for project, data in zip(
+                    projects,
+                    serialize(projects, user, ProjectSerializer(collapse=["unusedFeatures"])),
+                )
             }
 
             project_map = defaultdict(list)
@@ -311,16 +281,13 @@ class BaseTeamSerializer(Serializer):
         return result
 
     def serialize(
-        self, obj: Team, attrs: Mapping[str, Any], user: Any, **kwargs: Any
+        self,
+        obj: Team,
+        attrs: Mapping[str, Any],
+        user: User | RpcUser | AnonymousUser,
+        **kwargs: Any,
     ) -> BaseTeamSerializerResponse:
-        if attrs.get("avatar"):
-            avatar: SerializedAvatarFields = {
-                "avatarType": attrs["avatar"].get_avatar_type_display(),
-                "avatarUuid": attrs["avatar"].ident if attrs["avatar"].file_id else None,
-            }
-        else:
-            avatar = {"avatarType": "letter_avatar", "avatarUuid": None}
-        result: BaseTeamSerializerResponse = {
+        return {
             "id": str(obj.id),
             "slug": obj.slug,
             "name": obj.name,
@@ -332,32 +299,35 @@ class BaseTeamSerializer(Serializer):
             "hasAccess": attrs["has_access"],
             "isPending": attrs["pending_request"],
             "memberCount": attrs["member_count"],
-            "avatar": avatar,
+            # Teams only have letter avatars.
+            "avatar": {"avatarType": "letter_avatar", "avatarUuid": None},
         }
-        if obj.org_role:
-            result["orgRole"] = obj.org_role
-
-        return result
 
 
 # See TeamSerializerResponse for explanation as to why this is needed
 class TeamSerializer(BaseTeamSerializer):
     def serialize(
-        self, obj: Team, attrs: Mapping[str, Any], user: Any, **kwargs: Any
+        self,
+        obj: Team,
+        attrs: Mapping[str, Any],
+        user: User | RpcUser | AnonymousUser,
+        **kwargs: Any,
     ) -> TeamSerializerResponse:
         result = super().serialize(obj, attrs, user, **kwargs)
 
+        opt: _TeamSerializerResponseOptional = {}
+
         # Expandable attributes.
         if self._expand("externalTeams"):
-            result["externalTeams"] = attrs["externalTeams"]
+            opt["externalTeams"] = attrs["externalTeams"]
 
         if self._expand("organization"):
-            result["organization"] = serialize(obj.organization, user)
+            opt["organization"] = serialize(obj.organization, user)
 
         if self._expand("projects"):
-            result["projects"] = attrs["projects"]
+            opt["projects"] = attrs["projects"]
 
-        return result
+        return {**result, **opt}
 
 
 class TeamWithProjectsSerializer(TeamSerializer):
@@ -367,37 +337,20 @@ class TeamWithProjectsSerializer(TeamSerializer):
         super().__init__(expand=["projects", "externalTeams"])
 
 
-def get_scim_teams_members(
-    team_list: Sequence[Team],
-) -> MutableMapping[Team, MutableSequence[MutableMapping[str, Any]]]:
-    # TODO(hybridcloud) Another cross silo join
-    members = RangeQuerySetWrapper(
-        OrganizationMember.objects.filter(teams__in=team_list)
-        .prefetch_related("teams")
-        .distinct("id"),
-        limit=10000,
-    )
-    member_map: MutableMapping[Team, MutableSequence[MutableMapping[str, Any]]] = defaultdict(list)
-    for member in members:
-        for team in member.teams.all():
-            member_map[team].append({"value": str(member.id), "display": member.get_email()})
-    return member_map
-
-
 class SCIMTeamMemberListItem(TypedDict):
     value: str
     display: str
 
 
 class OrganizationTeamSCIMSerializerRequired(TypedDict):
-    schemas: List[str]
+    schemas: list[str]
     id: str
     displayName: str
     meta: SCIMMeta
 
 
 class OrganizationTeamSCIMSerializerResponse(OrganizationTeamSCIMSerializerRequired, total=False):
-    members: List[SCIMTeamMemberListItem]
+    members: list[SCIMTeamMemberListItem]
 
 
 @dataclasses.dataclass
@@ -405,11 +358,11 @@ class TeamMembership:
     user_id: int
     user_email: str
     member_id: int
-    team_ids: List[int]
+    team_ids: list[int]
 
 
-def get_team_memberships(team_ids: List[int]) -> List[TeamMembership]:
-    members: Dict[int, TeamMembership] = {}
+def get_team_memberships(team_ids: list[int]) -> list[TeamMembership]:
+    members: dict[int, TeamMembership] = {}
     for omt in RangeQuerySetWrapper(
         OrganizationMemberTeam.objects.filter(team_id__in=team_ids).prefetch_related(
             "organizationmember"
@@ -430,22 +383,22 @@ def get_team_memberships(team_ids: List[int]) -> List[TeamMembership]:
 class TeamSCIMSerializer(Serializer):
     def __init__(
         self,
-        expand: Optional[Sequence[str]] = None,
+        expand: Sequence[str] | None = None,
     ) -> None:
         self.expand = expand or []
 
     def get_attrs(
-        self, item_list: Sequence[Team], user: Any, **kwargs: Any
-    ) -> Mapping[Team, MutableMapping[str, Any]]:
+        self, item_list: Sequence[Team], user: User | RpcUser | AnonymousUser, **kwargs: Any
+    ) -> dict[Team, dict[str, Any]]:
 
-        result: MutableMapping[int, MutableMapping[str, Any]] = {
+        result: dict[int, dict[str, Any]] = {
             team.id: ({"members": []} if "members" in self.expand else {}) for team in item_list
         }
-        teams_by_id: Mapping[int, Team] = {t.id: t for t in item_list}
+        teams_by_id = {t.id: t for t in item_list}
 
         if teams_by_id and "members" in self.expand:
-            team_ids: List[int] = [t.id for t in item_list]
-            team_memberships: List[TeamMembership] = get_team_memberships(team_ids=team_ids)
+            team_ids = [t.id for t in item_list]
+            team_memberships = get_team_memberships(team_ids=team_ids)
 
             for team_member in team_memberships:
                 for team_id in team_member.team_ids:
@@ -456,7 +409,11 @@ class TeamSCIMSerializer(Serializer):
         return {teams_by_id[team_id]: attrs for team_id, attrs in result.items()}
 
     def serialize(
-        self, obj: Team, attrs: Mapping[str, Any], user: Any, **kwargs: Any
+        self,
+        obj: Team,
+        attrs: Mapping[str, Any],
+        user: User | RpcUser | AnonymousUser,
+        **kwargs: Any,
     ) -> OrganizationTeamSCIMSerializerResponse:
         result: OrganizationTeamSCIMSerializerResponse = {
             "schemas": [SCIM_SCHEMA_GROUP],

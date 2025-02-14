@@ -1,9 +1,9 @@
 import styled from '@emotion/styled';
-import capitalize from 'lodash/capitalize';
 
 import {Tooltip} from 'sentry/components/tooltip';
-import {tct} from 'sentry/locale';
-import {Level} from 'sentry/types';
+import {t} from 'sentry/locale';
+import type {Level} from 'sentry/types/event';
+import {capitalize} from 'sentry/utils/string/capitalize';
 
 const DEFAULT_SIZE = '13px';
 
@@ -14,8 +14,7 @@ type Props = {
 };
 
 function ErrorLevel({className, level = 'unknown', size = '11px'}: Props) {
-  const levelLabel = tct('Level: [level]', {level: capitalize(level)});
-
+  const levelLabel = t('Level: %s', capitalize(level));
   return (
     <Tooltip skipWrapper disabled={level === 'unknown'} title={levelLabel}>
       <ColoredCircle className={className} level={level} size={size}>

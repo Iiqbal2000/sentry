@@ -1,9 +1,11 @@
-import {Organization} from 'sentry-fixture/organization';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {ReleaseFixture} from 'sentry-fixture/release';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {
   act,
-  fireEvent,
   render,
   screen,
   userEvent,
@@ -11,15 +13,18 @@ import {
   within,
 } from 'sentry-test/reactTestingLibrary';
 
+import {ReleasesSortOption} from 'sentry/constants/releases';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import ReleasesList from 'sentry/views/releases/list/';
 import {ReleasesDisplayOption} from 'sentry/views/releases/list/releasesDisplayOptions';
-import {ReleasesSortOption} from 'sentry/views/releases/list/releasesSortOptions';
 import {ReleasesStatusOption} from 'sentry/views/releases/list/releasesStatusOptions';
 
 describe('ReleasesList', () => {
-  const {organization, routerContext, router, routerProps} = initializeOrg();
+  const {organization, projects, router, routerProps} = initializeOrg();
   const semverVersionInfo = {
+    buildHash: null,
+    description: '1.2.3',
+    package: 'package',
     version: {
       raw: '1.2.3',
       major: 1,
@@ -56,23 +61,30 @@ describe('ReleasesList', () => {
       },
     },
   };
-  let endpointMock, sessionApiMock;
+  let endpointMock: jest.Mock;
+  let sessionApiMock: jest.Mock;
 
   beforeEach(() => {
-    act(() => ProjectsStore.loadInitialData(organization.projects));
+    act(() => ProjectsStore.loadInitialData(projects));
     endpointMock = MockApiClient.addMockResponse({
       url: '/organizations/org-slug/releases/',
       body: [
-        TestStubs.Release({
+        ReleaseFixture({
           version: '1.0.0',
-          versionInfo: {...semverVersionInfo, raw: '1.0.0'},
+          versionInfo: {
+            ...semverVersionInfo,
+            version: {...semverVersionInfo.version, raw: '1.0.0'},
+          },
         }),
-        TestStubs.Release({
+        ReleaseFixture({
           version: '1.0.1',
-          versionInfo: {...semverVersionInfo, raw: '1.0.1'},
+          versionInfo: {
+            ...semverVersionInfo,
+            version: {...semverVersionInfo.version, raw: '1.0.1'},
+          },
         }),
         {
-          ...TestStubs.Release({version: 'af4f231ec9a8'}),
+          ...ReleaseFixture({version: 'af4f231ec9a8'}),
           projects: [
             {
               id: 4383604,
@@ -103,38 +115,39 @@ describe('ReleasesList', () => {
 
   it('renders list', async () => {
     render(<ReleasesList {...props} />, {
-      context: routerContext,
+      router,
       organization,
     });
     const items = await screen.findAllByTestId('release-panel');
 
-    expect(items.length).toEqual(3);
+    expect(items).toHaveLength(3);
 
     expect(within(items.at(0)!).getByText('1.0.0')).toBeInTheDocument();
     expect(within(items.at(0)!).getByText('Adoption')).toBeInTheDocument();
     expect(within(items.at(1)!).getByText('1.0.1')).toBeInTheDocument();
-    expect(within(items.at(1)!).getByText('0%')).toBeInTheDocument();
+    // Crash free rate loads separately
+    expect(await within(items.at(1)!).findByText('0%')).toBeInTheDocument();
     expect(within(items.at(2)!).getByText('af4f231ec9a8')).toBeInTheDocument();
     expect(within(items.at(2)!).getByText('Project Name')).toBeInTheDocument();
   });
 
   it('displays the right empty state', async () => {
-    let location;
+    let location: ReturnType<typeof LocationFixture>;
 
-    const project = TestStubs.Project({
+    const project = ProjectFixture({
       id: '3',
       slug: 'test-slug',
       name: 'test-name',
       features: ['releases'],
     });
-    const projectWithouReleases = TestStubs.Project({
+    const projectWithouReleases = ProjectFixture({
       id: '4',
       slug: 'test-slug-2',
       name: 'test-name-2',
       features: [],
     });
-    const org = Organization({projects: [project, projectWithouReleases]});
-    ProjectsStore.loadInitialData(org.projects);
+    const org = OrganizationFixture();
+    ProjectsStore.loadInitialData([project, projectWithouReleases]);
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/releases/',
       body: [],
@@ -144,7 +157,7 @@ describe('ReleasesList', () => {
       body: [],
     });
     // does not have releases set up and no releases
-    location = {...routerProps.location, query: {}};
+    location = LocationFixture({...routerProps.location, query: {}});
     const {rerender} = render(
       <ReleasesList
         {...props}
@@ -152,7 +165,7 @@ describe('ReleasesList', () => {
         selection={{...props.selection, projects: [4]}}
       />,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );
@@ -161,7 +174,7 @@ describe('ReleasesList', () => {
     expect(screen.queryByTestId('release-panel')).not.toBeInTheDocument();
 
     // has releases set up and no releases
-    location = {query: {query: 'abc'}};
+    location = LocationFixture({query: {query: 'abc'}});
     rerender(
       <ReleasesList
         {...props}
@@ -171,10 +184,12 @@ describe('ReleasesList', () => {
       />
     );
     expect(
-      screen.getByText("There are no releases that match: 'abc'.")
+      await screen.findByText("There are no releases that match: 'abc'.")
     ).toBeInTheDocument();
 
-    location = {query: {sort: ReleasesSortOption.SESSIONS, statsPeriod: '7d'}};
+    location = LocationFixture({
+      query: {sort: ReleasesSortOption.SESSIONS, statsPeriod: '7d'},
+    });
     rerender(
       <ReleasesList
         {...props}
@@ -184,10 +199,12 @@ describe('ReleasesList', () => {
       />
     );
     expect(
-      screen.getByText('There are no releases with data in the last 7 days.')
+      await screen.findByText('There are no releases with data in the last 7 days.')
     ).toBeInTheDocument();
 
-    location = {query: {sort: ReleasesSortOption.USERS_24_HOURS, statsPeriod: '7d'}};
+    location = LocationFixture({
+      query: {sort: ReleasesSortOption.USERS_24_HOURS, statsPeriod: '7d'},
+    });
     rerender(
       <ReleasesList
         {...props}
@@ -197,12 +214,14 @@ describe('ReleasesList', () => {
       />
     );
     expect(
-      screen.getByText(
+      await screen.findByText(
         'There are no releases with active user data (users in the last 24 hours).'
       )
     ).toBeInTheDocument();
 
-    location = {query: {sort: ReleasesSortOption.SESSIONS_24_HOURS, statsPeriod: '7d'}};
+    location = LocationFixture({
+      query: {sort: ReleasesSortOption.SESSIONS_24_HOURS, statsPeriod: '7d'},
+    });
     rerender(
       <ReleasesList
         {...props}
@@ -212,12 +231,12 @@ describe('ReleasesList', () => {
       />
     );
     expect(
-      screen.getByText(
+      await screen.findByText(
         'There are no releases with active session data (sessions in the last 24 hours).'
       )
     ).toBeInTheDocument();
 
-    location = {query: {sort: ReleasesSortOption.BUILD}};
+    location = LocationFixture({query: {sort: ReleasesSortOption.BUILD}});
     rerender(
       <ReleasesList
         {...props}
@@ -227,7 +246,7 @@ describe('ReleasesList', () => {
       />
     );
     expect(
-      screen.getByText('There are no releases with semantic versioning.')
+      await screen.findByText('There are no releases with semantic versioning.')
     ).toBeInTheDocument();
   });
 
@@ -241,8 +260,8 @@ describe('ReleasesList', () => {
       statusCode: 400,
     });
 
-    render(<ReleasesList {...props} />, {
-      context: routerContext,
+    render(<ReleasesList {...props} selection={{...props.selection, projects: [3]}} />, {
+      router,
       organization,
     });
 
@@ -250,7 +269,9 @@ describe('ReleasesList', () => {
 
     // we want release header to be visible despite the error message
     expect(
-      screen.getByPlaceholderText('Search by version, build, package, or stage')
+      await screen.findByRole('combobox', {
+        name: 'Add a search term',
+      })
     ).toBeInTheDocument();
   });
 
@@ -262,12 +283,42 @@ describe('ReleasesList', () => {
     });
 
     render(<ReleasesList {...props} />, {
-      context: routerContext,
+      router,
       organization,
     });
 
-    const input = await screen.findByRole('textbox');
-    expect(input).toHaveValue('derp ');
+    const input = await screen.findByDisplayValue('derp');
+    expect(input).toBeInTheDocument();
+
+    expect(endpointMock).toHaveBeenCalledWith(
+      '/organizations/org-slug/releases/',
+      expect.objectContaining({
+        query: expect.objectContaining({query: 'derp'}),
+      })
+    );
+
+    await userEvent.clear(input);
+    await userEvent.type(input, 'a{enter}');
+
+    expect(router.push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: expect.objectContaining({query: 'a'}),
+      })
+    );
+  });
+
+  it('searches for a release with new searchbar (search-query-builder-releases)', async () => {
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/recent-searches/',
+      method: 'POST',
+      body: [],
+    });
+    render(<ReleasesList {...props} />, {
+      router,
+      organization: {...organization, features: ['search-query-builder-releases']},
+    });
+    const input = await screen.findByDisplayValue('derp');
+    expect(input).toBeInTheDocument();
 
     expect(endpointMock).toHaveBeenCalledWith(
       '/organizations/org-slug/releases/',
@@ -288,7 +339,7 @@ describe('ReleasesList', () => {
 
   it('sorts releases', async () => {
     render(<ReleasesList {...props} />, {
-      context: routerContext,
+      router,
       organization,
     });
 
@@ -331,7 +382,7 @@ describe('ReleasesList', () => {
         selection={{...props.selection, environments: ['a', 'b']}}
       />,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );
@@ -342,7 +393,7 @@ describe('ReleasesList', () => {
 
   it('display the right Crash Free column', async () => {
     render(<ReleasesList {...props} />, {
-      context: routerContext,
+      router,
       organization,
     });
 
@@ -380,7 +431,7 @@ describe('ReleasesList', () => {
         }}
       />,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );
@@ -432,25 +483,27 @@ describe('ReleasesList', () => {
     );
   });
 
-  it('calls api with only explicitly permitted query params', () => {
+  it('calls api with only explicitly permitted query params', async () => {
     render(<ReleasesList {...props} />, {
-      context: routerContext,
+      router,
       organization,
     });
 
-    expect(endpointMock).toHaveBeenCalledWith(
-      '/organizations/org-slug/releases/',
-      expect.objectContaining({
-        query: expect.not.objectContaining({
-          somethingBad: 'XXX',
-        }),
-      })
-    );
+    await waitFor(() => {
+      expect(endpointMock).toHaveBeenCalledWith(
+        '/organizations/org-slug/releases/',
+        expect.objectContaining({
+          query: expect.not.objectContaining({
+            somethingBad: 'XXX',
+          }),
+        })
+      );
+    });
   });
 
   it('calls session api for health data', async () => {
     render(<ReleasesList {...props} />, {
-      context: routerContext,
+      router,
       organization,
     });
 
@@ -501,7 +554,7 @@ describe('ReleasesList', () => {
       url: '/organizations/org-slug/releases/',
       body: [
         {
-          ...TestStubs.Release({version: '2.0.0'}),
+          ...ReleaseFixture({version: '2.0.0'}),
           projects: [
             {
               id: 1,
@@ -523,13 +576,13 @@ describe('ReleasesList', () => {
       ],
     });
     render(<ReleasesList {...props} selection={{...props.selection, projects: [2]}} />, {
-      context: routerContext,
+      router,
       organization,
     });
     const hiddenProjectsMessage = await screen.findByTestId('hidden-projects');
     expect(hiddenProjectsMessage).toHaveTextContent('2 hidden projects');
 
-    expect(screen.getAllByTestId('release-card-project-row').length).toBe(1);
+    expect(screen.getAllByTestId('release-card-project-row')).toHaveLength(1);
 
     expect(screen.getByTestId('badge-display-name')).toHaveTextContent('test2');
   });
@@ -537,10 +590,10 @@ describe('ReleasesList', () => {
   it('does not hide health rows when "All Projects" are selected in global header', async () => {
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/releases/',
-      body: [TestStubs.Release({version: '2.0.0'})],
+      body: [ReleaseFixture({version: '2.0.0'})],
     });
     render(<ReleasesList {...props} selection={{...props.selection, projects: [-1]}} />, {
-      context: routerContext,
+      router,
       organization,
     });
 
@@ -566,20 +619,19 @@ describe('ReleasesList', () => {
       url: '/organizations/org-slug/recent-searches/',
       method: 'POST',
     });
-    render(<ReleasesList {...props} />, {
-      context: routerContext,
+    render(<ReleasesList {...props} location={{...props.location, query: {}}} />, {
+      router,
       organization,
     });
-    const smartSearchBar = await screen.findByTestId('smart-search-input');
+    const smartSearchBar = await screen.findByRole('combobox', {
+      name: 'Add a search term',
+    });
+    await userEvent.click(smartSearchBar);
+    await userEvent.clear(smartSearchBar);
+    expect(await screen.findByRole('option', {name: 'release'})).toBeInTheDocument();
 
     await userEvent.clear(smartSearchBar);
-    fireEvent.change(smartSearchBar, {target: {value: 'release'}});
-
-    const autocompleteItems = await screen.findAllByTestId('search-autocomplete-item');
-    expect(autocompleteItems.at(0)).toHaveTextContent('release');
-
-    await userEvent.clear(smartSearchBar);
-    fireEvent.change(smartSearchBar, {target: {value: 'release.version:'}});
+    await userEvent.click(screen.getByRole('option', {name: 'release.version'}));
 
     expect(await screen.findByText('sentry@0.5.3')).toBeInTheDocument();
   });

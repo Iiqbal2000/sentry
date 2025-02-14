@@ -4,11 +4,11 @@ describe('UIFrames', () => {
   it('handles different render units', () => {
     const slowFrameRenders = {
       unit: 'nanoseconds',
-      values: [{elapsed_since_start_ns: 0, value: 1 * 1e6}],
+      values: [{elapsed: 0, value: 1 * 1e6}],
     };
     const frozenFrameRenders = {
       unit: 'milliseconds',
-      values: [{elapsed_since_start_ns: 0, value: 1}],
+      values: [{elapsed: 0, value: 1}],
     };
 
     const tree = new UIFrames(
@@ -18,20 +18,20 @@ describe('UIFrames', () => {
       }
     );
 
-    expect(tree.frames[0].duration).toBe(tree.frames[1].duration);
+    expect(tree.frames[0]!.duration).toBe(tree.frames[1]!.duration);
   });
 
   it.each([
     [
       {unit: 'nanoseconds', values: []},
-      {unit: 'nanoseconds', values: [{elapsed_since_start_ns: 0, value: 1}]},
+      {unit: 'nanoseconds', values: [{elapsed: 0, value: 1}]},
     ],
     [
-      {unit: 'nanoseconds', values: [{elapsed_since_start_ns: 0, value: 1}]},
+      {unit: 'nanoseconds', values: [{elapsed: 0, value: 1}]},
       {unit: 'nanoseconds', values: []},
     ],
-    [undefined, {unit: 'nanoseconds', values: [{elapsed_since_start_ns: 0, value: 1}]}],
-    [{unit: 'nanoseconds', values: [{elapsed_since_start_ns: 0, value: 1}]}, undefined],
+    [undefined, {unit: 'nanoseconds', values: [{elapsed: 0, value: 1}]}],
+    [{unit: 'nanoseconds', values: [{elapsed: 0, value: 1}]}, undefined],
     [undefined, undefined],
   ])(
     `does not throw`,

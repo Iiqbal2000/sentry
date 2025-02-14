@@ -7,9 +7,12 @@ import JsonForm from 'sentry/components/forms/jsonForm';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import organizationSecurityAndPrivacyGroups from 'sentry/data/forms/organizationSecurityAndPrivacyGroups';
 import {t} from 'sentry/locale';
-import {AuthProvider, Organization} from 'sentry/types';
+import ConfigStore from 'sentry/stores/configStore';
+import type {AuthProvider} from 'sentry/types/auth';
+import type {Organization} from 'sentry/types/organization';
 import useApi from 'sentry/utils/useApi';
 import useOrganization from 'sentry/utils/useOrganization';
+import DataSecrecy from 'sentry/views/settings/components/dataSecrecy/index';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 
 import {DataScrubbing} from '../components/dataScrubbing';
@@ -46,10 +49,16 @@ export default function OrganizationSecurityAndPrivacyContent() {
     updateOrganization(data);
   }
 
+  const {isSelfHosted} = ConfigStore.getState();
+  // only need data secrecy in saas
+  const showDataSecrecySettings =
+    organization.features.includes('data-secrecy') && !isSelfHosted;
+
   return (
     <Fragment>
       <SentryDocumentTitle title={title} orgSlug={organization.slug} />
       <SettingsPageHeader title={title} />
+
       <Form
         data-test-id="organization-settings-security-and-privacy"
         apiMethod="PUT"
@@ -65,10 +74,16 @@ export default function OrganizationSecurityAndPrivacyContent() {
           features={features}
           forms={organizationSecurityAndPrivacyGroups}
           disabled={!organization.access.includes('org:write')}
+          additionalFieldProps={{showDataSecrecySettings}}
         />
       </Form>
+
+      {showDataSecrecySettings && <DataSecrecy />}
+
       <DataScrubbing
-        additionalContext={t('These rules can be configured for each project.')}
+        additionalContext={t(
+          'Advanced data scrubbing rules can be configured at the organization level and will apply to all projects. Project-level rules can be configured in addition to organization-level rules.'
+        )}
         endpoint={endpoint}
         relayPiiConfig={relayPiiConfig}
         organization={organization}

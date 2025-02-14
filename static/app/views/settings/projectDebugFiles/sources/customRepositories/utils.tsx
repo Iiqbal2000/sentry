@@ -2,10 +2,10 @@ import forEach from 'lodash/forEach';
 import set from 'lodash/set';
 
 import {t} from 'sentry/locale';
-import {CustomRepo, CustomRepoType} from 'sentry/types/debugFiles';
+import type {CustomRepo} from 'sentry/types/debugFiles';
+import {CustomRepoType} from 'sentry/types/debugFiles';
 
 export const customRepoTypeLabel = {
-  [CustomRepoType.APP_STORE_CONNECT]: 'App Store Connect',
   [CustomRepoType.HTTP]: 'SymbolServer (HTTP)',
   [CustomRepoType.S3]: 'Amazon S3',
   [CustomRepoType.GCS]: 'Google Cloud Storage',
@@ -13,24 +13,16 @@ export const customRepoTypeLabel = {
 
 export const dropDownItems = [
   {
-    value: CustomRepoType.S3,
+    key: CustomRepoType.S3,
     label: customRepoTypeLabel[CustomRepoType.S3],
-    searchKey: t('aws amazon s3 bucket'),
   },
   {
-    value: CustomRepoType.GCS,
+    key: CustomRepoType.GCS,
     label: customRepoTypeLabel[CustomRepoType.GCS],
-    searchKey: t('gcs google cloud storage bucket'),
   },
   {
-    value: CustomRepoType.HTTP,
+    key: CustomRepoType.HTTP,
     label: customRepoTypeLabel[CustomRepoType.HTTP],
-    searchKey: t('http symbol server ssqp symstore symsrv'),
-  },
-  {
-    value: CustomRepoType.APP_STORE_CONNECT,
-    label: customRepoTypeLabel[CustomRepoType.APP_STORE_CONNECT],
-    searchKey: t('apple store connect itunes ios'),
   },
 ];
 
@@ -59,7 +51,7 @@ export function getRequestMessages(
 }
 
 export function expandKeys(obj: CustomRepo) {
-  const result = {};
+  const result: Record<string, string> = {};
   forEach(obj, (value, key) => {
     set(result, key.split('.'), value);
   });

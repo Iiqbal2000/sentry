@@ -1,4 +1,5 @@
-import {Client, Request} from 'sentry/api';
+import type {Request} from 'sentry/api';
+import {Client} from 'sentry/api';
 import {defined} from 'sentry/utils';
 import parseLinkHeader from 'sentry/utils/parseLinkHeader';
 
@@ -93,7 +94,7 @@ class CursorPoller {
         const hitsHeader = resp?.getResponseHeader('X-Hits') ?? null;
         const queryCount = defined(hitsHeader) ? parseInt(hitsHeader, 10) || 0 : 0;
         const links = parseLinkHeader(linksHeader);
-        this.setEndpoint(links.previous.href);
+        this.setEndpoint(links.previous!.href);
 
         this.options.success(data, {queryCount});
       },

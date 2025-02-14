@@ -1,9 +1,11 @@
 import {Component} from 'react';
-import {WithRouterProps} from 'react-router';
-import {Theme, withTheme} from '@emotion/react';
+import type {Theme} from '@emotion/react';
+import {withTheme} from '@emotion/react';
+import type {Location} from 'history';
 import round from 'lodash/round';
 
-import {AreaChart, AreaChartProps} from 'sentry/components/charts/areaChart';
+import type {AreaChartProps} from 'sentry/components/charts/areaChart';
+import {AreaChart} from 'sentry/components/charts/areaChart';
 import ChartZoom from 'sentry/components/charts/chartZoom';
 import StackedAreaChart from 'sentry/components/charts/stackedAreaChart';
 import {HeaderTitleLegend, HeaderValue} from 'sentry/components/charts/styles';
@@ -11,15 +13,11 @@ import TransitionChart from 'sentry/components/charts/transitionChart';
 import TransparentLoadingMask from 'sentry/components/charts/transparentLoadingMask';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {t} from 'sentry/locale';
-import type {PlatformKey} from 'sentry/types';
-import {
-  ReleaseComparisonChartType,
-  ReleaseProject,
-  ReleaseWithHealth,
-  SessionApiResponse,
-  SessionFieldWithOperation,
-  SessionStatus,
-} from 'sentry/types';
+import type {SessionApiResponse} from 'sentry/types/organization';
+import {SessionFieldWithOperation, SessionStatus} from 'sentry/types/organization';
+import type {PlatformKey} from 'sentry/types/project';
+import type {ReleaseProject, ReleaseWithHealth} from 'sentry/types/release';
+import {ReleaseComparisonChartType} from 'sentry/types/release';
 import {defined} from 'sentry/utils';
 import {
   getCountSeries,
@@ -44,6 +42,7 @@ type Props = {
   chartType: ReleaseComparisonChartType;
   diff: React.ReactNode;
   loading: boolean;
+  location: Location;
   platform: PlatformKey;
   project: ReleaseProject;
   release: ReleaseWithHealth;
@@ -55,7 +54,7 @@ type Props = {
   period?: string | null;
   start?: string;
   utc?: boolean;
-} & WithRouterProps;
+};
 
 class ReleaseSessionsChart extends Component<Props> {
   formatTooltipValue = (value: string | number | null, label?: string) => {
@@ -147,26 +146,26 @@ class ReleaseSessionsChart extends Component<Props> {
 
   getColors() {
     const {theme, chartType} = this.props;
-    const colors = theme.charts.getColorPalette(14);
+    const colors = theme.charts.getColorPalette(14) ?? [];
     switch (chartType) {
       case ReleaseComparisonChartType.CRASH_FREE_SESSIONS:
-        return [colors[0]];
+        return [colors[0]!];
       case ReleaseComparisonChartType.HEALTHY_SESSIONS:
         return [theme.green300];
       case ReleaseComparisonChartType.ABNORMAL_SESSIONS:
-        return [colors[15]];
+        return [colors[15]!];
       case ReleaseComparisonChartType.ERRORED_SESSIONS:
-        return [colors[12]];
+        return [colors[12]!];
       case ReleaseComparisonChartType.CRASHED_SESSIONS:
         return [theme.red300];
       case ReleaseComparisonChartType.CRASH_FREE_USERS:
-        return [colors[6]];
+        return [colors[6]!];
       case ReleaseComparisonChartType.HEALTHY_USERS:
         return [theme.green300];
       case ReleaseComparisonChartType.ABNORMAL_USERS:
-        return [colors[15]];
+        return [colors[15]!];
       case ReleaseComparisonChartType.ERRORED_USERS:
-        return [colors[12]];
+        return [colors[12]!];
       case ReleaseComparisonChartType.CRASHED_USERS:
         return [theme.red300];
       case ReleaseComparisonChartType.SESSION_COUNT:
@@ -551,7 +550,7 @@ class ReleaseSessionsChart extends Component<Props> {
   }
 
   render() {
-    const {chartType, router, period, start, end, utc, value, diff, loading, reloading} =
+    const {chartType, period, start, end, utc, value, diff, loading, reloading} =
       this.props;
 
     const Chart = this.getChart();
@@ -584,14 +583,7 @@ class ReleaseSessionsChart extends Component<Props> {
           {value} {diff}
         </HeaderValue>
 
-        <ChartZoom
-          router={router}
-          period={period}
-          utc={utc}
-          start={start}
-          end={end}
-          usePageDate
-        >
+        <ChartZoom period={period} utc={utc} start={start} end={end} usePageDate>
           {zoomRenderProps => (
             <Chart
               legend={legend}

@@ -1,13 +1,12 @@
-import type {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 import pick from 'lodash/pick';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
 import Access from 'sentry/components/acl/access';
 import {Alert} from 'sentry/components/alert';
 import SnoozeAlert from 'sentry/components/alerts/snoozeAlert';
-import Breadcrumbs from 'sentry/components/breadcrumbs';
+import {Breadcrumbs} from 'sentry/components/breadcrumbs';
 import {Button, LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import type {DateTimeObject} from 'sentry/components/charts/utils';
@@ -20,23 +19,20 @@ import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import PageFiltersContainer from 'sentry/components/organizations/pageFilters/container';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
-import {ChangeData} from 'sentry/components/organizations/timeRangeSelector';
-import PageTimeRangeSelector from 'sentry/components/pageTimeRangeSelector';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
+import type {ChangeData} from 'sentry/components/timeRangeSelector';
+import {TimeRangeSelector} from 'sentry/components/timeRangeSelector';
 import TimeSince from 'sentry/components/timeSince';
 import {IconCopy, IconEdit} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {DateString} from 'sentry/types';
 import type {IssueAlertRule} from 'sentry/types/alerts';
 import {RuleActionsCategories} from 'sentry/types/alerts';
+import type {DateString} from 'sentry/types/core';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import {
-  ApiQueryKey,
-  setApiQueryData,
-  useApiQuery,
-  useQueryClient,
-} from 'sentry/utils/queryClient';
+import type {ApiQueryKey} from 'sentry/utils/queryClient';
+import {setApiQueryData, useApiQuery, useQueryClient} from 'sentry/utils/queryClient';
 import useRouteAnalyticsEventNames from 'sentry/utils/routeAnalytics/useRouteAnalyticsEventNames';
 import useRouteAnalyticsParams from 'sentry/utils/routeAnalytics/useRouteAnalyticsParams';
 import useApi from 'sentry/utils/useApi';
@@ -51,7 +47,7 @@ import AlertRuleIssuesList from './issuesList';
 import Sidebar from './sidebar';
 
 interface AlertRuleDetailsProps
-  extends RouteComponentProps<{projectId: string; ruleId: string}, {}> {}
+  extends RouteComponentProps<{projectId: string; ruleId: string}> {}
 
 const PAGE_QUERY_PARAMS = [
   'pageStatsPeriod',
@@ -83,7 +79,7 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
   const {projectId: projectSlug, ruleId} = params;
   const {
     data: rule,
-    isLoading,
+    isPending,
     isError,
   } = useApiQuery<IssueAlertRule>(
     getIssueAlertDetailsQueryKey({orgSlug: organization.slug, projectSlug, ruleId}),
@@ -243,7 +239,7 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
     });
   }
 
-  if (isLoading || projectIsLoading) {
+  if (isPending || projectIsLoading) {
     return (
       <Layout.Body>
         <Layout.Main fullWidth>
@@ -278,7 +274,7 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
     query: {
       project: project.slug,
       duplicateRuleId: rule.id,
-      createFromDuplicate: true,
+      createFromDuplicate: 'true',
       referrer: 'issue_rule_details',
     },
   };
@@ -386,8 +382,7 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
                 to: `/organizations/${organization.slug}/alerts/rules/`,
               },
               {
-                label: rule.name,
-                to: null,
+                label: t('Issue Alert'),
               },
             ]}
           />
@@ -425,7 +420,7 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
             >
               {t('Duplicate')}
             </LinkButton>
-            <Button
+            <LinkButton
               size="sm"
               icon={<IconEdit />}
               to={`/organizations/${organization.slug}/alerts/rules/${projectSlug}/${ruleId}/`}
@@ -437,7 +432,7 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
               }
             >
               {rule.status === 'disabled' ? t('Edit to enable') : t('Edit Rule')}
-            </Button>
+            </LinkButton>
           </ButtonBar>
         </Layout.HeaderActions>
       </Layout.Header>
@@ -446,7 +441,7 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
           {renderIncompatibleAlert()}
           {renderDisabledAlertBanner()}
           {isSnoozed && (
-            <Alert showIcon>
+            <Alert type="info" showIcon>
               {ruleActionCategory === RuleActionsCategories.NO_DEFAULT
                 ? tct(
                     "[creator] muted this alert so these notifications won't be sent in the future.",
@@ -461,13 +456,12 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
                   )}
             </Alert>
           )}
-          <StyledPageTimeRangeSelector
-            organization={organization}
+          <StyledTimeRangeSelector
             relative={period ?? ''}
             start={start ?? null}
             end={end ?? null}
             utc={utc ?? null}
-            onUpdate={handleUpdateDatetime}
+            onChange={handleUpdateDatetime}
           />
           <ErrorBoundary>
             <IssueAlertDetailsChart
@@ -480,7 +474,6 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
             />
           </ErrorBoundary>
           <AlertRuleIssuesList
-            organization={organization}
             project={project}
             rule={rule}
             period={period ?? ''}
@@ -500,7 +493,7 @@ function AlertRuleDetails({params, location, router}: AlertRuleDetailsProps) {
 
 export default AlertRuleDetails;
 
-const StyledPageTimeRangeSelector = styled(PageTimeRangeSelector)`
+const StyledTimeRangeSelector = styled(TimeRangeSelector)`
   margin-bottom: ${space(2)};
 `;
 
@@ -509,5 +502,5 @@ const StyledLoadingError = styled(LoadingError)`
 `;
 
 const BoldButton = styled(Button)`
-  font-weight: 600;
+  font-weight: ${p => p.theme.fontWeightBold};
 `;

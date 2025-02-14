@@ -1,4 +1,4 @@
-import {JsonFormObject} from 'sentry/components/forms/types';
+import type {JsonFormObject} from 'sentry/components/forms/types';
 import {t} from 'sentry/locale';
 import {convertMultilineFieldValue, extractMultilineFields} from 'sentry/utils';
 import {
@@ -27,21 +27,6 @@ const formGroups: JsonFormObject[] = [
           ),
           false: t(
             'Are you sure you want to allow users to access your organization without having two-factor authentication enabled?'
-          ),
-        },
-      },
-      {
-        name: 'requireEmailVerification',
-        type: 'boolean',
-        label: t('Require Email Verification'),
-        help: t('Require and enforce email address verification for all members'),
-        visible: ({features}) => features.has('required-email-verification'),
-        confirm: {
-          true: t(
-            'This will remove all members whose email addresses are not verified from your organization. It will also send them an email to verify their address and reinstate their access and settings. Do you want to continue?'
-          ),
-          false: t(
-            'Are you sure you want to allow users to access your organization without verifying their email address?'
           ),
         },
       },
@@ -83,9 +68,9 @@ const formGroups: JsonFormObject[] = [
       {
         name: 'storeCrashReports',
         type: 'select',
-        label: t('Store Native Crash Reports'),
+        label: t('Store Minidumps As Attachments'),
         help: t(
-          'Store native crash reports such as Minidumps for improved processing and download in issue details'
+          'Store minidumps as attachments for improved processing and download in issue details.'
         ),
         visible: ({features}) => features.has('event-attachments'),
         // HACK: some organization can have limit of stored crash reports a number that's not in the options (legacy reasons),

@@ -1,7 +1,9 @@
 import logging
+import re
 from typing import Any
 
 from sentry.debug_files.artifact_bundles import maybe_renew_artifact_bundles_from_processing
+from sentry.lang.javascript.utils import JAVASCRIPT_PLATFORMS
 from sentry.lang.native.error import SymbolicationFailed, write_error
 from sentry.lang.native.symbolicator import Symbolicator
 from sentry.models.eventerror import EventError
@@ -10,6 +12,11 @@ from sentry.utils import metrics
 from sentry.utils.safe import get_path
 
 logger = logging.getLogger(__name__)
+
+# Matches "app:", "webpack:",
+# "http:", "https:",
+# "x:" where x is a single ASCII letter, or "/".
+NON_BUILTIN_PATH_REGEX = re.compile(r"^((app|webpack|[a-zA-Z]|https?):|/)")
 
 
 def _merge_frame_context(new_frame, symbolicated):
@@ -50,6 +57,8 @@ def _merge_frame(new_frame, symbolicated):
         frame_meta = new_frame.setdefault("data", {})
         if data_sourcemap := data.get("sourcemap"):
             frame_meta["sourcemap"] = data_sourcemap
+        if data_sourcemap_origin := data.get("sourcemap_origin"):
+            frame_meta["sourcemap_origin"] = data_sourcemap_origin
         if data_resolved_with := data.get("resolved_with"):
             frame_meta["resolved_with"] = data_resolved_with
         if data.get("symbolicated") is not None:
@@ -164,6 +173,11 @@ def map_symbolicator_process_js_errors(errors):
 
 def _handles_frame(frame, data):
     abs_path = frame.get("abs_path")
+    platform = frame.get("platform") or data.get("platform", "unknown")
+
+    # Skip non-JS frames
+    if platform not in JAVASCRIPT_PLATFORMS:
+        return False
 
     # Skip frames without an `abs_path` or line number
     if not abs_path or not frame.get("lineno"):
@@ -174,7 +188,7 @@ def _handles_frame(frame, data):
         return False
 
     # Skip builtin node modules
-    if _is_built_in(abs_path, data.get("platform")):
+    if _is_built_in(abs_path, platform):
         return False
 
     return True
@@ -185,7 +199,7 @@ def _is_native_frame(abs_path):
 
 
 def _is_built_in(abs_path, platform):
-    return platform == "node" and not abs_path.startswith(("/", "app:", "webpack:"))
+    return platform == "node" and not NON_BUILTIN_PATH_REGEX.match(abs_path)
 
 
 # We want to make sure that some specific frames are always marked as non-inapp prior to going into grouping.
@@ -198,7 +212,7 @@ def _normalize_nonhandled_frame(frame, data):
     return frame
 
 
-FRAME_FIELDS = ("abs_path", "lineno", "colno", "function")
+FRAME_FIELDS = ("platform", "abs_path", "lineno", "colno", "function")
 
 
 def _normalize_frame(raw_frame: Any) -> dict:
@@ -231,7 +245,9 @@ def process_js_stacktraces(symbolicator: Symbolicator, data: Any) -> Any:
         metrics.incr("sourcemaps.symbolicator.events.skipped")
         return
 
+    metrics.incr("process.javascript.symbolicate.request")
     response = symbolicator.process_js(
+        platform=data.get("platform"),
         stacktraces=stacktraces,
         modules=modules,
         release=data.get("release"),
@@ -273,7 +289,7 @@ def process_js_stacktraces(symbolicator: Symbolicator, data: Any) -> Any:
             merged_context_frame = _merge_frame_context(sinfo_frame, raw_frame)
             new_raw_frames.append(merged_context_frame)
 
-            merged_frame = _merge_frame(merged_context_frame, complete_frame)
+            merged_frame = _merge_frame(sinfo_frame, complete_frame)
             new_frames.append(merged_frame)
 
         sinfo.stacktrace["frames"] = new_frames

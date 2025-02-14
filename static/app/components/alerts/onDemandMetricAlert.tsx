@@ -1,12 +1,12 @@
-import React from 'react';
+import type React from 'react';
 import styled from '@emotion/styled';
 
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/alert';
 import {Button} from 'sentry/components/button';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconClose, IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Color} from 'sentry/utils/theme';
+import type {Color} from 'sentry/utils/theme';
 import useDismissAlert from 'sentry/utils/useDismissAlert';
 
 const EXTRAPOLATED_AREA_STRIPE_IMG =
@@ -52,13 +52,13 @@ export function OnDemandMetricAlert({
   }
 
   return (
-    <InfoAlert showIcon>
+    <InfoAlert type="info" showIcon>
       {message}
       {dismissable && (
         <DismissButton
           priority="link"
           size="sm"
-          icon={<IconClose size="xs" />}
+          icon={<IconClose />}
           aria-label={t('Close Alert')}
           onClick={dismiss}
         />
@@ -67,6 +67,7 @@ export function OnDemandMetricAlert({
   );
 }
 
+// @TODO(jonasbadalic): Why cant this just be Alert type=info?
 const InfoAlert = styled(Alert)`
   display: flex;
   align-items: flex-start;

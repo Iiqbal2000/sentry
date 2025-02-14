@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from time import time
-from typing import Any, Collection, Dict, Iterable, Mapping, Optional, Sequence, cast
+from typing import Any, cast
 from urllib.parse import urlencode, urlparse
 
 from django.conf import settings
@@ -12,22 +13,29 @@ from django.contrib.auth.backends import ModelBackend
 from django.http.request import HttpRequest
 from django.urls import resolve, reverse
 from django.utils.http import url_has_allowed_host_and_scheme
+from rest_framework.request import Request
 
 from sentry import options
+from sentry.hybridcloud.models.outbox import outbox_context
 from sentry.models.organization import Organization
-from sentry.models.user import User
-from sentry.services.hybrid_cloud.organization import RpcOrganization
+from sentry.organizations.absolute_url import generate_organization_url
+from sentry.organizations.services.organization import RpcOrganization
+from sentry.users.models.user import User
+from sentry.users.services.user import RpcUser
+from sentry.users.services.user.service import user_service
 from sentry.utils import metrics
 from sentry.utils.http import absolute_uri
 
 logger = logging.getLogger("sentry.auth")
 
-_LOGIN_URL: Optional[str] = None
+_LOGIN_URL: str | None = None
 
 MFA_SESSION_KEY = "mfa"
 
+DISABLE_SSO_CHECK_FOR_LOCAL_DEV = getattr(settings, "DISABLE_SSO_CHECK_FOR_LOCAL_DEV", False)
 
-def _sso_expiry_from_env(seconds: Optional[str]) -> timedelta:
+
+def _sso_expiry_from_env(seconds: str | None) -> timedelta:
     if seconds is None:
         return timedelta(days=7)
     return timedelta(seconds=int(seconds))
@@ -49,7 +57,7 @@ class SsoSession:
         self.authenticated_at_time = time
         self.session_key = self.django_session_key(organization_id)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {self.SSO_LOGIN_TIMESTAMP: self.authenticated_at_time.timestamp()}
 
     @classmethod
@@ -60,7 +68,6 @@ class SsoSession:
     def from_django_session_value(
         cls, organization_id: int, session_value: Mapping[str, Any]
     ) -> SsoSession:
-
         return cls(
             organization_id,
             datetime.fromtimestamp(session_value[cls.SSO_LOGIN_TIMESTAMP], tz=timezone.utc),
@@ -89,7 +96,7 @@ def get_auth_providers() -> Collection[str]:
     ]
 
 
-def get_pending_2fa_user(request: HttpRequest) -> Optional[User]:
+def get_pending_2fa_user(request: HttpRequest) -> User | None:
     rv = request.session.get("_pending_2fa")
     if rv is None:
         return None
@@ -129,7 +136,7 @@ def get_login_url(reset: bool = False) -> str:
 
 
 def initiate_login(
-    request: HttpRequest, next_url: Optional[str] = None, referrer: Optional[str] = None
+    request: HttpRequest, next_url: str | None = None, referrer: str | None = None
 ) -> None:
     """
     initiate_login simply clears session cache
@@ -147,9 +154,7 @@ def initiate_login(
         request.session["_referrer"] = referrer
 
 
-def get_org_redirect_url(
-    request: HttpRequest, active_organization: Optional[RpcOrganization]
-) -> str:
+def get_org_redirect_url(request: HttpRequest, active_organization: RpcOrganization | None) -> str:
     from sentry import features
 
     # TODO(dcramer): deal with case when the user cannot create orgs
@@ -160,7 +165,7 @@ def get_org_redirect_url(
     return "/organizations/new/"
 
 
-def _get_login_redirect(request: HttpRequest, default: Optional[str] = None) -> str:
+def _get_login_redirect(request: HttpRequest, default: str | None = None) -> str:
     if default is None:
         default = get_login_url()
 
@@ -185,9 +190,7 @@ def _get_login_redirect(request: HttpRequest, default: Optional[str] = None) -> 
     return cast(str, login_url)
 
 
-def get_login_redirect(request: HttpRequest, default: Optional[str] = None) -> str:
-    from sentry.api.utils import generate_organization_url
-
+def get_login_redirect(request: HttpRequest, default: str | None = None) -> str:
     login_redirect = _get_login_redirect(request, default)
     url_prefix = None
     if hasattr(request, "subdomain") and request.subdomain:
@@ -196,7 +199,7 @@ def get_login_redirect(request: HttpRequest, default: Optional[str] = None) -> s
     return login_redirect
 
 
-def is_valid_redirect(url: str, allowed_hosts: Optional[Iterable[str]] = None) -> bool:
+def is_valid_redirect(url: str, allowed_hosts: Iterable[str] | None = None) -> bool:
     if not url:
         return False
     if url.startswith(get_login_url()):
@@ -232,6 +235,9 @@ def has_completed_sso(request: HttpRequest, organization_id: int) -> bool:
     """
     look for the org id under the sso session key, and check that the timestamp isn't past our expiry limit
     """
+    if DISABLE_SSO_CHECK_FOR_LOCAL_DEV:
+        return True
+
     sso_session_in_request = request.session.get(
         SsoSession.django_session_key(organization_id), None
     )
@@ -254,7 +260,7 @@ def has_completed_sso(request: HttpRequest, organization_id: int) -> bool:
 
 
 def find_users(
-    username: str, with_valid_password: bool = True, is_active: Optional[bool] = None
+    username: str, with_valid_password: bool = True, is_active: bool | None = None
 ) -> Sequence[User]:
     """
     Return a list of users that match a username
@@ -280,9 +286,9 @@ def find_users(
 def login(
     request: HttpRequest,
     user: User,
-    passed_2fa: Optional[bool] = None,
-    after_2fa: Optional[str] = None,
-    organization_id: Optional[int] = None,
+    passed_2fa: bool | None = None,
+    after_2fa: str | None = None,
+    organization_id: int | None = None,
     source: Any = None,
 ) -> bool:
     """
@@ -341,7 +347,11 @@ def login(
         user.backend = settings.AUTHENTICATION_BACKENDS[0]
     if organization_id:
         mark_sso_complete(request, organization_id)
-    _login(request, user)
+
+    # Do not require flush the user during login -- the mutation here is just  `last_login` update which isn't
+    # critical to flush.
+    with outbox_context(flush=False):
+        _login(request, user)
 
     log_auth_success(request, user.username, organization_id, source)
     return True
@@ -350,7 +360,7 @@ def login(
 def log_auth_success(
     request: HttpRequest,
     username: str,
-    organization_id: Optional[int] = None,
+    organization_id: int | None = None,
     source: Any = None,
 ) -> None:
     logger.info(
@@ -364,7 +374,7 @@ def log_auth_success(
     )
 
 
-def log_auth_failure(request: HttpRequest, username: Optional[str] = None) -> None:
+def log_auth_failure(request: HttpRequest, username: str | None = None) -> None:
     logger.info(
         "user.auth.fail", extra={"ip_address": request.META["REMOTE_ADDR"], "username": username}
     )
@@ -401,8 +411,8 @@ class EmailAuthBackend(ModelBackend):
     """
 
     def authenticate(
-        self, request: HttpRequest, username: str, password: Optional[str] = None
-    ) -> Optional[User]:
+        self, request: HttpRequest, username: str, password: str | None = None
+    ) -> User | None:
         users = find_users(username)
         if users:
             for user in users:
@@ -422,6 +432,12 @@ class EmailAuthBackend(ModelBackend):
     def user_can_authenticate(self, user: User) -> bool:
         return True
 
+    def get_user(self, user_id: int) -> RpcUser | None:
+        user = user_service.get_user(user_id=user_id)
+        if user:
+            return user
+        return None
+
 
 def construct_link_with_query(path: str, query_params: dict[str, str]) -> str:
     """
@@ -432,3 +448,9 @@ def construct_link_with_query(path: str, query_params: dict[str, str]) -> str:
     if query_string:
         redirect_uri += f"?{query_string}"
     return redirect_uri
+
+
+# Used to create a HttpRequest that's guaranteed to have an authenticated user
+# Ref: https://github.com/typeddjango/django-stubs?tab=readme-ov-file#how-can-i-create-a-httprequest-thats-guaranteed-to-have-an-authenticated-user
+class AuthenticatedHttpRequest(Request):
+    user: User

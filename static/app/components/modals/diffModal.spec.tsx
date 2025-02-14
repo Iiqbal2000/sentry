@@ -1,4 +1,6 @@
+import type {PropsWithChildren} from 'react';
 import styled from '@emotion/styled';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {render} from 'sentry-test/reactTestingLibrary';
 
@@ -6,7 +8,7 @@ import DiffModal from 'sentry/components/modals/diffModal';
 
 describe('DiffModal', function () {
   it('renders', function () {
-    const project = TestStubs.Project();
+    const project = ProjectFixture();
     MockApiClient.addMockResponse({
       url: '/issues/123/events/latest/',
       body: {
@@ -27,8 +29,12 @@ describe('DiffModal', function () {
       url: '/projects/123/project-slug/events/789/',
       body: [],
     });
+    MockApiClient.addMockResponse({
+      url: `/projects/org-slug/project-slug/`,
+      body: {features: []},
+    });
 
-    const styledWrapper = styled(c => c.children);
+    const styledWrapper = styled((c: PropsWithChildren) => c.children);
 
     render(
       <DiffModal
@@ -41,6 +47,15 @@ describe('DiffModal', function () {
         Header={c => <span>{c.children}</span>}
         CloseButton={({children}) => <div>{children}</div>}
         closeModal={() => {}}
+        location={{
+          pathname: '',
+          query: {cursor: '0:1:1', statsPeriod: '14d'},
+          search: '',
+          hash: '',
+          state: null,
+          action: 'PUSH',
+          key: 'default',
+        }}
       />
     );
   });

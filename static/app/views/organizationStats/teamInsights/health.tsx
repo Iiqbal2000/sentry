@@ -1,5 +1,4 @@
 import {Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import * as Layout from 'sentry/components/layouts/thirds';
@@ -8,7 +7,8 @@ import LoadingIndicator from 'sentry/components/loadingIndicator';
 import NoProjectMessage from 'sentry/components/noProjectMessage';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import {TeamWithProjects} from 'sentry/types';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {TeamWithProjects} from 'sentry/types/project';
 import localStorage from 'sentry/utils/localStorage';
 import useRouteAnalyticsEventNames from 'sentry/utils/routeAnalytics/useRouteAnalyticsEventNames';
 import useOrganization from 'sentry/utils/useOrganization';
@@ -24,7 +24,7 @@ import TeamReleases from './teamReleases';
 import TeamStability from './teamStability';
 import {dataDatetime} from './utils';
 
-type Props = RouteComponentProps<{}, {}>;
+type Props = RouteComponentProps;
 
 function TeamStatsHealth({location, router}: Props) {
   const organization = useOrganization();

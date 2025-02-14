@@ -1,14 +1,15 @@
-import {browserHistory} from 'react-router';
 import {useTheme} from '@emotion/react';
 import type {LegendComponentOption, LineSeriesOption} from 'echarts';
 
 import ChartZoom from 'sentry/components/charts/chartZoom';
-import {LineChart, LineChartProps} from 'sentry/components/charts/lineChart';
+import type {LineChartProps} from 'sentry/components/charts/lineChart';
+import {LineChart} from 'sentry/components/charts/lineChart';
 import TransitionChart from 'sentry/components/charts/transitionChart';
 import TransparentLoadingMask from 'sentry/components/charts/transparentLoadingMask';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
-import {EventsStatsData, OrganizationSummary, Project} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {OrganizationSummary} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
 import {
   axisLabelFormatter,
@@ -19,24 +20,24 @@ import {aggregateOutputType} from 'sentry/utils/discover/fields';
 import getDynamicText from 'sentry/utils/getDynamicText';
 import {decodeList} from 'sentry/utils/queryString';
 import {useLocation} from 'sentry/utils/useLocation';
-import useRouter from 'sentry/utils/useRouter';
-import {getIntervalLine} from 'sentry/views/performance/utils';
+import generateTrendFunctionAsString from 'sentry/views/performance/trends/utils/generateTrendFunctionAsString';
+import transformEventStats from 'sentry/views/performance/trends/utils/transformEventStats';
+import {getIntervalLine} from 'sentry/views/performance/utils/getIntervalLine';
 
-import {ViewProps} from '../types';
+import type {ViewProps} from '../types';
 
-import {
+import type {
   NormalizedTrendsTransaction,
   TrendChangeType,
   TrendFunctionField,
   TrendsStats,
 } from './types';
 import {
-  generateTrendFunctionAsString,
   getCurrentTrendFunction,
   getCurrentTrendParameter,
   getUnselectedSeries,
+  makeTrendToColorMapping,
   transformEventStatsSmoothed,
-  trendToColor,
 } from './utils';
 
 type Props = ViewProps & {
@@ -55,21 +56,6 @@ type Props = ViewProps & {
   transaction?: NormalizedTrendsTransaction;
   trendFunctionField?: TrendFunctionField;
 };
-
-export function transformEventStats(
-  data: EventsStatsData,
-  seriesName?: string
-): Series[] {
-  return [
-    {
-      seriesName: seriesName || 'Current',
-      data: data.map(([timestamp, countsForTimestamp]) => ({
-        name: timestamp * 1000,
-        value: countsForTimestamp.reduce((acc, {count}) => acc + count, 0),
-      })),
-    },
-  ];
-}
 
 function getLegend(trendFunction: string): LegendComponentOption {
   return {
@@ -113,10 +99,9 @@ export function Chart({
   applyRegressionFormatToInterval = false,
 }: Props) {
   const location = useLocation();
-  const router = useRouter();
   const theme = useTheme();
 
-  const handleLegendSelectChanged = legendChange => {
+  const handleLegendSelectChanged = (legendChange: any) => {
     const {selected} = legendChange;
     const unselected = Object.keys(selected).filter(key => !selected[key]);
 
@@ -137,7 +122,10 @@ export function Chart({
   const derivedTrendChangeType = organization.features.includes('performance-new-trends')
     ? transaction?.change
     : trendChangeType;
+
+  const trendToColor = makeTrendToColorMapping(theme);
   const lineColor =
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     trendToColor[neutralColor ? 'neutral' : derivedTrendChangeType || trendChangeType];
 
   const events =
@@ -165,6 +153,7 @@ export function Chart({
   const seriesSelection = decodeList(
     location.query[getUnselectedSeries(trendChangeType)]
   ).reduce((selection, metric) => {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     selection[metric] = false;
     return selection;
   }, {});
@@ -236,13 +225,7 @@ export function Chart({
   };
 
   return (
-    <ChartZoom
-      router={router}
-      period={statsPeriod}
-      start={start}
-      end={end}
-      utc={utc === 'true'}
-    >
+    <ChartZoom period={statsPeriod} start={start} end={end} utc={utc === 'true'}>
       {zoomRenderProps => {
         return (
           <TransitionChart loading={loading} reloading={reloading}>

@@ -208,3 +208,19 @@ class MetricAlertExamples:
             response_only=True,
         )
     ]
+
+    GET_METRIC_ALERT_ANOMALIES = [
+        OpenApiExample(
+            "Fetch a list of anomalies for a metric alert rule",
+            value=[
+                {
+                    "timestamp": 0.1,
+                    "value": 100.0,
+                    "anomaly": {
+                        "anomaly_type": "anomaly_higher_confidence",
+                        "anomaly_value": 100,
+                    },
+                }
+            ],
+        )
+    ]

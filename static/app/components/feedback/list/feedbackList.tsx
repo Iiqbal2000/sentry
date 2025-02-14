@@ -1,22 +1,26 @@
-import {Fragment, useEffect, useMemo, useRef} from 'react';
+import {Fragment, useMemo, useRef} from 'react';
+import type {ListRowProps} from 'react-virtualized';
 import {
   AutoSizer,
   CellMeasurer,
   InfiniteLoader,
   List as ReactVirtualizedList,
-  ListRowProps,
 } from 'react-virtualized';
 import styled from '@emotion/styled';
 
-import {useInfiniteFeedbackListData} from 'sentry/components/feedback/feedbackDataContext';
+import waitingForEventImg from 'sentry-images/spot/waiting-for-event.svg';
+
+import ErrorBoundary from 'sentry/components/errorBoundary';
+import FeedbackListHeader from 'sentry/components/feedback/list/feedbackListHeader';
 import FeedbackListItem from 'sentry/components/feedback/list/feedbackListItem';
+import useListItemCheckboxState from 'sentry/components/feedback/list/useListItemCheckboxState';
+import useFeedbackQueryKeys from 'sentry/components/feedback/useFeedbackQueryKeys';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import PanelItem from 'sentry/components/panels/panelItem';
 import {Tooltip} from 'sentry/components/tooltip';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import useUrlParams from 'sentry/utils/useUrlParams';
-import NoRowRenderer from 'sentry/views/replays/detail/noRowRenderer';
+import useFetchInfiniteListData from 'sentry/utils/api/useFetchInfiniteListData';
+import type {FeedbackIssueListItem} from 'sentry/utils/feedback/types';
 import useVirtualizedList from 'sentry/views/replays/detail/useVirtualizedList';
 
 // Ensure this object is created once as it is an input to
@@ -26,34 +30,46 @@ const cellMeasurer = {
   minHeight: 24,
 };
 
-export default function FeedbackList() {
-  const {
-    countLoadedRows,
-    getRow,
-    isFetchingNext,
-    isFetchingPrev,
-    isRowLoaded,
-    loadMoreRows,
-    queryView,
-    totalHits,
-  } = useInfiniteFeedbackListData();
+function NoFeedback({title, subtitle}: {subtitle: string; title: string}) {
+  return (
+    <Wrapper>
+      <img src={waitingForEventImg} alt="No feedback found spot illustration" />
+      <EmptyMessage>{title}</EmptyMessage>
+      <p>{subtitle}</p>
+    </Wrapper>
+  );
+}
 
-  const {setParamValue} = useUrlParams('query');
-  const clearSearchTerm = () => setParamValue('');
+export default function FeedbackList() {
+  const {listQueryKey} = useFeedbackQueryKeys();
+  const {
+    isFetchingNextPage,
+    isFetchingPreviousPage,
+    isLoading, // If anything is loaded yet
+    getRow,
+    isRowLoaded,
+    issues,
+    loadMoreRows,
+    hits,
+  } = useFetchInfiniteListData<FeedbackIssueListItem>({
+    queryKey: listQueryKey ?? [''],
+    uniqueField: 'id',
+    enabled: Boolean(listQueryKey),
+  });
+
+  const checkboxState = useListItemCheckboxState({
+    hits,
+    knownIds: issues.map(issue => issue.id),
+  });
 
   const listRef = useRef<ReactVirtualizedList>(null);
 
-  const hasRows = totalHits === undefined ? true : totalHits > 0;
-  const deps = useMemo(() => [queryView, hasRows], [queryView, hasRows]);
+  const deps = useMemo(() => [isLoading, issues.length], [isLoading, issues.length]);
   const {cache, updateList} = useVirtualizedList({
     cellMeasurer,
     ref: listRef,
     deps,
   });
-
-  useEffect(() => {
-    updateList();
-  }, [updateList, countLoadedRows]);
 
   const renderRow = ({index, key, style, parent}: ListRowProps) => {
     const item = getRow({index});
@@ -62,26 +78,29 @@ export default function FeedbackList() {
     }
 
     return (
-      <CellMeasurer
-        cache={cache}
-        columnIndex={0}
-        key={key}
-        parent={parent}
-        rowIndex={index}
-      >
-        <FeedbackListItem feedbackItem={item} style={style} />
-      </CellMeasurer>
+      <ErrorBoundary mini key={key}>
+        <CellMeasurer cache={cache} columnIndex={0} parent={parent} rowIndex={index}>
+          <FeedbackListItem
+            feedbackItem={item}
+            isSelected={checkboxState.isSelected(item.id)}
+            onSelect={() => {
+              checkboxState.toggleSelected(item.id);
+            }}
+            style={style}
+          />
+        </CellMeasurer>
+      </ErrorBoundary>
     );
   };
 
   return (
     <Fragment>
-      <HeaderPanelItem> </HeaderPanelItem>
-      <OverflowPanelItem noPadding>
+      <FeedbackListHeader {...checkboxState} />
+      <FeedbackListItems>
         <InfiniteLoader
           isRowLoaded={isRowLoaded}
           loadMoreRows={loadMoreRows}
-          rowCount={totalHits}
+          rowCount={hits}
         >
           {({onRowsRendered, registerChild}) => (
             <AutoSizer onResize={updateList}>
@@ -90,23 +109,23 @@ export default function FeedbackList() {
                   deferredMeasurementCache={cache}
                   height={height}
                   noRowsRenderer={() =>
-                    isFetchingNext || isFetchingPrev ? (
+                    isLoading ? (
                       <LoadingIndicator />
                     ) : (
-                      <NoRowRenderer
-                        unfilteredItems={totalHits === undefined ? [undefined] : []}
-                        clearSearchTerm={clearSearchTerm}
-                      >
-                        {t('No feedback received')}
-                      </NoRowRenderer>
+                      <NoFeedback
+                        title={t('Inbox Zero')}
+                        subtitle={t('You have two options: take a nap or be productive.')}
+                      />
                     )
                   }
                   onRowsRendered={onRowsRendered}
                   overscanRowCount={5}
                   ref={e => {
+                    // @ts-expect-error TS(2540): Cannot assign to 'current' because it is a read-on... Remove this comment to see the full error message
+                    listRef.current = e;
                     registerChild(e);
                   }}
-                  rowCount={totalHits === undefined ? 1 : totalHits}
+                  rowCount={issues.length}
                   rowHeight={cache.rowHeight}
                   rowRenderer={renderRow}
                   width={width}
@@ -116,36 +135,56 @@ export default function FeedbackList() {
           )}
         </InfiniteLoader>
         <FloatingContainer style={{top: '2px'}}>
-          {isFetchingPrev ? (
+          {isFetchingPreviousPage ? (
             <Tooltip title={t('Loading more feedback...')}>
               <LoadingIndicator mini />
             </Tooltip>
           ) : null}
         </FloatingContainer>
         <FloatingContainer style={{bottom: '2px'}}>
-          {isFetchingNext ? (
+          {isFetchingNextPage ? (
             <Tooltip title={t('Loading more feedback...')}>
               <LoadingIndicator mini />
             </Tooltip>
           ) : null}
         </FloatingContainer>
-      </OverflowPanelItem>
+      </FeedbackListItems>
     </Fragment>
   );
 }
 
-const HeaderPanelItem = styled(PanelItem)`
+const FeedbackListItems = styled('div')`
   display: grid;
-  padding: ${space(1)} ${space(2)};
-`;
-
-const OverflowPanelItem = styled(PanelItem)`
-  display: grid;
-  overflow: scroll;
   flex-grow: 1;
+  min-height: 300px;
 `;
 
 const FloatingContainer = styled('div')`
   position: absolute;
   justify-self: center;
+`;
+
+const Wrapper = styled('div')`
+  display: flex;
+  padding: ${space(4)} ${space(4)};
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: ${p => p.theme.subText};
+
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
+    font-size: ${p => p.theme.fontSizeMedium};
+  }
+  position: relative;
+  top: 50%;
+  transform: translateY(-50%);
+`;
+
+const EmptyMessage = styled('div')`
+  font-weight: ${p => p.theme.fontWeightBold};
+  color: ${p => p.theme.gray400};
+
+  @media (min-width: ${p => p.theme.breakpoints.small}) {
+    font-size: ${p => p.theme.fontSizeExtraLarge};
+  }
 `;

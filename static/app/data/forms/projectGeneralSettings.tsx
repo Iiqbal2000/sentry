@@ -1,8 +1,9 @@
-import {createFilter} from 'react-select';
 import styled from '@emotion/styled';
 import {PlatformIcon} from 'platformicons';
 
-import {Field} from 'sentry/components/forms/types';
+import {hasEveryAccess} from 'sentry/components/acl/access';
+import {createFilter} from 'sentry/components/forms/controls/reactSelectWrapper';
+import type {Field} from 'sentry/components/forms/types';
 import platforms from 'sentry/data/platforms';
 import {t, tct, tn} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
@@ -64,8 +65,10 @@ export const fields: Record<string, Field> = {
     },
 
     saveOnBlur: false,
-    saveMessageAlertType: 'info',
-    saveMessage: t('You will be redirected to the new project slug after saving'),
+    saveMessageAlertType: 'warning',
+    saveMessage: t(
+      "Changing a project's name will also change the project slug. This can break your build scripts! Please proceed carefully."
+    ),
   },
 
   platform: {
@@ -89,7 +92,6 @@ export const fields: Record<string, Field> = {
       },
     }),
   },
-
   subjectPrefix: {
     name: 'subjectPrefix',
     type: 'string',
@@ -148,10 +150,11 @@ export const fields: Record<string, Field> = {
     name: 'scrapeJavaScript',
     type: 'boolean',
     // if this is off for the organization, it cannot be enabled for the project
-    disabled: ({organization, name}) => !organization[name],
+    disabled: ({organization, project, name}) =>
+      !organization[name] || !hasEveryAccess(['project:write'], {organization, project}),
     disabledReason: ORG_DISABLED_REASON,
     // `props` are the props given to FormField
-    setValue: (val, props) => props.organization && props.organization[props.name] && val,
+    setValue: (val, props) => props.organization?.[props.name] && val,
     label: t('Enable JavaScript source fetching'),
     help: t('Allow Sentry to scrape missing JavaScript source context when possible'),
   },

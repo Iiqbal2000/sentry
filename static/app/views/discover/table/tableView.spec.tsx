@@ -1,18 +1,22 @@
-import {browserHistory} from 'react-router';
-import {Organization} from 'sentry-fixture/organization';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {act, render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary';
 
 import ProjectsStore from 'sentry/stores/projectsStore';
 import TagStore from 'sentry/stores/tagStore';
+import type {TableData} from 'sentry/utils/discover/discoverQuery';
 import EventView from 'sentry/utils/discover/eventView';
+import {SavedQueryDatasets} from 'sentry/utils/discover/types';
 import TableView from 'sentry/views/discover/table/tableView';
 
 describe('TableView > CellActions', function () {
-  let initialData, rows, onChangeShowTags;
+  let initialData: ReturnType<typeof initializeOrg>;
+  let rows: any;
+  let onChangeShowTags: jest.Mock;
 
-  const location = TestStubs.location({
+  const location = LocationFixture({
     pathname: '/organizations/org-slug/discover/results/',
     query: {
       id: '42',
@@ -35,7 +39,11 @@ describe('TableView > CellActions', function () {
   });
   const eventView = EventView.fromLocation(location);
 
-  function renderComponent(context, tableData, view) {
+  function renderComponent(
+    context: ReturnType<typeof initializeOrg>,
+    tableData: TableData,
+    view: EventView
+  ) {
     return render(
       <TableView
         organization={context.organization}
@@ -49,25 +57,22 @@ describe('TableView > CellActions', function () {
         measurementKeys={null}
         showTags={false}
         title=""
+        queryDataset={SavedQueryDatasets.TRANSACTIONS}
       />,
-      {context: context.routerContext}
+      {router: context.router}
     );
   }
 
-  async function openContextMenu(cellIndex) {
-    const firstRow = screen.getAllByRole('row')[1];
-    const emptyValueCell = within(firstRow).getAllByRole('cell')[cellIndex];
+  async function openContextMenu(cellIndex: number) {
+    const firstRow = screen.getAllByRole('row')[1]!;
+    const emptyValueCell = within(firstRow).getAllByRole('cell')[cellIndex]!;
 
     await userEvent.click(within(emptyValueCell).getByRole('button', {name: 'Actions'}));
   }
 
   beforeEach(function () {
-    jest.mocked(browserHistory.push).mockReset();
-    jest.mocked(browserHistory.replace).mockReset();
-
-    const organization = Organization({
+    const organization = OrganizationFixture({
       features: ['discover-basic'],
-      projects: [TestStubs.Project()],
     });
 
     initialData = initializeOrg({
@@ -75,7 +80,7 @@ describe('TableView > CellActions', function () {
       router: {location},
     });
     act(() => {
-      ProjectsStore.loadInitialData(initialData.organization.projects);
+      ProjectsStore.loadInitialData(initialData.projects);
       TagStore.reset();
       TagStore.loadTagsSuccess([
         {name: 'size', key: 'size'},
@@ -152,7 +157,7 @@ describe('TableView > CellActions', function () {
     await openContextMenu(1);
     await userEvent.click(screen.getByRole('menuitemradio', {name: 'Add to filter'}));
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: '!has:title',
@@ -169,7 +174,7 @@ describe('TableView > CellActions', function () {
     await openContextMenu(1);
     await userEvent.click(screen.getByRole('menuitemradio', {name: 'Add to filter'}));
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: 'tag:value !has:title',
@@ -185,7 +190,7 @@ describe('TableView > CellActions', function () {
     await openContextMenu(1);
     await userEvent.click(screen.getByRole('menuitemradio', {name: 'Add to filter'}));
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: 'tag:value title:"some title"',
@@ -200,7 +205,7 @@ describe('TableView > CellActions', function () {
     await openContextMenu(1);
     await userEvent.click(screen.getByRole('menuitemradio', {name: 'Add to filter'}));
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: 'title:"some title"',
@@ -216,7 +221,7 @@ describe('TableView > CellActions', function () {
       screen.getByRole('menuitemradio', {name: 'Exclude from filter'})
     );
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: '!title:"some title"',
@@ -234,10 +239,10 @@ describe('TableView > CellActions', function () {
       screen.getByRole('menuitemradio', {name: 'Exclude from filter'})
     );
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
-        query: 'tag:value !title:"some title"',
+        query: 'tag:value title:nope !title:"some title"',
       }),
     });
   });
@@ -251,7 +256,7 @@ describe('TableView > CellActions', function () {
       screen.getByRole('menuitemradio', {name: 'Exclude from filter'})
     );
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: 'has:title',
@@ -270,7 +275,7 @@ describe('TableView > CellActions', function () {
       screen.getByRole('menuitemradio', {name: 'Exclude from filter'})
     );
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: 'tag:value has:title',
@@ -285,7 +290,7 @@ describe('TableView > CellActions', function () {
       screen.getByRole('menuitemradio', {name: 'Show values greater than'})
     );
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: 'count():>9',
@@ -300,7 +305,7 @@ describe('TableView > CellActions', function () {
       screen.getByRole('menuitemradio', {name: 'Show values less than'})
     );
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: 'count():<9',
@@ -313,7 +318,7 @@ describe('TableView > CellActions', function () {
 
     renderComponent(initialData, rows, eventView);
 
-    const firstRow = screen.getAllByRole('row')[1];
+    const firstRow = screen.getAllByRole('row')[1]!;
     const link = within(firstRow).getByTestId('tableView-transaction-link');
 
     expect(link).toHaveAttribute(
@@ -326,12 +331,76 @@ describe('TableView > CellActions', function () {
     );
   });
 
+  it('renders trace view link', function () {
+    const org = OrganizationFixture({
+      features: [
+        'discover-basic',
+        'performance-discover-dataset-selector',
+        'trace-view-v1',
+      ],
+    });
+
+    rows = {
+      meta: {
+        trace: 'string',
+        id: 'string',
+        transaction: 'string',
+        timestamp: 'date',
+        project: 'string',
+      },
+      data: [
+        {
+          trace: '7fdf8efed85a4f9092507063ced1995b',
+          id: '509663014077465b8981b65225bdec0f',
+          transaction: '/organizations/',
+          timestamp: '2019-05-23T22:12:48+00:00',
+          project: 'project-slug',
+        },
+      ],
+    };
+
+    const loc = LocationFixture({
+      pathname: '/organizations/org-slug/discover/results/',
+      query: {
+        id: '42',
+        name: 'best query',
+        field: ['id', 'transaction', 'timestamp'],
+        queryDataset: 'transaction-like',
+        sort: ['transaction'],
+        query: '',
+        project: ['123'],
+        statsPeriod: '14d',
+        environment: ['staging'],
+        yAxis: 'p95',
+      },
+    });
+
+    initialData = initializeOrg({
+      organization: org,
+      router: {location: loc},
+    });
+
+    renderComponent(initialData, rows, EventView.fromLocation(loc));
+
+    const firstRow = screen.getAllByRole('row')[1]!;
+    const link = within(firstRow).getByTestId('view-event');
+
+    expect(link).toHaveAttribute(
+      'href',
+      expect.stringMatching(
+        RegExp(
+          '/organizations/org-slug/discover/trace/7fdf8efed85a4f9092507063ced1995b/?.*'
+        )
+      )
+    );
+  });
+
   it('handles go to release', async function () {
     renderComponent(initialData, rows, eventView);
     await openContextMenu(5);
     await userEvent.click(screen.getByRole('menuitemradio', {name: 'Go to release'}));
 
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: '/organizations/org-slug/releases/v1.0.2/',
       query: expect.objectContaining({
         environment: eventView.environment,
@@ -343,16 +412,14 @@ describe('TableView > CellActions', function () {
     rows.data[0]['count()'] = 1000;
     renderComponent(initialData, rows, eventView);
 
-    const firstRow = screen.getAllByRole('row')[1];
-    const emptyValueCell = within(firstRow).getAllByRole('cell')[3];
+    const firstRow = screen.getAllByRole('row')[1]!;
+    const emptyValueCell = within(firstRow).getAllByRole('cell')[3]!;
 
     expect(within(emptyValueCell).getByText('1k')).toHaveAttribute('title', '1,000');
   });
 
   it('renders size columns correctly', function () {
-    const orgWithFeature = Organization({
-      projects: [TestStubs.Project()],
-    });
+    const orgWithFeature = OrganizationFixture();
 
     render(
       <TableView
@@ -402,9 +469,7 @@ describe('TableView > CellActions', function () {
   });
 
   it('shows events with value less than selected custom performance metric', async function () {
-    const orgWithFeature = Organization({
-      projects: [TestStubs.Project()],
-    });
+    const orgWithFeature = OrganizationFixture();
 
     render(
       <TableView
@@ -438,13 +503,14 @@ describe('TableView > CellActions', function () {
         measurementKeys={null}
         showTags={false}
         title=""
-      />
+      />,
+      {router: initialData.router}
     );
     await userEvent.hover(screen.getByText('444.3 KB'));
     const buttons = screen.getAllByRole('button');
-    await userEvent.click(buttons[buttons.length - 1]);
+    await userEvent.click(buttons[buttons.length - 1]!);
     await userEvent.click(screen.getByText('Show values less than'));
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: location.pathname,
       query: expect.objectContaining({
         query: 'p99(measurements.custom.kilobyte):<444300',

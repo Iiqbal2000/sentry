@@ -1,7 +1,8 @@
 import {Fragment} from 'react';
+import {useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import Card from 'sentry/components/card';
 import EventsRequest from 'sentry/components/charts/eventsRequest';
@@ -16,25 +17,23 @@ import SparklinesLine from 'sentry/components/sparklines/line';
 import {Tooltip} from 'sentry/components/tooltip';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
+import toArray from 'sentry/utils/array/toArray';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
 import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
-import {
-  Column,
-  generateFieldAsString,
-  getAggregateAlias,
-} from 'sentry/utils/discover/fields';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {Column} from 'sentry/utils/discover/fields';
+import {generateFieldAsString, getAggregateAlias} from 'sentry/utils/discover/fields';
 import {WebVital} from 'sentry/utils/fields';
 import {WEB_VITAL_DETAILS} from 'sentry/utils/performance/vitals/constants';
-import VitalsCardsDiscoverQuery, {
+import type {
   VitalData,
   VitalsData,
 } from 'sentry/utils/performance/vitals/vitalsCardsDiscoverQuery';
+import VitalsCardsDiscoverQuery from 'sentry/utils/performance/vitals/vitalsCardsDiscoverQuery';
 import {decodeList} from 'sentry/utils/queryString';
-import theme from 'sentry/utils/theme';
-import toArray from 'sentry/utils/toArray';
 import useApi from 'sentry/utils/useApi';
 
 import ColorBar from '../vitalDetail/colorBar';
@@ -192,10 +191,13 @@ function GenericCards(props: GenericCardsProps) {
           partial
         >
           {({results}) => {
-            const series = results?.reduce((allSeries, oneSeries) => {
-              allSeries[oneSeries.seriesName] = oneSeries.data.map(item => item.value);
-              return allSeries;
-            }, {});
+            const series = results?.reduce<Record<string, number[]>>(
+              (allSeries, oneSeries) => {
+                allSeries[oneSeries.seriesName] = oneSeries.data.map(item => item.value);
+                return allSeries;
+              },
+              {}
+            );
             const details = vitalCardDetails(organization);
 
             return (
@@ -218,7 +220,7 @@ function GenericCards(props: GenericCardsProps) {
                   const alias = getAggregateAlias(fieldName);
                   const rawValue = tableData?.data?.[0]?.[alias] as number;
 
-                  const data = series?.[fieldName];
+                  const data = series?.[fieldName] ?? [];
                   const value =
                     isSummaryLoading || !defined(rawValue)
                       ? '\u2014'
@@ -303,10 +305,11 @@ type SparklineChartProps = {
 };
 
 function SparklineChart(props: SparklineChartProps) {
+  const theme = useTheme();
   const {data} = props;
   const width = 150;
   const height = 24;
-  const lineColor = theme.charts.getColorPalette(1)[0];
+  const lineColor = theme.charts.getColorPalette(1)?.[0];
   return (
     <SparklineContainer data-test-id="sparkline" width={width} height={height}>
       <Sparklines data={data} width={width} height={height}>
@@ -325,7 +328,7 @@ const SparklineContainer = styled('div')<SparklineContainerProps>`
   flex-grow: 4;
   max-height: ${p => p.height}px;
   max-width: ${p => p.width}px;
-  margin: ${space(1)} ${space(0)} ${space(0.5)} ${space(3)};
+  margin: ${space(1)} 0 ${space(0.5)} ${space(3)};
 `;
 
 const VitalsContainer = styled('div')`
@@ -394,7 +397,9 @@ export function VitalBar(props: VitalBarProps) {
   const vitals = toArray(vital);
   vitals.forEach(vitalName => {
     const c = data?.[vitalName] ?? {};
-    Object.keys(counts).forEach(countKey => (counts[countKey] += c[countKey]));
+    (Object.keys(counts) as Array<keyof typeof counts>).forEach(
+      countKey => (counts[countKey] += (c as any)[countKey])
+    );
   });
 
   if (!counts.total) {
@@ -510,7 +515,12 @@ type Percent = {
   vitalState: VitalState;
 };
 
-function getPercentsFromCounts({poor, meh, good, total}) {
+function getPercentsFromCounts({
+  poor,
+  meh,
+  good,
+  total,
+}: Pick<VitalData, 'poor' | 'meh' | 'good' | 'total'>) {
   const poorPercent = poor / total;
   const mehPercent = meh / total;
   const goodPercent = good / total;

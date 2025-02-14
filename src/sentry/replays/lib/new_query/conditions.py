@@ -14,12 +14,13 @@ to rows.
 Every condition visitor must define a method for every operator supported by the caller.  A full
 list of supported operations can be found in the "GenericBase" visitor.
 """
+
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from typing import Any, NoReturn, TypeVar
 from uuid import UUID
 
-from snuba_sdk import Condition, Function, Identifier, Lambda, Op
+from snuba_sdk import And, Condition, Function, Identifier, Lambda, Op, Or
 from snuba_sdk.expressions import Expression
 
 from sentry.replays.lib.new_query.errors import OperatorNotSupported
@@ -148,45 +149,101 @@ class StringScalar(GenericBase):
         return Condition(expression, Op.NOT_IN, value)
 
 
+class NonEmptyStringScalar(GenericBase):
+    """Non-empty string scalar condition class."""
+
+    @staticmethod
+    def visit_eq(expression: Expression, value: str) -> Condition:
+        return StringScalar.visit_eq(expression, value)
+
+    @staticmethod
+    def visit_neq(expression: Expression, value: str) -> Condition:
+        return And(
+            conditions=[
+                StringScalar.visit_neq(expression, value),
+                StringScalar.visit_neq(expression, ""),
+            ]
+        )
+
+    @staticmethod
+    def visit_match(expression: Expression, value: str) -> Condition:
+        return StringScalar.visit_match(expression, value)
+
+    @staticmethod
+    def visit_not_match(expression: Expression, value: str) -> Condition:
+        return And(
+            conditions=[
+                StringScalar.visit_not_match(expression, value),
+                StringScalar.visit_neq(expression, ""),
+            ]
+        )
+
+    @staticmethod
+    def visit_in(expression: Expression, value: list[str]) -> Condition:
+        return StringScalar.visit_in(expression, value)
+
+    @staticmethod
+    def visit_not_in(expression: Expression, value: list[str]) -> Condition:
+        return StringScalar.visit_not_in(expression, value + [""])
+
+
 class UUIDScalar(GenericBase):
     """UUID scalar condition class."""
 
     @staticmethod
     def visit_eq(expression: Expression, value: UUID) -> Condition:
-        return Condition(expression, Op.EQ, to_uuid(value))
+        return Condition(expression, Op.EQ, str(value))
 
     @staticmethod
     def visit_neq(expression: Expression, value: UUID) -> Condition:
-        return Condition(expression, Op.NEQ, to_uuid(value))
+        return Condition(expression, Op.NEQ, str(value))
 
     @staticmethod
     def visit_in(expression: Expression, value: list[UUID]) -> Condition:
-        return Condition(expression, Op.IN, to_uuids(value))
+        return Condition(expression, Op.IN, [str(v) for v in value])
 
     @staticmethod
     def visit_not_in(expression: Expression, value: list[UUID]) -> Condition:
-        return Condition(expression, Op.NOT_IN, to_uuids(value))
+        return Condition(expression, Op.NOT_IN, [str(v) for v in value])
 
 
 class IPv4Scalar(GenericBase):
     """IPv4 scalar condition class."""
 
     @staticmethod
-    def visit_eq(expression: Expression, value: str) -> Condition:
-        return Condition(expression, Op.EQ, Function("IPv4StringToNum", parameters=[value]))
+    def visit_eq(expression: Expression, value: str | None) -> Condition:
+        if value is None:
+            return Condition(Function("isNull", parameters=[expression]), Op.EQ, 1)
+        return Condition(expression, Op.EQ, Function("toIPv4", parameters=[value]))
 
     @staticmethod
-    def visit_neq(expression: Expression, value: str) -> Condition:
-        return Condition(expression, Op.NEQ, Function("IPv4StringToNum", parameters=[value]))
+    def visit_neq(expression: Expression, value: str | None) -> Condition:
+        if value is None:
+            return Condition(Function("isNull", parameters=[expression]), Op.EQ, 0)
+        return Condition(expression, Op.NEQ, Function("toIPv4", parameters=[value]))
 
     @staticmethod
-    def visit_in(expression: Expression, value: list[str]) -> Condition:
-        values = [Function("IPv4StringToNum", parameters=[v]) for v in value]
+    def visit_in(expression: Expression, value_list: list[str | None]) -> Condition:
+        values = [Function("toIPv4", parameters=[v]) for v in value_list if v is not None]
+        if None in value_list:
+            return Or(
+                conditions=[
+                    Condition(expression, Op.IN, values),
+                    Condition(Function("isNull", parameters=[expression]), Op.EQ, 1),
+                ]
+            )
         return Condition(expression, Op.IN, values)
 
     @staticmethod
-    def visit_not_in(expression: Expression, value: list[str]) -> Condition:
-        values = [Function("IPv4StringToNum", parameters=[v]) for v in value]
+    def visit_not_in(expression: Expression, value_list: list[str | None]) -> Condition:
+        values = [Function("toIPv4", parameters=[v]) for v in value_list if v is not None]
+        if None in value_list:
+            return And(
+                conditions=[
+                    Condition(expression, Op.NOT_IN, values),
+                    Condition(Function("isNull", parameters=[expression]), Op.EQ, 0),
+                ]
+            )
         return Condition(expression, Op.NOT_IN, values)
 
 
@@ -266,6 +323,6 @@ class UUIDArray(GenericArray):
         return GenericArray.visit_not_in(expression, to_uuids(value))
 
 
-def not_supported() -> None:
+def not_supported() -> NoReturn:
     """Raise not supported exception."""
     raise OperatorNotSupported("Not supported.")

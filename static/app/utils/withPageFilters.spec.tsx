@@ -1,7 +1,7 @@
 import {act, render, screen} from 'sentry-test/reactTestingLibrary';
 
 import PageFiltersStore from 'sentry/stores/pageFiltersStore';
-import {PageFilters} from 'sentry/types';
+import type {PageFilters} from 'sentry/types/core';
 import withPageFilters from 'sentry/utils/withPageFilters';
 
 describe('withPageFilters HoC', function () {
@@ -37,7 +37,7 @@ describe('withPageFilters HoC', function () {
   });
 
   it('handles datetime', function () {
-    function PrintDatetimeComponent({selection}) {
+    function PrintDatetimeComponent({selection}: any) {
       return (
         <div>
           <div data-test-id="period">{selection.datetime.period}</div>
@@ -82,10 +82,10 @@ describe('withPageFilters HoC', function () {
   });
 
   it('handles environments', function () {
-    function PrintProjectsComponent({selection}) {
+    function PrintProjectsComponent({selection}: any) {
       return (
         <div>
-          {selection.environments.map(env => (
+          {selection.environments.map((env: any) => (
             <div data-test-id="environment" key={env}>
               {env}
             </div>

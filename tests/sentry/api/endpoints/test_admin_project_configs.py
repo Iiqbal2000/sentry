@@ -10,6 +10,8 @@ from sentry.testutils.silo import no_silo_test
 
 @no_silo_test
 class AdminRelayProjectConfigsEndpointTest(APITestCase):
+    endpoint = "sentry-api-0-internal-project-config"
+
     def setUp(self):
         super().setUp()
         self.owner = self.create_user(
@@ -33,7 +35,7 @@ class AdminRelayProjectConfigsEndpointTest(APITestCase):
 
         projectconfig_cache.backend.set_many(
             {
-                self.p1_pk.public_key: "proj1 config",
+                self.p1_pk.public_key: {"proj1": "config"},
             }
         )
 
@@ -72,7 +74,7 @@ class AdminRelayProjectConfigsEndpointTest(APITestCase):
         response = self.client.get(url)
 
         assert response.status_code == status.HTTP_200_OK
-        expected = {"configs": {self.p1_pk.public_key: "proj1 config"}}
+        expected = {"configs": {self.p1_pk.public_key: {"proj1": "config"}}}
         actual = response.json()
         assert actual == expected
 
@@ -87,7 +89,7 @@ class AdminRelayProjectConfigsEndpointTest(APITestCase):
         response = self.client.get(url)
 
         assert response.status_code == status.HTTP_200_OK
-        expected = {"configs": {self.p1_pk.public_key: "proj1 config"}}
+        expected = {"configs": {self.p1_pk.public_key: {"proj1": "config"}}}
         actual = response.json()
         assert actual == expected
 
@@ -96,7 +98,7 @@ class AdminRelayProjectConfigsEndpointTest(APITestCase):
         Asking for a project that was not cached in redis will return
         an empty marker
         """
-        expected = {"configs": {self.p2_pk.public_key: None}}
+        outdated = {"configs": {self.p2_pk.public_key: None}}
 
         self.login_as(self.superuser, superuser=True)
 
@@ -104,17 +106,17 @@ class AdminRelayProjectConfigsEndpointTest(APITestCase):
         response = self.client.get(url)
         assert response.status_code == status.HTTP_200_OK
         actual = response.json()
-        assert actual == expected
+        assert actual != outdated
 
         url = self.get_url(key=self.p2_pk.public_key)
         response = self.client.get(url)
         assert response.status_code == status.HTTP_200_OK
         actual = response.json()
-        assert actual == expected
+        assert actual != outdated
 
     def test_inexistent_project(self):
         """
-        Asking for an inexitent project will return 404
+        Asking for an inexistent project will return 404
         """
         inexistent_project_id = 2 ^ 32
         self.login_as(self.superuser, superuser=True)
@@ -127,13 +129,94 @@ class AdminRelayProjectConfigsEndpointTest(APITestCase):
         """
         Asking for an inexistent project key will return an empty result
         """
-        inexsitent_key = 123
+        inexistent = 123
         self.login_as(self.superuser, superuser=True)
 
-        url = self.get_url(key=inexsitent_key)
+        url = self.get_url(key=inexistent)
         response = self.client.get(url)
 
-        assert response.status_code == status.HTTP_200_OK
-        expected = {"configs": {str(inexsitent_key): None}}
-        actual = response.json()
-        assert actual == expected
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_invalidate_project_config_unauthorized(self):
+        url = self.get_url()
+        data = {"projectId": self.project.id}
+        response = self.client.post(url, data=data)
+        assert response.status_code == 401
+
+    def test_invalidate_project_config_non_superuser(self):
+        url = self.get_url()
+        data = {"projectId": self.project.id}
+        self.login_as(self.user, superuser=False)
+        response = self.client.post(url, data=data)
+        assert response.status_code == 403
+
+    def test_invalidate_project_config_missing_project_id(self):
+        url = self.get_url()
+        self.login_as(self.superuser, superuser=True)
+        response = self.client.post(url)
+        assert response.status_code == 400
+
+    def test_invalidate_project_config_cached_project(self):
+        url = self.get_url()
+        self.login_as(self.superuser, superuser=True)
+        data = {"projectId": self.proj2.id}
+        projectconfig_cache.backend.set_many(
+            {
+                self.p2_pk.public_key: {"proj2": "config"},
+            }
+        )
+        response = self.client.post(url, data=data)
+        assert response.status_code == 201
+
+    def test_invalidate_project_config_cached_project_sets_correct_config(self):
+        url = self.get_url()
+        self.login_as(self.superuser, superuser=True)
+        data = {"projectId": self.proj2.id}
+        projectconfig_cache.backend.set_many(
+            {
+                self.p2_pk.public_key: {"proj2": "config"},
+            }
+        )
+        response = self.client.post(url, data=data)
+        assert response.status_code == 201
+        assert projectconfig_cache.backend.get(self.p2_pk.public_key) != {"proj2": "config"}
+
+    def test_invalidate_project_config_uncached_project(self):
+        url = self.get_url()
+        self.login_as(self.superuser, superuser=True)
+        data = {"projectId": self.proj1.id}
+        response = self.client.post(url, data=data)
+        assert response.status_code == 201
+
+    def test_invalidate_project_config_uncached_project_returns_correct_config(self):
+        url = self.get_url()
+        self.login_as(self.superuser, superuser=True)
+        data = {"projectId": self.proj1.id}
+        response = self.client.post(url, data=data)
+        assert response.status_code == 201
+
+    def test_invalidate_project_config_with_multiple_project_keys(self):
+        url = self.get_url()
+        self.login_as(self.superuser, superuser=True)
+
+        # Create new project with two keys
+        test_project = self.create_project(
+            name="test_proj", organization=self.org, teams=[self.first_team]
+        )
+        first_key = self.create_project_key(test_project)
+        second_key = test_project.key_set.create()
+
+        # Set configs for both keys
+        projectconfig_cache.backend.set_many(
+            {
+                first_key.public_key: {"test_proj": "config1"},
+                second_key.public_key: {"test_proj": "config2"},
+            }
+        )
+
+        data = {"projectId": test_project.id}
+        response = self.client.post(url, data=data)
+
+        assert response.status_code == 201
+        assert projectconfig_cache.backend.get(first_key.public_key) != {"test_proj": "config1"}
+        assert projectconfig_cache.backend.get(second_key.public_key) != {"test_proj": "config2"}

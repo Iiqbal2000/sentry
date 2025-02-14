@@ -1,110 +1,30 @@
-# mypy: ignore-errors
-
 import random
-from functools import wraps
-from typing import Any, Dict, Iterable, Optional, Tuple, Union
+from datetime import datetime, timedelta, timezone
 
 import sentry_sdk
+from sentry_sdk.metrics import metrics_noop
+from sentry_sdk.tracing import Span
 
-try:
-    from sentry_sdk.metrics import Metric, MetricsAggregator, metrics_noop  # type: ignore
-
-    have_minimetrics = True
-except ImportError:
-    have_minimetrics = False
-
-from sentry import options
 from sentry.metrics.base import MetricsBackend, Tags
-from sentry.utils import metrics
 
 
-def patch_sentry_sdk():
-    if not have_minimetrics:
+def _attach_tags(span: Span, tags: Tags | None) -> None:
+    if tags:
+        for tag_key, tag_value in tags.items():
+            span.set_data(tag_key, tag_value)
+
+
+@metrics_noop
+def _set_metric_on_span(key: str, value: float | int, op: str, tags: Tags | None = None) -> None:
+    span_or_tx = sentry_sdk.get_current_span()
+    if span_or_tx is None:
         return
 
-    real_add = MetricsAggregator.add
-    real_emit = MetricsAggregator._emit
-
-    @metrics_noop
-    def report_tracked_add(ty):
-        metrics.incr(
-            key="minimetrics.add",
-            amount=1,
-            tags={"metric_type": ty},
-            sample_rate=1.0,
-        )
-
-    @wraps(real_add)
-    def tracked_add(self, ty, *args, **kwargs):
-        real_add(self, ty, *args, **kwargs)
-        report_tracked_add(ty)
-
-    @wraps(real_emit)
-    def patched_emit(self, flushable_buckets: Iterable[Tuple[int, Dict[Any, Metric]]]):
-        flushable_metrics = []
-        stats_by_type: Any = {}
-        for buckets_timestamp, buckets in flushable_buckets:
-            for bucket_key, metric in buckets.items():
-                flushable_metric = (buckets_timestamp, bucket_key, metric)
-                flushable_metrics.append(flushable_metric)
-                (prev_buckets_count, prev_buckets_weight) = stats_by_type.get(bucket_key[0], (0, 0))
-                stats_by_type[bucket_key[0]] = (
-                    prev_buckets_count + 1,
-                    prev_buckets_weight + metric.weight,
-                )
-
-        for metric_type, (buckets_count, buckets_weight) in stats_by_type.items():
-            metrics.timing(
-                key="minimetrics.flushed_buckets",
-                value=buckets_count,
-                tags={"metric_type": metric_type},
-                sample_rate=1.0,
-            )
-            metrics.incr(
-                key="minimetrics.flushed_buckets_counter",
-                amount=buckets_count,
-                tags={"metric_type": metric_type},
-                sample_rate=1.0,
-            )
-            metrics.timing(
-                key="minimetrics.flushed_buckets_weight",
-                value=buckets_weight,
-                tags={"metric_type": metric_type},
-                sample_rate=1.0,
-            )
-            metrics.incr(
-                key="minimetrics.flushed_buckets_weight_counter",
-                amount=buckets_weight,
-                tags={"metric_type": metric_type},
-                sample_rate=1.0,
-            )
-
-        if options.get("delightful_metrics.enable_capture_envelope"):
-            envelope = real_emit(self, flushable_buckets)
-            metrics.timing(
-                key="minimetrics.encoded_metrics_size",
-                value=len(envelope.items[0].payload.get_bytes()),
-                sample_rate=1.0,
-            )
-
-    MetricsAggregator.add = tracked_add  # type: ignore
-    MetricsAggregator._emit = patched_emit  # type: ignore
-
-
-def before_emit_metric(key: str, tags: Dict[str, Any]) -> bool:
-    if not options.get("delightful_metrics.enable_common_tags"):
-        tags.pop("transaction", None)
-        tags.pop("release", None)
-        tags.pop("environment", None)
-    return True
+    span_or_tx.set_data(key, value)
+    _attach_tags(span_or_tx, tags)
 
 
 class MiniMetricsMetricsBackend(MetricsBackend):
-    def __init__(self, prefix: Optional[str] = None):
-        super().__init__(prefix=prefix)
-        if not have_minimetrics:
-            raise RuntimeError("Sentry SDK too old (no minimetrics)")
-
     @staticmethod
     def _keep_metric(sample_rate: float) -> bool:
         return random.random() < sample_rate
@@ -112,39 +32,76 @@ class MiniMetricsMetricsBackend(MetricsBackend):
     def incr(
         self,
         key: str,
-        instance: Optional[str] = None,
-        tags: Optional[Tags] = None,
-        amount: Union[float, int] = 1,
+        instance: str | None = None,
+        tags: Tags | None = None,
+        amount: float | int = 1,
         sample_rate: float = 1,
+        unit: str | None = None,
+        stacklevel: int = 0,
     ) -> None:
         if self._keep_metric(sample_rate):
-            sentry_sdk.metrics.incr(
-                key=self._get_key(key),
-                value=amount,
-                tags=tags,
-            )
+            _set_metric_on_span(key=key, value=amount, op="incr", tags=tags)
 
     def timing(
         self,
         key: str,
         value: float,
-        instance: Optional[str] = None,
-        tags: Optional[Tags] = None,
+        instance: str | None = None,
+        tags: Tags | None = None,
         sample_rate: float = 1,
+        stacklevel: int = 0,
     ) -> None:
         if self._keep_metric(sample_rate):
-            sentry_sdk.metrics.distribution(
-                key=self._get_key(key), value=value, tags=tags, unit="second"
-            )
+            span_or_tx = sentry_sdk.get_current_span()
+            if span_or_tx is None:
+                return
+
+            if span_or_tx.op == key:
+                _attach_tags(span_or_tx, tags)
+                return
+
+            timestamp = datetime.now(timezone.utc)
+            start_timestamp = timestamp - timedelta(seconds=value)
+            span = span_or_tx.start_child(op=key, start_timestamp=start_timestamp)
+            _attach_tags(span, tags)
+            span.finish(end_timestamp=timestamp)
 
     def gauge(
         self,
         key: str,
         value: float,
-        instance: Optional[str] = None,
-        tags: Optional[Tags] = None,
+        instance: str | None = None,
+        tags: Tags | None = None,
         sample_rate: float = 1,
+        unit: str | None = None,
+        stacklevel: int = 0,
     ) -> None:
         if self._keep_metric(sample_rate):
-            # XXX: make this into a gauge later
-            sentry_sdk.metrics.incr(key=self._get_key(key), value=value, tags=tags)
+            _set_metric_on_span(key=key, value=value, op="gauge", tags=tags)
+
+    def distribution(
+        self,
+        key: str,
+        value: float,
+        instance: str | None = None,
+        tags: Tags | None = None,
+        sample_rate: float = 1,
+        unit: str | None = None,
+        stacklevel: int = 0,
+    ) -> None:
+        if self._keep_metric(sample_rate):
+            _set_metric_on_span(key=key, value=value, op="distribution", tags=tags)
+
+    def event(
+        self,
+        title: str,
+        message: str,
+        alert_type: str | None = None,
+        aggregation_key: str | None = None,
+        source_type_name: str | None = None,
+        priority: str | None = None,
+        instance: str | None = None,
+        tags: Tags | None = None,
+        stacklevel: int = 0,
+    ) -> None:
+        pass

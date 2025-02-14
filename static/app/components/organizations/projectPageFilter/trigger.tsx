@@ -1,15 +1,14 @@
 import {forwardRef} from 'react';
 import styled from '@emotion/styled';
 
-import GuideAnchor from 'sentry/components/assistant/guideAnchor';
-import Badge from 'sentry/components/badge';
-import DropdownButton, {DropdownButtonProps} from 'sentry/components/dropdownButton';
+import Badge from 'sentry/components/badge/badge';
+import type {DropdownButtonProps} from 'sentry/components/dropdownButton';
+import DropdownButton from 'sentry/components/dropdownButton';
 import PlatformList from 'sentry/components/platformList';
-import {IconProject} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Project} from 'sentry/types';
-import {trimSlug} from 'sentry/utils/trimSlug';
+import type {Project} from 'sentry/types/project';
+import {trimSlug} from 'sentry/utils/string/trimSlug';
 
 import {DesyncedFilterIndicator} from '../pageFilters/desyncedFilter';
 
@@ -55,7 +54,7 @@ function BaseProjectPageFilterTrigger(
   // Show 2 projects only if the combined string does not exceed maxTitleLength.
   // Otherwise show only 1 project.
   const projectsToShow =
-    selectedProjects[0]?.slug?.length + selectedProjects[1]?.slug?.length <= 23
+    selectedProjects[0]?.slug?.length! + selectedProjects[1]?.slug?.length! <= 23
       ? selectedProjects.slice(0, 2)
       : selectedProjects.slice(0, 1);
 
@@ -65,53 +64,51 @@ function BaseProjectPageFilterTrigger(
   const label = isAllProjectsSelected
     ? t('All Projects')
     : isMyProjectsSelected
-    ? t('My Projects')
-    : enumeratedLabel;
+      ? t('My Projects')
+      : enumeratedLabel;
 
   // Number of projects that aren't listed in the trigger label
   const remainingCount = isAllProjectsSelected
     ? 0
     : isMyProjectsSelected
-    ? value.length - memberProjects.length
-    : value.length - projectsToShow.length;
+      ? value.length - memberProjects.length
+      : value.length - projectsToShow.length;
 
   return (
-    <GuideAnchor target="new_project_filter" position="bottom" disabled={!ready}>
-      <DropdownButton
-        {...props}
-        ref={forwardedRef}
-        icon={
-          <TriggerIconWrap>
-            {!ready || isAllProjectsSelected || isMyProjectsSelected ? (
-              <IconProject />
-            ) : (
-              <PlatformList
-                platforms={projectsToShow.map(p => p.platform ?? 'other').reverse()}
-              />
-            )}
-            {desynced && <DesyncedFilterIndicator role="presentation" />}
-          </TriggerIconWrap>
-        }
-      >
+    <DropdownButton
+      {...props}
+      ref={forwardedRef}
+      data-test-id="page-filter-project-selector"
+      icon={
+        ready &&
+        !isAllProjectsSelected &&
+        !isMyProjectsSelected && (
+          <PlatformList
+            platforms={projectsToShow.map(p => p.platform ?? 'other').reverse()}
+          />
+        )
+      }
+    >
+      <TriggerLabelWrap>
         <TriggerLabel>{ready ? label : t('Loading\u2026')}</TriggerLabel>
-        {remainingCount > 0 && <StyledBadge text={`+${remainingCount}`} />}
-      </DropdownButton>
-    </GuideAnchor>
+        {desynced && <DesyncedFilterIndicator role="presentation" />}
+      </TriggerLabelWrap>
+      {remainingCount > 0 && <StyledBadge text={`+${remainingCount}`} />}
+    </DropdownButton>
   );
 }
 
 export const ProjectPageFilterTrigger = forwardRef(BaseProjectPageFilterTrigger);
 
+const TriggerLabelWrap = styled('span')`
+  position: relative;
+  min-width: 0;
+`;
+
 const TriggerLabel = styled('span')`
   ${p => p.theme.overflowEllipsis};
   position: relative;
   width: auto;
-`;
-
-const TriggerIconWrap = styled('div')`
-  position: relative;
-  display: flex;
-  align-items: center;
 `;
 
 const StyledBadge = styled(Badge)`

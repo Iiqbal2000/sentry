@@ -1,7 +1,7 @@
 import {waitFor} from 'sentry-test/reactTestingLibrary';
 
 import SpanTreeModel from 'sentry/components/events/interfaces/spans/spanTreeModel';
-import {
+import type {
   EnhancedProcessedSpanType,
   RawSpanType,
 } from 'sentry/components/events/interfaces/spans/types';
@@ -10,7 +10,8 @@ import {
   generateRootSpan,
   parseTrace,
 } from 'sentry/components/events/interfaces/spans/utils';
-import {EntryType, EventTransaction} from 'sentry/types/event';
+import type {EventTransaction} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
 import {assert} from 'sentry/types/utils';
 import {generateEventSlug} from 'sentry/utils/discover/urls';
 
@@ -454,7 +455,7 @@ describe('SpanTreeModel', () => {
     );
 
     fullWaterfallExpected[0] = {
-      ...fullWaterfallExpected[0],
+      ...fullWaterfallExpected[0]!,
     };
     assert(fullWaterfallExpected[0].type === 'span');
     fullWaterfallExpected[0].numOfSpanChildren += 1;
@@ -558,11 +559,11 @@ describe('SpanTreeModel', () => {
       },
     };
 
-    if (!Array.isArray(event2.entries[0].data)) {
+    if (!Array.isArray(event2.entries[0]!.data)) {
       throw new Error('event2.entries[0].data is not an array');
     }
 
-    const data = event2.entries[0].data as RawSpanType[];
+    const data = event2.entries[0]!.data as RawSpanType[];
     for (let i = 0; i < 5; i++) {
       data.push(spanTemplate);
     }
@@ -601,12 +602,12 @@ describe('SpanTreeModel', () => {
       directParent: null,
     });
 
-    expect(spans.length).toEqual(2);
-    expect(spans[1].type).toEqual('span_group_siblings');
+    expect(spans).toHaveLength(2);
+    expect(spans[1]!.type).toBe('span_group_siblings');
 
     // If statement here is required to avoid TS linting issues
-    if (spans[1].type === 'span_group_siblings') {
-      expect(spans[1].spanSiblingGrouping!.length).toEqual(5);
+    if (spans[1]!.type === 'span_group_siblings') {
+      expect(spans[1]!.spanSiblingGrouping!).toHaveLength(5);
     }
   });
 
@@ -640,11 +641,11 @@ describe('SpanTreeModel', () => {
       },
     };
 
-    if (!Array.isArray(event2.entries[0].data)) {
+    if (!Array.isArray(event2.entries[0]!.data)) {
       throw new Error('event2.entries[0].data is not an array');
     }
 
-    const data = event2.entries[0].data as RawSpanType[];
+    const data = event2.entries[0]!.data as RawSpanType[];
     for (let i = 0; i < 4; i++) {
       data.push(spanTemplate);
     }
@@ -683,8 +684,8 @@ describe('SpanTreeModel', () => {
       directParent: null,
     });
 
-    expect(spans.length).toEqual(5);
-    spans.forEach(span => expect(span.type).toEqual('span'));
+    expect(spans).toHaveLength(5);
+    spans.forEach(span => expect(span.type).toBe('span'));
   });
 
   it('properly autogroups similar siblings and leaves other siblings ungrouped', () => {
@@ -736,11 +737,11 @@ describe('SpanTreeModel', () => {
       },
     };
 
-    if (!Array.isArray(event2.entries[0].data)) {
+    if (!Array.isArray(event2.entries[0]!.data)) {
       throw new Error('event2.entries[0].data is not an array');
     }
 
-    const data = event2.entries[0].data as RawSpanType[];
+    const data = event2.entries[0]!.data as RawSpanType[];
     for (let i = 0; i < 7; i++) {
       data.push(groupableSpanTemplate);
     }
@@ -786,9 +787,9 @@ describe('SpanTreeModel', () => {
       directParent: null,
     });
 
-    expect(spans.length).toEqual(4);
-    expect(spans[1].type).toEqual('span_group_siblings');
-    expect(spans[2].type).toEqual('span');
-    expect(spans[3].type).toEqual('span_group_siblings');
+    expect(spans).toHaveLength(4);
+    expect(spans[1]!.type).toBe('span_group_siblings');
+    expect(spans[2]!.type).toBe('span');
+    expect(spans[3]!.type).toBe('span_group_siblings');
   });
 });

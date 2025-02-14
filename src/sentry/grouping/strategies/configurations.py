@@ -1,12 +1,11 @@
 from sentry.grouping.strategies.base import (
     RISK_LEVEL_HIGH,
-    RISK_LEVEL_LOW,
-    RISK_LEVEL_MEDIUM,
+    StrategyConfiguration,
     create_strategy_configuration,
 )
 
 # The full mapping of all known configurations.
-CONFIGURATIONS = {}
+CONFIGURATIONS: dict[str, type[StrategyConfiguration]] = {}
 
 # The implied base strategy *every* strategy inherits from if no
 # base is defined.
@@ -36,10 +35,6 @@ BASE_STRATEGY = create_strategy_configuration(
         # This turns on the automatic message trimming and parameter substitution
         # by the message strategy.
         "normalize_message": False,
-        # newstyle: enables the legacy function logic.  This is only used
-        # by the newstyle:2019-04-05 strategy.  Once this is no longer used
-        # this can go away entirely.
-        "legacy_function_logic": False,
         # newstyle: turns on some javascript fuzzing features.
         "javascript_fuzzing": False,
         # newstyle: platforms for which context line should be taken into
@@ -52,38 +47,21 @@ BASE_STRATEGY = create_strategy_configuration(
         # newstyle: turns on falling back to exception values when there
         # is no stacktrace.
         "with_exception_value_fallback": False,
-        # Whether the strategy should produce special variants that are
-        # considered for hierarchical grouping (see HIERARCHICAL_VARIANTS
-        # constant)
-        "hierarchical_grouping": False,
         # Stacktrace is produced in the context of this exception
         "exception_data": None,
-        # Whether to discard filenames of native events for grouping if
-        # function is present.
-        "discard_native_filename": False,
-        # Use the `package` component of a frame as fallback where other
-        # information would be used but is not available.
-        "use_package_fallback": False,
-        # Remove platform differences in native frames
-        "native_fuzzing": False,
-        # Ignore exception types for native if they are platform-specific error
-        # codes. Normally SDKs are supposed to disable error-type grouping with
-        # the `synthetic` flag in the event, but a lot of error types we can
-        # also detect on the backend.
-        "detect_synthetic_exception_types": False,
         # replaces generated IDs in Java stack frames related to CGLIB and hibernate
         "java_cglib_hibernate_logic": False,
     },
 )
 
 
-def register_strategy_config(id, **kwargs):
+def register_strategy_config(id: str, **kwargs) -> type[StrategyConfiguration]:
     if kwargs.get("base") is not None:
         kwargs["base"] = CONFIGURATIONS[kwargs["base"]]
     else:
         kwargs["base"] = BASE_STRATEGY
     rv = create_strategy_configuration(id, **kwargs)
-    CONFIGURATIONS[rv.id] = rv
+    CONFIGURATIONS[id] = rv
     return rv
 
 
@@ -115,7 +93,6 @@ register_strategy_config(
 # This is a grouping strategy that applies very simple rules and will
 # become the new default at one point.  Optimized for native and
 # javascript but works for all platforms.
-
 register_strategy_config(
     id="newstyle:2019-05-08",
     risk=RISK_LEVEL_HIGH,
@@ -141,96 +118,25 @@ register_strategy_config(
     enhancements_base="common:2019-03-23",
 )
 
+# This is the grouping strategy used for new projects.
 register_strategy_config(
-    id="newstyle:2019-10-29",
+    id="newstyle:2023-01-11",
     base="newstyle:2019-05-08",
-    risk=RISK_LEVEL_MEDIUM,
+    risk=RISK_LEVEL_HIGH,
     changelog="""
         * Better rules for when to take context lines into account for
           JavaScript platforms for grouping purposes.
         * Better support for PHP7 anonymous classes.
+        * Added new language/platform specific stack trace grouping enhancements rules
+          that should make the default grouping experience better.
+          This includes JavaScript, Python, PHP, Go, Java and Kotlin.
+        * Added ChukloadErrors via new built-in fingerprinting support.
     """,
     initial_context={
         "php_detect_anonymous_classes": True,
         "with_context_line_file_origin_bug": False,
-    },
-)
-
-register_strategy_config(
-    id="mobile:2021-02-12",
-    base="newstyle:2019-10-29",
-    # XXX(markus): Low risk because fallback grouping is supposed to take care
-    # of this, for the hierarchical grouping rollout. Really we should get rid
-    # of strategy risks entirely.
-    risk=RISK_LEVEL_LOW,
-    changelog="""
-        * Groups by a single frame to create fewer duplicate issues, usually
-          the top in-app frame.
-        * Provides a [breakdown of issues](https://docs.sentry.io/product/data-management-settings/event-grouping/grouping-breakdown/)
-          into unique call hierarchies in the _Grouping_ tab.
-        * Filenames in native events are no longer used because they differ
-          between platforms, and package (dll basename) is used as fallback for a
-          frame if a function name is not available.
-        * For mobile and native projects: Error codes on crash signals are now
-          ignored to unify platform differences.
-        * For native projects: Anonymous namespaces from different compilers now
-          no longer result in different issues.
-    """,
-    initial_context={
-        "hierarchical_grouping": True,
-        "discard_native_filename": True,
-        "use_package_fallback": True,
-        "native_fuzzing": True,
-        "detect_synthetic_exception_types": True,
-    },
-    enhancements_base="mobile:2021-04-02",
-)
-
-register_strategy_config(
-    id="newstyle:2023-01-11",
-    base="newstyle:2019-10-29",
-    risk=RISK_LEVEL_MEDIUM,
-    changelog="""
-        * Added new language/platform specific stack trace grouping enhancements rules
-          that should make the default grouping experience better.
-          This includes JavaScript, Python, PHP, Go, Java and Kotlin.
-    """,
-    initial_context={
         "java_cglib_hibernate_logic": True,
     },
     enhancements_base="newstyle:2023-01-11",
-)
-
-
-# Deprecated strategies
-#
-# These should not be used.  They are experiments which should be phased out
-# once there are no projects on them.
-
-register_strategy_config(
-    id="newstyle:2019-04-05",
-    risk=RISK_LEVEL_HIGH,
-    changelog="""
-        * Experimental grouping algorithm (should not be used)
-    """,
-    hidden=True,
-    initial_context={
-        "legacy_function_logic": True,
-    },
-    enhancements_base="common:2019-03-23",
-)
-
-register_strategy_config(
-    id="newstyle:2019-04-17",
-    base="newstyle:2019-04-05",
-    risk=RISK_LEVEL_HIGH,
-    changelog="""
-        * Experimental grouping algorithm (should not be used)
-    """,
-    hidden=True,
-    initial_context={
-        "legacy_function_logic": False,
-        "normalize_message": True,
-        "with_exception_value_fallback": True,
-    },
+    fingerprinting_bases=["javascript@2024-02-02"],
 )

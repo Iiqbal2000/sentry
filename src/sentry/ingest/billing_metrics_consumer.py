@@ -1,62 +1,26 @@
 import logging
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional, Sequence, TypedDict, Union, cast
+from typing import Any, cast
 
-from arroyo import Topic
-from arroyo.backends.kafka import KafkaConsumer, KafkaPayload
-from arroyo.backends.kafka.configuration import build_kafka_consumer_configuration
-from arroyo.commit import ONCE_PER_SECOND
-from arroyo.processing import StreamProcessor
-from arroyo.processing.strategies import ProcessingStrategy, ProcessingStrategyFactory
+import orjson
+from arroyo.backends.kafka import KafkaPayload
+from arroyo.processing.strategies import (
+    CommitOffsets,
+    ProcessingStrategy,
+    ProcessingStrategyFactory,
+)
 from arroyo.types import Commit, Message, Partition
-from django.conf import settings
-from typing_extensions import NotRequired
+from sentry_kafka_schemas.schema_types.snuba_generic_metrics_v1 import GenericMetric
 
 from sentry.constants import DataCategory
-from sentry.sentry_metrics.indexer.strings import SHARED_TAG_STRINGS, TRANSACTION_METRICS_NAMES
-from sentry.sentry_metrics.use_case_id_registry import UseCaseID
-from sentry.sentry_metrics.utils import reverse_resolve_tag_value
-from sentry.utils import json
-from sentry.utils.kafka_config import get_kafka_consumer_cluster_options, get_topic_definition
+from sentry.sentry_metrics.indexer.strings import SPAN_METRICS_NAMES, TRANSACTION_METRICS_NAMES
 from sentry.utils.outcomes import Outcome, track_outcome
 
 logger = logging.getLogger(__name__)
 
-
-def get_metrics_billing_consumer(
-    group_id: str,
-    auto_offset_reset: str,
-    strict_offset_reset: bool,
-    force_topic: Union[str, None],
-    force_cluster: Union[str, None],
-) -> StreamProcessor[KafkaPayload]:
-    topic = force_topic or settings.KAFKA_SNUBA_GENERIC_METRICS
-    bootstrap_servers = _get_bootstrap_servers(topic, force_cluster)
-
-    return StreamProcessor(
-        consumer=KafkaConsumer(
-            build_kafka_consumer_configuration(
-                default_config={},
-                group_id=group_id,
-                strict_offset_reset=strict_offset_reset,
-                auto_offset_reset=auto_offset_reset,
-                bootstrap_servers=bootstrap_servers,
-            ),
-        ),
-        topic=Topic(topic),
-        processor_factory=BillingMetricsConsumerStrategyFactory(),
-        commit_policy=ONCE_PER_SECOND,
-    )
-
-
-def _get_bootstrap_servers(topic: str, force_cluster: Union[str, None]) -> Sequence[str]:
-    cluster = force_cluster or get_topic_definition(topic)["cluster"]
-
-    options = get_kafka_consumer_cluster_options(cluster)
-    servers = options["bootstrap.servers"]
-    if isinstance(servers, (list, tuple)):
-        return servers
-    return [servers]
+# 7 days of TTL.
+CACHE_TTL_IN_SECONDS = 60 * 60 * 24 * 7
 
 
 class BillingMetricsConsumerStrategyFactory(ProcessingStrategyFactory[KafkaPayload]):
@@ -65,99 +29,78 @@ class BillingMetricsConsumerStrategyFactory(ProcessingStrategyFactory[KafkaPaylo
         commit: Commit,
         partitions: Mapping[Partition, int],
     ) -> ProcessingStrategy[KafkaPayload]:
-        return BillingTxCountMetricConsumerStrategy(commit)
-
-
-class MetricsBucket(TypedDict):
-    """
-    Metrics bucket as decoded from kafka.
-
-    Only defines the fields that are relevant for this consumer."""
-
-    org_id: int
-    project_id: int
-    metric_id: int
-    timestamp: int
-    value: Any
-    tags: Union[Mapping[str, str], Mapping[str, int]]
-    # not used here but allows us to use the TypedDict for assignments
-    type: NotRequired[str]
+        return BillingTxCountMetricConsumerStrategy(CommitOffsets(commit))
 
 
 class BillingTxCountMetricConsumerStrategy(ProcessingStrategy[KafkaPayload]):
-    """A metrics consumer that generates a billing outcome for each processed
-    transaction, processing a bucket at a time. The transaction count is
-    directly taken from the `c:transactions/usage@none` counter metric.
+    """A metrics consumer that generates an accepted outcome for each processed (as opposed to indexed)
+    transaction or span, processing a bucket at a time. The transaction / span count is
+    directly taken from the `c:transactions/usage@none` or `c:spans/usage@none` counter metric.
+
+    See https://develop.sentry.dev/application-architecture/dynamic-sampling/outcomes/.
     """
 
-    #: The ID of the metric used to count transactions
-    metric_id = TRANSACTION_METRICS_NAMES["c:transactions/usage@none"]
-    profile_tag_key = str(SHARED_TAG_STRINGS["has_profile"])
+    #: The IDs of the metrics used to count transactions or spans
+    metric_ids = {
+        TRANSACTION_METRICS_NAMES["c:transactions/usage@none"]: DataCategory.TRANSACTION,
+        SPAN_METRICS_NAMES["c:spans/usage@none"]: DataCategory.SPAN,
+    }
 
-    def __init__(
-        self,
-        commit: Commit,
-    ) -> None:
-        self.__commit = commit
+    def __init__(self, next_step: ProcessingStrategy[Any]) -> None:
+        self.__next_step = next_step
         self.__closed = False
 
     def poll(self) -> None:
-        pass
+        self.__next_step.poll()
 
     def terminate(self) -> None:
         self.close()
 
     def close(self) -> None:
         self.__closed = True
+        self.__next_step.close()
 
     def submit(self, message: Message[KafkaPayload]) -> None:
         assert not self.__closed
 
         payload = self._get_payload(message)
-        self._produce_billing_outcomes(payload)
-        self.__commit(message.committable)
 
-    def _get_payload(self, message: Message[KafkaPayload]) -> MetricsBucket:
-        payload = json.loads(message.payload.value.decode("utf-8"), use_rapid_json=True)
-        return cast(MetricsBucket, payload)
+        self._produce_outcomes(payload)
 
-    def _count_processed_items(self, bucket_payload: MetricsBucket) -> Mapping[DataCategory, int]:
-        if bucket_payload["metric_id"] != self.metric_id:
-            return {}
-        value = bucket_payload["value"]
+        self.__next_step.submit(message)
+
+    def _get_payload(self, message: Message[KafkaPayload]) -> GenericMetric:
+        payload = orjson.loads(message.payload.value)
+        return cast(GenericMetric, payload)
+
+    def _count_processed_items(self, generic_metric: GenericMetric) -> Mapping[DataCategory, int]:
+        metric_id = generic_metric["metric_id"]
         try:
-            quantity = max(int(value), 0)
+            data_category = self.metric_ids[metric_id]
+        except KeyError:
+            return {}
+
+        value = generic_metric["value"]
+        try:
+            quantity = max(int(value), 0)  # type: ignore[arg-type]
         except TypeError:
             # Unexpected value type for this metric ID, skip.
             return {}
 
-        items = {DataCategory.TRANSACTION: quantity}
-
-        if self._has_profile(bucket_payload):
-            # The bucket is tagged with the "has_profile" tag,
-            # so we also count the quantity of this bucket towards profiles.
-            # This assumes a "1 to 0..1" relationship between transactions and profiles.
-            items[DataCategory.PROFILE] = quantity
+        items = {data_category: quantity}
 
         return items
 
-    def _has_profile(self, bucket: MetricsBucket) -> bool:
-        return bool(
-            (tag_value := bucket["tags"].get(self.profile_tag_key))
-            and "true"
-            == reverse_resolve_tag_value(UseCaseID.TRANSACTIONS, bucket["org_id"], tag_value)
-        )
-
-    def _produce_billing_outcomes(self, payload: MetricsBucket) -> None:
-        for category, quantity in self._count_processed_items(payload).items():
-            self._produce_billing_outcome(
-                org_id=payload["org_id"],
-                project_id=payload["project_id"],
+    def _produce_outcomes(self, generic_metric: GenericMetric) -> None:
+        for category, quantity in self._count_processed_items(generic_metric).items():
+            self._produce_accepted_outcome(
+                org_id=generic_metric["org_id"],
+                project_id=generic_metric["project_id"],
                 category=category,
                 quantity=quantity,
             )
 
-    def _produce_billing_outcome(
+    def _produce_accepted_outcome(
         self, *, org_id: int, project_id: int, category: DataCategory, quantity: int
     ) -> None:
         if quantity < 1:
@@ -181,5 +124,12 @@ class BillingTxCountMetricConsumerStrategy(ProcessingStrategy[KafkaPayload]):
             quantity=quantity,
         )
 
-    def join(self, timeout: Optional[float] = None) -> None:
-        self.__commit({}, force=True)
+    def _resolve(self, mapping_meta: Mapping[str, Any], indexed_value: int) -> str | None:
+        for _, inner_meta in mapping_meta.items():
+            if (string_value := inner_meta.get(str(indexed_value))) is not None:
+                return string_value
+
+        return None
+
+    def join(self, timeout: float | None = None) -> None:
+        self.__next_step.join(timeout)

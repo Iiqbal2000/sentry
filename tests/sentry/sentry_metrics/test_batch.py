@@ -1,17 +1,29 @@
 import logging
 from collections.abc import MutableMapping
 from datetime import datetime, timezone
-from typing import Any
-from unittest.mock import patch
 
 import pytest
 import sentry_kafka_schemas
 from arroyo.backends.kafka import KafkaPayload
 from arroyo.types import BrokerValue, Message, Partition, Topic, Value
 
-from sentry.sentry_metrics.aggregation_option_registry import AggregationOption
-from sentry.sentry_metrics.consumers.indexer.batch import IndexerBatch, PartitionIdxOffset
-from sentry.sentry_metrics.consumers.indexer.tags_validator import ReleaseHealthTagsValidator
+from sentry.sentry_metrics.aggregation_option_registry import (
+    AggregationOption,
+    TimeWindow,
+    get_aggregation_options,
+)
+from sentry.sentry_metrics.configuration import (
+    GENERIC_METRICS_SCHEMA_VALIDATION_RULES_OPTION_NAME,
+    RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME,
+)
+from sentry.sentry_metrics.consumers.indexer.batch import IndexerBatch
+from sentry.sentry_metrics.consumers.indexer.common import BrokerMeta
+from sentry.sentry_metrics.consumers.indexer.processing import INGEST_CODEC
+from sentry.sentry_metrics.consumers.indexer.schema_validator import MetricsSchemaValidator
+from sentry.sentry_metrics.consumers.indexer.tags_validator import (
+    GenericMetricsTagsValidator,
+    ReleaseHealthTagsValidator,
+)
 from sentry.sentry_metrics.indexer.base import FetchType, FetchTypeExt, Metadata
 from sentry.sentry_metrics.use_case_id_registry import UseCaseID
 from sentry.snuba.metrics.naming_layer.mri import SessionMRI, TransactionMRI
@@ -19,12 +31,10 @@ from sentry.testutils.helpers.options import override_options
 from sentry.utils import json
 
 MOCK_METRIC_ID_AGG_OPTION = {
-    "d:transactions/measurements.fcp@millisecond": AggregationOption.HIST,
-    "d:transactions/measurements.lcp@millisecond": AggregationOption.HIST,
-    "d:transactions/alert@none": AggregationOption.TEN_SECOND,
+    "d:transactions/measurements.fcp@millisecond": {AggregationOption.HIST: TimeWindow.NINETY_DAYS},
+    "d:transactions/measurements.lcp@millisecond": {AggregationOption.HIST: TimeWindow.NINETY_DAYS},
+    "d:transactions/alert@none": {AggregationOption.TEN_SECOND: TimeWindow.NINETY_DAYS},
 }
-
-MOCK_USE_CASE_AGG_OPTION = {UseCaseID.TRANSACTIONS: AggregationOption.TEN_SECOND}
 
 
 pytestmark = pytest.mark.sentry_metrics
@@ -90,10 +100,6 @@ extracted_string_output = {
         }
     }
 }
-
-_INGEST_CODEC: sentry_kafka_schemas.codecs.Codec[Any] = sentry_kafka_schemas.get_codec(
-    "ingest-metrics"
-)
 
 
 def _construct_messages(payloads):
@@ -244,11 +250,14 @@ def test_extract_strings_with_rollout(should_index_tag_values, expected):
         outer_message,
         should_index_tag_values,
         False,
-        input_codec=_INGEST_CODEC,
         tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
 
     assert batch.extract_strings() == expected
+    assert not batch.invalid_msg_meta
 
 
 @pytest.mark.django_db
@@ -310,8 +319,10 @@ def test_extract_strings_with_multiple_use_case_ids():
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
-        tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        tags_validator=GenericMetricsTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, GENERIC_METRICS_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == {
         UseCaseID.SPANS: {
@@ -340,6 +351,7 @@ def test_extract_strings_with_multiple_use_case_ids():
     }
 
 
+@pytest.mark.django_db
 @override_options({"sentry-metrics.indexer.disabled-namespaces": ["escalating_issues"]})
 def test_extract_strings_with_single_use_case_ids_blocked():
     """
@@ -398,8 +410,10 @@ def test_extract_strings_with_single_use_case_ids_blocked():
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
-        tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        tags_validator=GenericMetricsTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, GENERIC_METRICS_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == {
         UseCaseID.SPANS: {
@@ -412,8 +426,10 @@ def test_extract_strings_with_single_use_case_ids_blocked():
             }
         }
     }
+    assert not batch.invalid_msg_meta
 
 
+@pytest.mark.django_db
 @override_options({"sentry-metrics.indexer.disabled-namespaces": ["spans", "escalating_issues"]})
 def test_extract_strings_with_multiple_use_case_ids_blocked():
     """
@@ -470,8 +486,10 @@ def test_extract_strings_with_multiple_use_case_ids_blocked():
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
-        tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        tags_validator=GenericMetricsTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, GENERIC_METRICS_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == {
         UseCaseID.TRANSACTIONS: {
@@ -484,6 +502,7 @@ def test_extract_strings_with_multiple_use_case_ids_blocked():
             }
         },
     }
+    assert not batch.invalid_msg_meta
 
 
 @pytest.mark.django_db
@@ -558,8 +577,10 @@ def test_extract_strings_with_invalid_mri():
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
-        tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        tags_validator=GenericMetricsTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, GENERIC_METRICS_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == {
         UseCaseID.SPANS: {
@@ -586,6 +607,7 @@ def test_extract_strings_with_invalid_mri():
             }
         },
     }
+    assert batch.invalid_msg_meta == {BrokerMeta(Partition(Topic("topic"), 0), 0)}
 
 
 @pytest.mark.django_db
@@ -646,8 +668,10 @@ def test_extract_strings_with_multiple_use_case_ids_and_org_ids():
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
-        tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        tags_validator=GenericMetricsTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, GENERIC_METRICS_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == {
         UseCaseID.SPANS: {
@@ -676,161 +700,7 @@ def test_extract_strings_with_multiple_use_case_ids_and_org_ids():
             }
         },
     }
-
-
-@pytest.mark.django_db
-@patch(
-    "sentry.sentry_metrics.aggregation_option_registry.METRIC_ID_AGG_OPTION",
-    MOCK_METRIC_ID_AGG_OPTION,
-)
-@patch(
-    "sentry.sentry_metrics.aggregation_option_registry.USE_CASE_AGG_OPTION",
-    MOCK_USE_CASE_AGG_OPTION,
-)
-@override_options({"sentry-metrics.10s-granularity": True})
-def test_resolved_with_aggregation_options(caplog, settings):
-    settings.SENTRY_METRICS_INDEXER_DEBUG_LOG_SAMPLE_RATE = 1.0
-    counter_metric_id = "c:transactions/alert@none"
-    dist_metric_id = "d:transactions/measurements.fcp@millisecond"
-    set_metric_id = "s:transactions/on_demand@none"
-
-    outer_message = _construct_outer_message(
-        [
-            (
-                {
-                    **counter_payload,
-                    "name": counter_metric_id,
-                },
-                [],
-            ),
-            ({**distribution_payload, "name": dist_metric_id}, []),
-            ({**set_payload, "name": set_metric_id}, []),
-        ]
-    )
-
-    batch = IndexerBatch(
-        outer_message,
-        False,
-        False,
-        input_codec=_INGEST_CODEC,
-        tags_validator=ReleaseHealthTagsValidator().is_allowed,
-    )
-    assert batch.extract_strings() == (
-        {
-            UseCaseID.TRANSACTIONS: {
-                1: {
-                    counter_metric_id,
-                    dist_metric_id,
-                    "environment",
-                    set_metric_id,
-                    "session.status",
-                }
-            }
-        }
-    )
-
-    caplog.set_level(logging.ERROR)
-    snuba_payloads = batch.reconstruct_messages(
-        {
-            UseCaseID.TRANSACTIONS: {
-                1: {
-                    counter_metric_id: 1,
-                    dist_metric_id: 2,
-                    "environment": 3,
-                    set_metric_id: 8,
-                    "session.status": 9,
-                }
-            }
-        },
-        {
-            UseCaseID.TRANSACTIONS: {
-                1: {
-                    counter_metric_id: Metadata(id=1, fetch_type=FetchType.CACHE_HIT),
-                    dist_metric_id: Metadata(id=2, fetch_type=FetchType.CACHE_HIT),
-                    "environment": Metadata(id=3, fetch_type=FetchType.CACHE_HIT),
-                    set_metric_id: Metadata(id=8, fetch_type=FetchType.CACHE_HIT),
-                    "session.status": Metadata(id=9, fetch_type=FetchType.CACHE_HIT),
-                }
-            },
-        },
-    )
-
-    assert _get_string_indexer_log_records(caplog) == []
-
-    assert _deconstruct_messages(snuba_payloads, kafka_logical_topic="snuba-generic-metrics") == [
-        (
-            {
-                "mapping_meta": {
-                    "c": {
-                        "1": counter_metric_id,
-                        "3": "environment",
-                        "9": "session.status",
-                    },
-                },
-                "metric_id": 1,
-                "org_id": 1,
-                "project_id": 3,
-                "retention_days": 90,
-                "tags": {"3": "production", "9": "init"},
-                "timestamp": ts,
-                "type": "c",
-                "use_case_id": "transactions",
-                "value": 1.0,
-                "aggregation_option": AggregationOption.TEN_SECOND.value,
-                "sentry_received_timestamp": BROKER_TIMESTAMP.timestamp(),
-                "version": 2,
-            },
-            [("mapping_sources", b"c"), ("metric_type", "c")],
-        ),
-        (
-            {
-                "mapping_meta": {
-                    "c": {
-                        "2": dist_metric_id,
-                        "3": "environment",
-                        "9": "session.status",
-                    },
-                },
-                "metric_id": 2,
-                "org_id": 1,
-                "project_id": 3,
-                "retention_days": 90,
-                "tags": {"3": "production", "9": "healthy"},
-                "timestamp": ts,
-                "type": "d",
-                "use_case_id": "transactions",
-                "value": [4, 5, 6],
-                "aggregation_option": AggregationOption.HIST.value,
-                "sentry_received_timestamp": BROKER_TIMESTAMP.timestamp(),
-                "version": 2,
-            },
-            [("mapping_sources", b"c"), ("metric_type", "d")],
-        ),
-        (
-            {
-                "mapping_meta": {
-                    "c": {
-                        "3": "environment",
-                        "8": set_metric_id,
-                        "9": "session.status",
-                    },
-                },
-                "metric_id": 8,
-                "org_id": 1,
-                "project_id": 3,
-                "retention_days": 90,
-                "tags": {"3": "production", "9": "errored"},
-                "timestamp": ts,
-                "type": "s",
-                "use_case_id": "transactions",
-                "value": [3],
-                "aggregation_option": AggregationOption.TEN_SECOND.value,
-                "sentry_received_timestamp": BROKER_TIMESTAMP.timestamp(),
-                "version": 2,
-            },
-            [("mapping_sources", b"c"), ("metric_type", "s")],
-        ),
-    ]
+    assert not batch.invalid_msg_meta
 
 
 @pytest.mark.django_db
@@ -848,8 +718,10 @@ def test_all_resolved(caplog, settings):
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
         tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == (
         {
@@ -868,6 +740,7 @@ def test_all_resolved(caplog, settings):
             }
         }
     )
+    assert not batch.invalid_msg_meta
 
     caplog.set_level(logging.ERROR)
     snuba_payloads = batch.reconstruct_messages(
@@ -901,7 +774,7 @@ def test_all_resolved(caplog, settings):
                 }
             },
         },
-    )
+    ).data
 
     assert _get_string_indexer_log_records(caplog) == []
 
@@ -996,8 +869,10 @@ def test_all_resolved_with_routing_information(caplog, settings):
         outer_message,
         True,
         True,
-        input_codec=_INGEST_CODEC,
         tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == (
         {
@@ -1049,7 +924,7 @@ def test_all_resolved_with_routing_information(caplog, settings):
                 }
             }
         },
-    )
+    ).data
 
     assert _get_string_indexer_log_records(caplog) == []
     assert _deconstruct_routing_messages(snuba_payloads) == [
@@ -1158,8 +1033,10 @@ def test_all_resolved_retention_days_honored(caplog, settings):
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
         tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == (
         {
@@ -1178,6 +1055,7 @@ def test_all_resolved_retention_days_honored(caplog, settings):
             }
         }
     )
+    assert not batch.invalid_msg_meta
 
     caplog.set_level(logging.ERROR)
     snuba_payloads = batch.reconstruct_messages(
@@ -1211,7 +1089,7 @@ def test_all_resolved_retention_days_honored(caplog, settings):
                 }
             }
         },
-    )
+    ).data
 
     assert _get_string_indexer_log_records(caplog) == []
     assert _deconstruct_messages(snuba_payloads) == [
@@ -1314,8 +1192,10 @@ def test_batch_resolve_with_values_not_indexed(caplog, settings):
         outer_message,
         False,
         False,
-        input_codec=_INGEST_CODEC,
         tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == (
         {
@@ -1330,6 +1210,7 @@ def test_batch_resolve_with_values_not_indexed(caplog, settings):
             }
         }
     )
+    assert not batch.invalid_msg_meta
 
     caplog.set_level(logging.ERROR)
     snuba_payloads = batch.reconstruct_messages(
@@ -1355,7 +1236,7 @@ def test_batch_resolve_with_values_not_indexed(caplog, settings):
                 }
             }
         },
-    )
+    ).data
 
     assert _get_string_indexer_log_records(caplog) == []
     assert _deconstruct_messages(snuba_payloads, kafka_logical_topic="snuba-generic-metrics") == [
@@ -1454,8 +1335,10 @@ def test_metric_id_rate_limited(caplog, settings):
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
         tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == (
         {
@@ -1474,6 +1357,7 @@ def test_metric_id_rate_limited(caplog, settings):
             }
         }
     )
+    assert not batch.invalid_msg_meta
 
     caplog.set_level(logging.ERROR)
     snuba_payloads = batch.reconstruct_messages(
@@ -1513,7 +1397,7 @@ def test_metric_id_rate_limited(caplog, settings):
                 }
             }
         },
-    )
+    ).data
 
     assert _deconstruct_messages(snuba_payloads) == [
         (
@@ -1568,8 +1452,10 @@ def test_tag_key_rate_limited(caplog, settings):
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
         tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == (
         {
@@ -1588,6 +1474,7 @@ def test_tag_key_rate_limited(caplog, settings):
             }
         }
     )
+    assert not batch.invalid_msg_meta
 
     caplog.set_level(logging.ERROR)
     snuba_payloads = batch.reconstruct_messages(
@@ -1625,7 +1512,7 @@ def test_tag_key_rate_limited(caplog, settings):
                 }
             }
         },
-    )
+    ).data
 
     assert _get_string_indexer_log_records(caplog) == [
         (
@@ -1659,8 +1546,10 @@ def test_tag_value_rate_limited(caplog, settings):
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
         tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == (
         {
@@ -1679,6 +1568,7 @@ def test_tag_value_rate_limited(caplog, settings):
             }
         }
     )
+    assert not batch.invalid_msg_meta
 
     caplog.set_level(logging.ERROR)
     snuba_payloads = batch.reconstruct_messages(
@@ -1716,7 +1606,7 @@ def test_tag_value_rate_limited(caplog, settings):
                 }
             }
         },
-    )
+    ).data
 
     assert _get_string_indexer_log_records(caplog) == [
         (
@@ -1798,8 +1688,10 @@ def test_one_org_limited(caplog, settings):
         outer_message,
         True,
         False,
-        input_codec=_INGEST_CODEC,
         tags_validator=ReleaseHealthTagsValidator().is_allowed,
+        schema_validator=MetricsSchemaValidator(
+            INGEST_CODEC, RELEASE_HEALTH_SCHEMA_VALIDATION_RULES_OPTION_NAME
+        ).validate,
     )
     assert batch.extract_strings() == (
         {
@@ -1821,6 +1713,7 @@ def test_one_org_limited(caplog, settings):
             }
         }
     )
+    assert not batch.invalid_msg_meta
 
     caplog.set_level(logging.ERROR)
     snuba_payloads = batch.reconstruct_messages(
@@ -1864,7 +1757,7 @@ def test_one_org_limited(caplog, settings):
                 },
             }
         },
-    )
+    ).data
 
     assert _get_string_indexer_log_records(caplog) == [
         (
@@ -1905,107 +1798,86 @@ def test_one_org_limited(caplog, settings):
     ]
 
 
-@pytest.mark.django_db
-def test_cardinality_limiter(caplog, settings):
-    """
-    Test functionality of the indexer batch related to cardinality-limiting. More concretely, assert that `IndexerBatch.filter_messages`:
+def test_aggregation_options():
 
-    1. removes the messages from the outgoing batch
-    2. prevents strings from filtered messages from being extracted & indexed
-    3. does not crash when strings from filtered messages are not passed into reconstruct_messages
-    4. still extracts strings that exist both in filtered and unfiltered messages (eg "environment")
-    """
-    settings.SENTRY_METRICS_INDEXER_DEBUG_LOG_SAMPLE_RATE = 1.0
-
-    outer_message = _construct_outer_message(
-        [
-            (counter_payload, counter_headers),
-            (distribution_payload, distribution_headers),
-            (set_payload, set_headers),
-        ]
-    )
-
-    batch = IndexerBatch(
-        outer_message,
-        True,
-        False,
-        input_codec=_INGEST_CODEC,
-        tags_validator=ReleaseHealthTagsValidator().is_allowed,
-    )
-    keys_to_remove = list(batch.parsed_payloads_by_offset)[:2]
-    # the messages come in a certain order, and Python dictionaries preserve
-    # their insertion order. So we can hardcode offsets here.
-    assert keys_to_remove == [
-        PartitionIdxOffset(partition_idx=0, offset=0),
-        PartitionIdxOffset(partition_idx=0, offset=1),
-    ]
-    batch.filter_messages(keys_to_remove)
-    assert batch.extract_strings() == {
-        UseCaseID.SESSIONS: {
-            1: {
-                "environment",
-                "errored",
-                "production",
-                # Note, we only extracted one MRI, of the one metric that we didn't
-                # drop
-                "s:sessions/error@none",
-                "session.status",
-            },
+    with override_options(
+        {
+            "sentry-metrics.10s-granularity": False,
+            "sentry-metrics.drop-percentiles.per-use-case": ["transactions"],
         }
-    }
+    ):
 
-    snuba_payloads = batch.reconstruct_messages(
-        {
-            UseCaseID.SESSIONS: {
-                1: {
-                    "environment": 1,
-                    "errored": 2,
-                    "production": 3,
-                    "s:sessions/error@none": 4,
-                    "session.status": 5,
-                },
-            }
-        },
-        {
-            UseCaseID.SESSIONS: {
-                1: {
-                    "environment": Metadata(id=1, fetch_type=FetchType.CACHE_HIT),
-                    "errored": Metadata(id=2, fetch_type=FetchType.CACHE_HIT),
-                    "production": Metadata(id=3, fetch_type=FetchType.CACHE_HIT),
-                    "s:sessions/error@none": Metadata(id=4, fetch_type=FetchType.CACHE_HIT),
-                    "session.status": Metadata(id=5, fetch_type=FetchType.CACHE_HIT),
-                }
-            }
-        },
-    )
+        assert get_aggregation_options("c:transactions/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
+        assert get_aggregation_options("c:transactions/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
 
-    assert _deconstruct_messages(snuba_payloads) == [
-        (
-            {
-                "mapping_meta": {
-                    "c": {
-                        "1": "environment",
-                        "2": "errored",
-                        "3": "production",
-                        "4": "s:sessions/error@none",
-                        "5": "session.status",
-                    },
-                },
-                "metric_id": 4,
-                "org_id": 1,
-                "project_id": 3,
-                "retention_days": 90,
-                "tags": {"1": 3, "5": 2},
-                "timestamp": ts,
-                "type": "s",
-                "use_case_id": "sessions",
-                "value": [3],
-                "sentry_received_timestamp": BROKER_TIMESTAMP.timestamp(),
-            },
-            [
-                *set_headers,
-                ("mapping_sources", b"c"),
-                ("metric_type", "s"),
-            ],
-        )
-    ]
+    with override_options(
+        {
+            "sentry-metrics.10s-granularity": True,
+            "sentry-metrics.drop-percentiles.per-use-case": ["transactions"],
+        }
+    ):
+
+        assert get_aggregation_options("c:transactions/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
+        assert get_aggregation_options("c:transactions/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
+
+    with override_options(
+        {
+            "sentry-metrics.10s-granularity": False,
+            "sentry-metrics.drop-percentiles.per-use-case": ["transactions", "spans"],
+        }
+    ):
+
+        assert get_aggregation_options("c:transactions/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
+        assert get_aggregation_options("c:spans/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
+
+        assert get_aggregation_options("c:transactions/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
+        assert get_aggregation_options("c:transactions/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
+        assert get_aggregation_options("c:spans/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
+
+    with override_options(
+        {
+            "sentry-metrics.10s-granularity": False,
+            "sentry-metrics.drop-percentiles.per-use-case": ["transactions"],
+        }
+    ):
+
+        assert get_aggregation_options("d:transactions/measurements.fcp@millisecond") == {
+            AggregationOption.HIST: TimeWindow.NINETY_DAYS
+        }
+
+    with override_options(
+        {
+            "sentry-metrics.10s-granularity": True,
+            "sentry-metrics.drop-percentiles.per-use-case": ["transactions", "spans"],
+        }
+    ):
+
+        assert get_aggregation_options("d:transactions/measurements.fcp@millisecond") == {
+            AggregationOption.HIST: TimeWindow.NINETY_DAYS
+        }
+
+        assert get_aggregation_options("c:transactions/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }
+
+        assert get_aggregation_options("c:spans/count@none") == {
+            AggregationOption.DISABLE_PERCENTILES: TimeWindow.NINETY_DAYS
+        }

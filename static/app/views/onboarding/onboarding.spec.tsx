@@ -1,4 +1,5 @@
-import {ProjectKeys} from 'sentry-fixture/projectKeys';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {ProjectKeysFixture} from 'sentry-fixture/projectKeys';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {
@@ -10,8 +11,8 @@ import {
 
 import {OnboardingContextProvider} from 'sentry/components/onboarding/onboardingContext';
 import * as useRecentCreatedProjectHook from 'sentry/components/onboarding/useRecentCreatedProject';
-import type {PlatformKey} from 'sentry/types';
-import {OnboardingProjectStatus, Project} from 'sentry/types';
+import {OnboardingProjectStatus} from 'sentry/types/onboarding';
+import type {PlatformKey, Project} from 'sentry/types/project';
 import Onboarding from 'sentry/views/onboarding/onboarding';
 
 describe('Onboarding', function () {
@@ -24,7 +25,7 @@ describe('Onboarding', function () {
       step: 'welcome',
     };
 
-    const {routerProps, routerContext, organization} = initializeOrg({
+    const {routerProps, router, organization} = initializeOrg({
       router: {
         params: routeParams,
       },
@@ -35,13 +36,12 @@ describe('Onboarding', function () {
         <Onboarding {...routerProps} />
       </OnboardingContextProvider>,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );
 
     expect(screen.getByLabelText('Start')).toBeInTheDocument();
-    expect(screen.getByLabelText('Invite Team')).toBeInTheDocument();
   });
 
   it('renders the select platform step', async function () {
@@ -49,7 +49,7 @@ describe('Onboarding', function () {
       step: 'select-platform',
     };
 
-    const {routerProps, routerContext, organization} = initializeOrg({
+    const {routerProps, router, organization} = initializeOrg({
       router: {
         params: routeParams,
       },
@@ -60,7 +60,7 @@ describe('Onboarding', function () {
         <Onboarding {...routerProps} />
       </OnboardingContextProvider>,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );
@@ -71,7 +71,7 @@ describe('Onboarding', function () {
   });
 
   it('renders the setup docs step', async function () {
-    const nextJsProject: Project = TestStubs.Project({
+    const nextJsProject: Project = ProjectFixture({
       platform: 'javascript-nextjs',
       id: '2',
       slug: 'javascript-nextjs-slug',
@@ -81,7 +81,7 @@ describe('Onboarding', function () {
       step: 'setup-docs',
     };
 
-    const {routerProps, routerContext, organization} = initializeOrg({
+    const {routerProps, router, organization} = initializeOrg({
       router: {
         params: routeParams,
       },
@@ -110,7 +110,7 @@ describe('Onboarding', function () {
     MockApiClient.addMockResponse({
       url: `/projects/org-slug/${nextJsProject.slug}/keys/`,
       method: 'GET',
-      body: [ProjectKeys()[0]],
+      body: [ProjectKeysFixture()[0]],
     });
 
     jest
@@ -135,6 +135,8 @@ describe('Onboarding', function () {
             type: 'framework',
             language: 'javascript',
             category: 'browser',
+            name: 'Next.js',
+            link: 'https://docs.sentry.io/platforms/javascript/guides/nextjs/',
           },
           projects: {
             [nextJsProject.id]: {
@@ -148,7 +150,7 @@ describe('Onboarding', function () {
         <Onboarding {...routerProps} />
       </OnboardingContextProvider>,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );
@@ -157,12 +159,12 @@ describe('Onboarding', function () {
   });
 
   it('renders SDK data removal modal when going back', async function () {
-    const reactProject: Project = TestStubs.Project({
+    const reactProject: Project = ProjectFixture({
       platform: 'javascript-react',
       id: '2',
       slug: 'javascript-react-slug',
       firstTransactionEvent: false,
-      firstEvent: false,
+      firstEvent: null,
       hasReplays: false,
       hasSessions: false,
     });
@@ -171,7 +173,7 @@ describe('Onboarding', function () {
       step: 'setup-docs',
     };
 
-    const {routerProps, routerContext, organization} = initializeOrg({
+    const {routerProps, router, organization} = initializeOrg({
       router: {
         params: routeParams,
       },
@@ -190,7 +192,7 @@ describe('Onboarding', function () {
     MockApiClient.addMockResponse({
       url: `/projects/org-slug/${reactProject.slug}/keys/`,
       method: 'GET',
-      body: [ProjectKeys()[0]],
+      body: [ProjectKeysFixture()[0]],
     });
 
     MockApiClient.addMockResponse({
@@ -220,6 +222,8 @@ describe('Onboarding', function () {
             type: 'framework',
             language: 'javascript',
             category: 'browser',
+            name: 'Rect',
+            link: 'https://docs.sentry.io/platforms/javascript/guides/react/',
           },
           projects: {
             [reactProject.id]: {
@@ -233,7 +237,7 @@ describe('Onboarding', function () {
         <Onboarding {...routerProps} />
       </OnboardingContextProvider>,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );
@@ -256,7 +260,7 @@ describe('Onboarding', function () {
   });
 
   it('does not render SDK data removal modal when going back', async function () {
-    const reactProject: Project = TestStubs.Project({
+    const reactProject: Project = ProjectFixture({
       platform: 'javascript-react',
       id: '2',
       slug: 'javascript-react-slug',
@@ -266,7 +270,7 @@ describe('Onboarding', function () {
       step: 'setup-docs',
     };
 
-    const {routerProps, routerContext, organization} = initializeOrg({
+    const {routerProps, router, organization} = initializeOrg({
       router: {
         params: routeParams,
       },
@@ -285,7 +289,7 @@ describe('Onboarding', function () {
     MockApiClient.addMockResponse({
       url: `/projects/org-slug/${reactProject.slug}/keys/`,
       method: 'GET',
-      body: [ProjectKeys()[0]],
+      body: [ProjectKeysFixture()[0]],
     });
 
     MockApiClient.addMockResponse({
@@ -315,6 +319,8 @@ describe('Onboarding', function () {
             type: 'framework',
             language: 'javascript',
             category: 'browser',
+            name: 'Rect',
+            link: 'https://docs.sentry.io/platforms/javascript/guides/react/',
           },
           projects: {
             [reactProject.id]: {
@@ -328,7 +334,7 @@ describe('Onboarding', function () {
         <Onboarding {...routerProps} />
       </OnboardingContextProvider>,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );
@@ -352,10 +358,7 @@ describe('Onboarding', function () {
       step: 'select-platform',
     };
 
-    const {routerProps, routerContext, organization} = initializeOrg({
-      organization: {
-        features: ['onboarding-sdk-selection'],
-      },
+    const {routerProps, router, organization} = initializeOrg({
       router: {
         params: routeParams,
       },
@@ -366,7 +369,7 @@ describe('Onboarding', function () {
         <Onboarding {...routerProps} />
       </OnboardingContextProvider>,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );
@@ -381,9 +384,6 @@ describe('Onboarding', function () {
 
     // Modal is open
     await screen.findByText('Do you use a framework?');
-
-    // Close modal
-    await userEvent.click(screen.getByRole('button', {name: 'Skip'}));
   });
 
   it('does not render framework selection modal if vanilla js is NOT selected', async function () {
@@ -391,10 +391,7 @@ describe('Onboarding', function () {
       step: 'select-platform',
     };
 
-    const {routerProps, routerContext, organization} = initializeOrg({
-      organization: {
-        features: ['onboarding-sdk-selection'],
-      },
+    const {routerProps, router, organization} = initializeOrg({
       router: {
         params: routeParams,
       },
@@ -405,7 +402,7 @@ describe('Onboarding', function () {
         <Onboarding {...routerProps} />
       </OnboardingContextProvider>,
       {
-        context: routerContext,
+        router,
         organization,
       }
     );

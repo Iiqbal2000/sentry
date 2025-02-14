@@ -1,8 +1,7 @@
-import {useEffect, useMemo, useState} from 'react';
-import {RouteComponentProps} from 'react-router';
+import {useEffect, useMemo, useRef, useState} from 'react';
+import type {Location} from 'react-router-dom';
 import styled from '@emotion/styled';
 import cloneDeep from 'lodash/cloneDeep';
-import isEmpty from 'lodash/isEmpty';
 import omit from 'lodash/omit';
 import set from 'lodash/set';
 
@@ -10,9 +9,9 @@ import {validateWidget} from 'sentry/actionCreators/dashboards';
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
 import {fetchOrgMembers} from 'sentry/actionCreators/members';
 import {loadOrganizationTags} from 'sentry/actionCreators/tags';
-import FieldWrapper from 'sentry/components/forms/fieldGroup/fieldWrapper';
-import InputField from 'sentry/components/forms/fields/inputField';
+import {FieldWrapper} from 'sentry/components/forms/fieldGroup/fieldWrapper';
 import TextareaField from 'sentry/components/forms/fields/textareaField';
+import TextField from 'sentry/components/forms/fields/textField';
 import * as Layout from 'sentry/components/layouts/thirds';
 import List from 'sentry/components/list';
 import ListItem from 'sentry/components/list/listItem';
@@ -21,48 +20,61 @@ import PageFiltersContainer from 'sentry/components/organizations/pageFilters/co
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {DateString, Organization, PageFilters, TagCollection} from 'sentry/types';
-import {defined, objectIsEmpty} from 'sentry/utils';
+import type {DateString, PageFilters} from 'sentry/types/core';
+import type {TagCollection} from 'sentry/types/group';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import {defined} from 'sentry/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
+import {WidgetBuilderVersion} from 'sentry/utils/analytics/dashboardsAnalyticsEvents';
 import {CustomMeasurementsProvider} from 'sentry/utils/customMeasurements/customMeasurementsProvider';
-import {TableDataWithTitle} from 'sentry/utils/discover/discoverQuery';
+import type {TableDataWithTitle} from 'sentry/utils/discover/discoverQuery';
 import EventView from 'sentry/utils/discover/eventView';
+import type {QueryFieldValue} from 'sentry/utils/discover/fields';
 import {
   explodeField,
   generateFieldAsString,
   getColumnsAndAggregates,
   getColumnsAndAggregatesAsStrings,
-  QueryFieldValue,
 } from 'sentry/utils/discover/fields';
+import {DatasetSource} from 'sentry/utils/discover/types';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
 import {MetricsCardinalityProvider} from 'sentry/utils/performance/contexts/metricsCardinality';
+import {MetricsResultsMetaProvider} from 'sentry/utils/performance/contexts/metricsEnhancedPerformanceDataContext';
 import {MEPSettingProvider} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
+import {
+  isOnDemandMetricWidget,
+  OnDemandControlProvider,
+} from 'sentry/utils/performance/contexts/onDemandControl';
+import {OnRouteLeave} from 'sentry/utils/reactRouter6Compat/onRouteLeave';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 import useApi from 'sentry/utils/useApi';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
+import useOrganization from 'sentry/utils/useOrganization';
+import useTags from 'sentry/utils/useTags';
 import withPageFilters from 'sentry/utils/withPageFilters';
-import withTags from 'sentry/utils/withTags';
 import {
   assignTempId,
   enforceWidgetHeightValues,
   generateWidgetsAfterCompaction,
   getDefaultWidgetHeight,
 } from 'sentry/views/dashboards/layoutUtils';
+import type {DashboardDetails, Widget, WidgetQuery} from 'sentry/views/dashboards/types';
 import {
-  DashboardDetails,
   DashboardWidgetSource,
   DisplayType,
-  Widget,
-  WidgetQuery,
   WidgetType,
 } from 'sentry/views/dashboards/types';
+import {useSpanTags} from 'sentry/views/explore/contexts/spanTagsContext';
 import {MetricsDataSwitcher} from 'sentry/views/performance/landing/metricsDataSwitcher';
 
 import {DEFAULT_STATS_PERIOD} from '../data';
 import {getDatasetConfig} from '../datasetConfig/base';
+import {useValidateWidgetQuery} from '../hooks/useValidateWidget';
 import {hasThresholdMaxValue} from '../utils';
 import {
   DashboardsMEPConsumer,
   DashboardsMEPProvider,
 } from '../widgetCard/dashboardsMEPContext';
+import type WidgetLegendSelectionState from '../widgetLegendSelectionState';
 
 import {BuildStep} from './buildSteps/buildStep';
 import {ColumnsStep} from './buildSteps/columnsStep';
@@ -70,10 +82,11 @@ import {DataSetStep} from './buildSteps/dataSetStep';
 import {FilterResultsStep} from './buildSteps/filterResultsStep';
 import {GroupByStep} from './buildSteps/groupByStep';
 import {SortByStep} from './buildSteps/sortByStep';
-import ThresholdsStep, {
+import type {
   ThresholdMaxKeys,
   ThresholdsConfig,
 } from './buildSteps/thresholdsStep/thresholdsStep';
+import ThresholdsStep from './buildSteps/thresholdsStep/thresholdsStep';
 import {VisualizationStep} from './buildSteps/visualizationStep';
 import {YAxisStep} from './buildSteps/yAxisStep';
 import {Footer} from './footer';
@@ -91,16 +104,27 @@ import {
 } from './utils';
 import {WidgetLibrary} from './widgetLibrary';
 
+const UNSAVED_CHANGES_MESSAGE = t(
+  'You have unsaved changes, are you sure you want to leave?'
+);
 const WIDGET_TYPE_TO_DATA_SET = {
   [WidgetType.DISCOVER]: DataSet.EVENTS,
   [WidgetType.ISSUE]: DataSet.ISSUES,
   [WidgetType.RELEASE]: DataSet.RELEASES,
+  [WidgetType.METRICS]: DataSet.METRICS,
+  [WidgetType.ERRORS]: DataSet.ERRORS,
+  [WidgetType.TRANSACTIONS]: DataSet.TRANSACTIONS,
+  [WidgetType.SPANS]: DataSet.SPANS,
 };
 
 export const DATA_SET_TO_WIDGET_TYPE = {
   [DataSet.EVENTS]: WidgetType.DISCOVER,
   [DataSet.ISSUES]: WidgetType.ISSUE,
   [DataSet.RELEASES]: WidgetType.RELEASE,
+  [DataSet.METRICS]: WidgetType.METRICS,
+  [DataSet.ERRORS]: WidgetType.ERRORS,
+  [DataSet.TRANSACTIONS]: WidgetType.TRANSACTIONS,
+  [DataSet.SPANS]: WidgetType.SPANS,
 };
 
 interface RouteParams {
@@ -116,16 +140,16 @@ interface QueryData {
   queryOrderby: string;
 }
 
-interface Props extends RouteComponentProps<RouteParams, {}> {
+interface Props extends RouteComponentProps<RouteParams> {
   dashboard: DashboardDetails;
   onSave: (widgets: Widget[]) => void;
-  organization: Organization;
   selection: PageFilters;
-  tags: TagCollection;
+  widgetLegendState: WidgetLegendSelectionState;
   displayType?: DisplayType;
   end?: DateString;
   start?: DateString;
   statsPeriod?: string | null;
+  updateDashboardSplitDecision?: (widgetId: string, splitDecision: WidgetType) => void;
 }
 
 interface State {
@@ -143,6 +167,7 @@ interface State {
   dataUnit?: string;
   description?: string;
   errors?: Record<string, any>;
+  id?: string;
   selectedDashboard?: DashboardDetails['id'];
   thresholds?: ThresholdsConfig | null;
   widgetToBeUpdated?: Widget;
@@ -152,18 +177,18 @@ function WidgetBuilder({
   dashboard,
   params,
   location,
-  organization,
   selection,
   start,
   end,
   statsPeriod,
   onSave,
-  route,
   router,
-  tags,
+  updateDashboardSplitDecision,
+  widgetLegendState,
 }: Props) {
+  const organization = useOrganization();
   const {widgetIndex, orgId, dashboardId} = params;
-  const {source, displayType, defaultTitle, limit} = location.query;
+  const {source, displayType, defaultTitle, limit, dataset} = location.query;
   const defaultWidgetQuery = getParsedDefaultWidgetQuery(
     location.query.defaultWidgetQuery
   );
@@ -175,20 +200,11 @@ function WidgetBuilder({
     defaultTableColumns = [defaultTableColumns];
   }
 
-  const hasReleaseHealthFeature = organization.features.includes('dashboards-rh-widget');
-
-  const filteredDashboardWidgets = dashboard.widgets.filter(({widgetType}) => {
-    if (widgetType === WidgetType.RELEASE) {
-      return hasReleaseHealthFeature;
-    }
-    return true;
-  });
-
   const isEditing = defined(widgetIndex);
   const widgetIndexNum = Number(widgetIndex);
   const isValidWidgetIndex =
     widgetIndexNum >= 0 &&
-    widgetIndexNum < filteredDashboardWidgets.length &&
+    widgetIndexNum < dashboard.widgets.length &&
     Number.isInteger(widgetIndexNum);
   const orgSlug = organization.slug;
 
@@ -197,8 +213,8 @@ function WidgetBuilder({
   const pageFilters: PageFilters = statsPeriod
     ? {...selection, datetime: {start: null, end: null, period: statsPeriod, utc: null}}
     : start && end
-    ? {...selection, datetime: {start, end, period: null, utc: null}}
-    : selection;
+      ? {...selection, datetime: {start, end, period: null, utc: null}}
+      : selection;
 
   // when opening from discover or issues page, the user selects the dashboard in the widget UI
   const notDashboardsOrigin = [
@@ -206,13 +222,25 @@ function WidgetBuilder({
     DashboardWidgetSource.ISSUE_DETAILS,
   ].includes(source);
 
+  const defaultWidgetType =
+    organization.features.includes('performance-discover-dataset-selector') && !isEditing // i.e. creating
+      ? WidgetType.ERRORS
+      : WidgetType.DISCOVER;
+  const defaultDataset =
+    organization.features.includes('performance-discover-dataset-selector') && !isEditing // i.e. creating
+      ? DataSet.ERRORS
+      : DataSet.EVENTS;
+  const dataSet = dataset ? dataset : defaultDataset;
+
   const api = useApi();
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   const [datasetConfig, setDataSetConfig] = useState<ReturnType<typeof getDatasetConfig>>(
-    getDatasetConfig(WidgetType.DISCOVER)
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+    getDatasetConfig(DATA_SET_TO_WIDGET_TYPE[dataSet])
   );
+
   const defaultThresholds: ThresholdsConfig = {max_values: {}, unit: null};
   const [state, setState] = useState<State>(() => {
     const defaultState: State = {
@@ -231,7 +259,7 @@ function WidgetBuilder({
       loading: !!notDashboardsOrigin,
       userHasModified: false,
       prebuiltWidgetId: null,
-      dataSet: DataSet.EVENTS,
+      dataSet,
       queryConditionsValid: true,
       selectedDashboard: dashboard.id || NEW_DASHBOARD_ID,
     };
@@ -243,7 +271,7 @@ function WidgetBuilder({
           orderby:
             defaultWidgetQuery.orderby ||
             (datasetConfig.getTableSortOptions
-              ? datasetConfig.getTableSortOptions(organization, defaultWidgetQuery)[0]
+              ? datasetConfig.getTableSortOptions(organization, defaultWidgetQuery)[0]!
                   .value
               : ''),
         },
@@ -253,10 +281,10 @@ function WidgetBuilder({
         ![DisplayType.TABLE, DisplayType.TOP_N].includes(defaultState.displayType) &&
         !(
           getIsTimeseriesChart(defaultState.displayType) &&
-          defaultState.queries[0].columns.length
+          defaultState.queries[0]!.columns.length
         )
       ) {
-        defaultState.queries[0].orderby = '';
+        defaultState.queries[0]!.orderby = '';
       }
     } else {
       defaultState.queries = [{...datasetConfig.defaultWidgetQuery}];
@@ -265,20 +293,35 @@ function WidgetBuilder({
     return defaultState;
   });
 
-  const [widgetToBeUpdated, setWidgetToBeUpdated] = useState<Widget | null>(null);
+  const [widgetToBeUpdated, setWidgetToBeUpdated] = useState<Widget | undefined>(
+    undefined
+  );
 
   // For analytics around widget library selection
   const [latestLibrarySelectionTitle, setLatestLibrarySelectionTitle] = useState<
     string | null
   >(null);
 
+  const [splitDecision, setSplitDecision] = useState<WidgetType | undefined>(undefined);
+
+  let tags: TagCollection = useTags();
+
+  // HACK: Inject EAP dataset tags when selecting the Spans dataset
+  const numericSpanTags = useSpanTags('number');
+  const stringSpanTags = useSpanTags('string');
+  if (state.dataSet === DataSet.SPANS) {
+    tags = {...numericSpanTags, ...stringSpanTags};
+  }
+
   useEffect(() => {
     trackAnalytics('dashboards_views.widget_builder.opened', {
       organization,
       new_widget: !isEditing,
+      builder_version: WidgetBuilderVersion.PAGE,
+      from: source,
     });
 
-    if (objectIsEmpty(tags)) {
+    if (isEmptyObject(tags) && dataSet !== DataSet.SPANS) {
       loadOrganizationTags(api, organization.slug, {
         ...selection,
         // Pin the request to 14d to avoid timeouts, see DD-967 for
@@ -288,9 +331,9 @@ function WidgetBuilder({
     }
 
     if (isEditing && isValidWidgetIndex) {
-      const widgetFromDashboard = filteredDashboardWidgets[widgetIndexNum];
+      const widgetFromDashboard = dashboard.widgets[widgetIndexNum]!;
 
-      let queries;
+      let queries: any;
       let newDisplayType = widgetFromDashboard.displayType;
       let newLimit = widgetFromDashboard.limit;
       if (widgetFromDashboard.displayType === DisplayType.TOP_N) {
@@ -300,7 +343,8 @@ function WidgetBuilder({
         queries = normalizeQueries({
           displayType: newDisplayType,
           queries: widgetFromDashboard.queries,
-          widgetType: widgetFromDashboard.widgetType ?? WidgetType.DISCOVER,
+          widgetType: widgetFromDashboard.widgetType ?? defaultWidgetType,
+          organization,
         }).map(query => ({
           ...query,
           // Use the last aggregate because that's where the y-axis is stored
@@ -312,11 +356,13 @@ function WidgetBuilder({
         queries = normalizeQueries({
           displayType: newDisplayType,
           queries: widgetFromDashboard.queries,
-          widgetType: widgetFromDashboard.widgetType ?? WidgetType.DISCOVER,
+          widgetType: widgetFromDashboard.widgetType ?? defaultWidgetType,
+          organization,
         });
       }
 
       setState({
+        id: widgetFromDashboard.id,
         title: widgetFromDashboard.title,
         description: widgetFromDashboard.description,
         displayType: newDisplayType,
@@ -328,7 +374,7 @@ function WidgetBuilder({
         thresholds: widgetFromDashboard.thresholds ?? defaultThresholds,
         dataSet: widgetFromDashboard.widgetType
           ? WIDGET_TYPE_TO_DATA_SET[widgetFromDashboard.widgetType]
-          : DataSet.EVENTS,
+          : defaultDataset,
         limit: newLimit,
         prebuiltWidgetId: null,
         queryConditionsValid: true,
@@ -344,25 +390,20 @@ function WidgetBuilder({
     fetchOrgMembers(api, organization.slug, selection.projects?.map(String));
   }, [selection.projects, api, organization.slug]);
 
-  useEffect(() => {
-    const onUnload = () => {
-      if (!isSubmitting && state.userHasModified) {
-        return t('You have unsaved changes, are you sure you want to leave?');
-      }
-      return undefined;
-    };
-
-    router.setRouteLeaveHook(route, onUnload);
-  }, [isSubmitting, state.userHasModified, route, router]);
-
-  const widgetType =
-    state.dataSet === DataSet.EVENTS
-      ? WidgetType.DISCOVER
-      : state.dataSet === DataSet.ISSUES
-      ? WidgetType.ISSUE
-      : WidgetType.RELEASE;
+  function onRouteLeave(locationChange: {
+    currentLocation: Location;
+    nextLocation: Location;
+  }): boolean {
+    return (
+      locationChange.currentLocation.pathname !== locationChange.nextLocation.pathname &&
+      !isSubmittingRef.current &&
+      state.userHasModified
+    );
+  }
+  const widgetType = DATA_SET_TO_WIDGET_TYPE[state.dataSet];
 
   const currentWidget = {
+    id: state.id,
     title: state.title,
     description: state.description,
     displayType: state.displayType,
@@ -373,6 +414,10 @@ function WidgetBuilder({
     widgetType,
   };
 
+  const isOnDemandWidget = isOnDemandMetricWidget(currentWidget);
+
+  const validatedWidgetResponse = useValidateWidgetQuery(currentWidget);
+
   const currentDashboardId = state.selectedDashboard ?? dashboardId;
   const queryParamsWithoutSource = omit(location.query, 'source');
   const previousLocation = {
@@ -380,7 +425,10 @@ function WidgetBuilder({
       defined(currentDashboardId) && currentDashboardId !== NEW_DASHBOARD_ID
         ? `/organizations/${orgId}/dashboard/${currentDashboardId}/`
         : `/organizations/${orgId}/dashboards/${NEW_DASHBOARD_ID}/`,
-    query: isEmpty(queryParamsWithoutSource) ? undefined : queryParamsWithoutSource,
+    query:
+      Object.keys(queryParamsWithoutSource).length === 0
+        ? undefined
+        : queryParamsWithoutSource,
   };
 
   const isTimeseriesChart = getIsTimeseriesChart(state.displayType);
@@ -401,12 +449,13 @@ function WidgetBuilder({
           'queries',
           normalizeQueries({
             displayType: newDisplayType,
-            queries: [{...getDatasetConfig(WidgetType.DISCOVER).defaultWidgetQuery}],
-            widgetType: WidgetType.DISCOVER,
+            queries: [{...getDatasetConfig(defaultWidgetType).defaultWidgetQuery}],
+            widgetType: defaultWidgetType,
+            organization,
           })
         );
-        set(newState, 'dataSet', DataSet.EVENTS);
-        setDataSetConfig(getDatasetConfig(WidgetType.DISCOVER));
+        set(newState, 'dataSet', defaultDataset);
+        setDataSetConfig(getDatasetConfig(defaultWidgetType));
         return {...newState, errors: undefined};
       }
 
@@ -414,6 +463,7 @@ function WidgetBuilder({
         displayType: newDisplayType,
         queries: prevState.queries,
         widgetType: DATA_SET_TO_WIDGET_TYPE[prevState.dataSet],
+        organization,
       });
 
       if (newDisplayType === DisplayType.TOP_N) {
@@ -460,14 +510,14 @@ function WidgetBuilder({
 
       if (
         getIsTimeseriesChart(newDisplayType) &&
-        normalized[0].columns.filter(column => !!column).length
+        normalized[0]!.columns.filter(column => !!column).length
       ) {
         // If a limit already exists (i.e. going between timeseries) then keep it,
         // otherwise calculate a limit
         newState.limit =
           prevState.limit ??
           Math.min(
-            getResultsLimit(normalized.length, normalized[0].columns.length),
+            getResultsLimit(normalized.length, normalized[0]!.columns.length),
             DEFAULT_RESULTS_LIMIT
           );
       } else {
@@ -500,16 +550,6 @@ function WidgetBuilder({
   function handleDisplayTypeOrAnnotationChange<
     F extends keyof Pick<State, 'displayType' | 'title' | 'description'>,
   >(field: F, value: State[F]) {
-    value &&
-      trackAnalytics('dashboards_views.widget_builder.change', {
-        from: source,
-        field,
-        value,
-        widget_type: widgetType,
-        organization,
-        new_widget: !isEditing,
-      });
-
     setState(prevState => {
       const newState = cloneDeep(prevState);
       set(newState, field, value);
@@ -532,6 +572,7 @@ function WidgetBuilder({
       widget_type: widgetType,
       organization,
       new_widget: !isEditing,
+      builder_version: WidgetBuilderVersion.PAGE,
     });
     setState(prevState => {
       const newState = cloneDeep(prevState);
@@ -542,15 +583,26 @@ function WidgetBuilder({
         set(newState, 'displayType', DisplayType.TABLE);
       }
 
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       const config = getDatasetConfig(DATA_SET_TO_WIDGET_TYPE[newDataSet]);
       setDataSetConfig(config);
 
-      newState.queries.push(
-        ...(widgetToBeUpdated?.widgetType &&
-        WIDGET_TYPE_TO_DATA_SET[widgetToBeUpdated.widgetType] === newDataSet
-          ? widgetToBeUpdated.queries
-          : [{...config.defaultWidgetQuery}])
-      );
+      const didDatasetChange =
+        widgetToBeUpdated?.widgetType &&
+        WIDGET_TYPE_TO_DATA_SET[widgetToBeUpdated.widgetType] === newDataSet;
+
+      if (
+        [DataSet.ERRORS, DataSet.TRANSACTIONS].includes(prevState.dataSet) &&
+        [DataSet.ERRORS, DataSet.TRANSACTIONS].includes(newDataSet as DataSet)
+      ) {
+        newState.queries = prevState.queries;
+      } else {
+        newState.queries.push(
+          ...(didDatasetChange
+            ? widgetToBeUpdated.queries
+            : [{...config.defaultWidgetQuery}])
+        );
+      }
 
       set(newState, 'userHasModified', true);
       return {...newState, errors: undefined};
@@ -562,10 +614,10 @@ function WidgetBuilder({
       const newState = cloneDeep(prevState);
       const config = getDatasetConfig(DATA_SET_TO_WIDGET_TYPE[prevState.dataSet]);
       const query = cloneDeep(config.defaultWidgetQuery);
-      query.fields = prevState.queries[0].fields;
-      query.aggregates = prevState.queries[0].aggregates;
-      query.columns = prevState.queries[0].columns;
-      query.orderby = prevState.queries[0].orderby;
+      query.fields = prevState.queries[0]!.fields;
+      query.aggregates = prevState.queries[0]!.aggregates;
+      query.columns = prevState.queries[0]!.columns;
+      query.orderby = prevState.queries[0]!.orderby;
       newState.queries.push(query);
       return newState;
     });
@@ -593,7 +645,7 @@ function WidgetBuilder({
       const fieldStrings = newFields.map(generateFieldAsString);
       const splitFields = getColumnsAndAggregatesAsStrings(newFields);
       const newState = cloneDeep(state);
-      let newQuery = cloneDeep(newState.queries[0]);
+      let newQuery = cloneDeep(newState.queries[0]!);
 
       newQuery.fields = fieldStrings;
       newQuery.aggregates = splitFields.aggregates;
@@ -631,7 +683,10 @@ function WidgetBuilder({
     return handleColumnFieldChange;
   }
 
-  function handleYAxisChange(newFields: QueryFieldValue[]) {
+  function handleYAxisChange(
+    newFields: QueryFieldValue[],
+    newSelectedAggregate?: number
+  ) {
     const fieldStrings = newFields.map(generateFieldAsString);
     const newState = cloneDeep(state);
 
@@ -660,10 +715,14 @@ function WidgetBuilder({
       return newQuery;
     });
 
+    if (defined(newSelectedAggregate)) {
+      newQueries[0]!.selectedAggregate = newSelectedAggregate;
+    }
+
     set(newState, 'queries', newQueries);
     set(newState, 'userHasModified', true);
 
-    const groupByFields = newState.queries[0].columns.filter(
+    const groupByFields = newState.queries[0]!.columns.filter(
       field => !(field === 'equation|')
     );
     if (groupByFields.length === 0) {
@@ -674,7 +733,7 @@ function WidgetBuilder({
         'limit',
         Math.min(
           newState.limit ?? DEFAULT_RESULTS_LIMIT,
-          getResultsLimit(newQueries.length, newQueries[0].aggregates.length)
+          getResultsLimit(newQueries.length, newQueries[0]!.aggregates.length)
         )
       );
     }
@@ -698,7 +757,7 @@ function WidgetBuilder({
         newQuery.orderby = '';
       } else if (!newQuery.orderby) {
         const orderOptions = generateOrderOptions({
-          widgetType: widgetType ?? WidgetType.DISCOVER,
+          widgetType: widgetType ?? defaultWidgetType,
           columns: query.columns,
           aggregates: query.aggregates,
         });
@@ -707,7 +766,7 @@ function WidgetBuilder({
         if (!orderOptions.length) {
           newQuery.orderby = '';
         } else {
-          orderOption = orderOptions[0].value;
+          orderOption = orderOptions[0]!.value;
           newQuery.orderby = `-${orderOption}`;
         }
       }
@@ -717,7 +776,7 @@ function WidgetBuilder({
     set(newState, 'userHasModified', true);
     set(newState, 'queries', newQueries);
 
-    const groupByFields = newState.queries[0].columns.filter(
+    const groupByFields = newState.queries[0]!.columns.filter(
       field => !(field === 'equation|')
     );
 
@@ -729,7 +788,7 @@ function WidgetBuilder({
         'limit',
         Math.min(
           newState.limit ?? DEFAULT_RESULTS_LIMIT,
-          getResultsLimit(newQueries.length, newQueries[0].aggregates.length)
+          getResultsLimit(newQueries.length, newQueries[0]!.aggregates.length)
         )
       );
     }
@@ -759,14 +818,23 @@ function WidgetBuilder({
       return;
     }
 
-    setIsSubmitting(true);
+    isSubmittingRef.current = true;
     let nextWidgetList = [...dashboard.widgets];
     const updateWidgetIndex = getUpdateWidgetIndex();
     nextWidgetList.splice(updateWidgetIndex, 1);
     nextWidgetList = generateWidgetsAfterCompaction(nextWidgetList);
 
+    const unselectedSeriesQuery = widgetLegendState.setMultipleWidgetSelectionStateURL(
+      {...dashboard, widgets: nextWidgetList},
+      widgetToBeUpdated
+    );
     onSave(nextWidgetList);
-    router.push(normalizeUrl(previousLocation));
+    router.push(
+      normalizeUrl({
+        ...previousLocation,
+        query: {...previousLocation.query, unselectedSeries: unselectedSeriesQuery},
+      })
+    );
   }
 
   async function handleSave() {
@@ -785,7 +853,9 @@ function WidgetBuilder({
       widgetData.limit = undefined;
     }
 
-    if (!(await dataIsValid(widgetData))) {
+    const isValid = await dataIsValid(widgetData);
+
+    if (!isValid) {
       return;
     }
 
@@ -797,7 +867,7 @@ function WidgetBuilder({
       });
     }
 
-    setIsSubmitting(true);
+    isSubmittingRef.current = true;
     if (notDashboardsOrigin) {
       submitFromSelectedDashboard(widgetData);
       return;
@@ -806,7 +876,10 @@ function WidgetBuilder({
     if (widgetToBeUpdated) {
       let nextWidgetList = [...dashboard.widgets];
       const updateWidgetIndex = getUpdateWidgetIndex();
-      const nextWidgetData = {...widgetData, id: widgetToBeUpdated.id};
+      const nextWidgetData = {
+        ...widgetData,
+        id: widgetToBeUpdated.id,
+      };
 
       // Only modify and re-compact if the default height has changed
       if (
@@ -819,13 +892,22 @@ function WidgetBuilder({
         nextWidgetList[updateWidgetIndex] = nextWidgetData;
       }
 
+      const unselectedSeriesParam = widgetLegendState.setMultipleWidgetSelectionStateURL(
+        {
+          ...dashboard,
+          widgets: [...nextWidgetList],
+        },
+        nextWidgetData
+      );
+      const query = {...location.query, unselectedSeries: unselectedSeriesParam};
       onSave(nextWidgetList);
       addSuccessMessage(t('Updated widget.'));
-      goToDashboards(dashboardId ?? NEW_DASHBOARD_ID);
+      goToDashboards(dashboardId ?? NEW_DASHBOARD_ID, query);
       trackAnalytics('dashboards_views.widget_builder.save', {
         organization,
-        data_set: widgetData.widgetType ?? WidgetType.DISCOVER,
+        data_set: widgetData.widgetType ?? defaultWidgetType,
         new_widget: false,
+        builder_version: WidgetBuilderVersion.PAGE,
       });
       return;
     }
@@ -835,8 +917,9 @@ function WidgetBuilder({
     goToDashboards(dashboardId ?? NEW_DASHBOARD_ID);
     trackAnalytics('dashboards_views.widget_builder.save', {
       organization,
-      data_set: widgetData.widgetType ?? WidgetType.DISCOVER,
+      data_set: widgetData.widgetType ?? defaultWidgetType,
       new_widget: true,
+      builder_version: WidgetBuilderVersion.PAGE,
     });
   }
 
@@ -865,10 +948,10 @@ function WidgetBuilder({
       queryNames: [],
       queryConditions: [],
       queryFields: [
-        ...widgetData.queries[0].columns,
-        ...widgetData.queries[0].aggregates,
+        ...widgetData.queries[0]!.columns,
+        ...widgetData.queries[0]!.aggregates,
       ],
-      queryOrderby: widgetData.queries[0].orderby,
+      queryOrderby: widgetData.queries[0]!.orderby,
     };
 
     widgetData.queries.forEach(query => {
@@ -880,6 +963,7 @@ function WidgetBuilder({
       displayType: widgetData.displayType,
       interval: widgetData.interval,
       title: widgetData.title,
+      widgetType: widgetData.widgetType,
       ...queryData,
       // Propagate page filters
       project: pageFilters.projects,
@@ -894,18 +978,20 @@ function WidgetBuilder({
 
   function goToDashboards(id: string, query?: Record<string, any>) {
     const pathQuery =
-      !isEmpty(queryParamsWithoutSource) || query
+      Object.keys(queryParamsWithoutSource).length > 0 || query
         ? {
             ...queryParamsWithoutSource,
             ...query,
           }
-        : undefined;
+        : {};
+
+    const sanitizedQuery = omit(pathQuery, ['defaultWidgetQuery', 'defaultTitle']);
 
     if (id === NEW_DASHBOARD_ID) {
       router.push(
         normalizeUrl({
           pathname: `/organizations/${organization.slug}/dashboards/new/`,
-          query: pathQuery,
+          query: sanitizedQuery,
         })
       );
       return;
@@ -914,7 +1000,7 @@ function WidgetBuilder({
     router.push(
       normalizeUrl({
         pathname: `/organizations/${organization.slug}/dashboard/${id}/`,
-        query: pathQuery,
+        query: sanitizedQuery,
       })
     );
   }
@@ -952,9 +1038,9 @@ function WidgetBuilder({
   }
 
   function handleWidgetDataFetched(tableData: TableDataWithTitle[]) {
-    const tableMeta = {...tableData[0].meta};
+    const tableMeta = {...tableData[0]!.meta};
     const keys = Object.keys(tableMeta);
-    const field = keys[0];
+    const field = keys[0]!;
     const dataType = tableMeta[field];
     const dataUnit = tableMeta.units?.[field];
 
@@ -970,6 +1056,19 @@ function WidgetBuilder({
 
       return newState;
     });
+  }
+
+  function handleUpdateWidgetSplitDecision(decision: WidgetType) {
+    setState(prevState => {
+      return {...cloneDeep(prevState), dataSet: WIDGET_TYPE_TO_DATA_SET[decision]};
+    });
+
+    if (currentWidget.id) {
+      // Update the dashboard state with the split decision, in case
+      // the user cancels editing the widget after the decision was made
+      updateDashboardSplitDecision?.(currentWidget.id, decision);
+    }
+    setSplitDecision(decision);
   }
 
   function isFormInvalid() {
@@ -989,6 +1088,7 @@ function WidgetBuilder({
 
   const canAddSearchConditions =
     [DisplayType.LINE, DisplayType.AREA, DisplayType.BAR].includes(state.displayType) &&
+    state.dataSet !== DataSet.SPANS &&
     state.queries.length < 3;
 
   const hideLegendAlias = [DisplayType.TABLE, DisplayType.BIG_NUMBER].includes(
@@ -997,7 +1097,7 @@ function WidgetBuilder({
 
   // Tabular visualizations will always have only one query and that query cannot be deleted,
   // so we will always have the first query available to get data from.
-  const {columns, aggregates, fields, fieldAliases = []} = state.queries[0];
+  const {columns, aggregates, fields, fieldAliases = []} = state.queries[0]!;
 
   const explodedColumns = useMemo(() => {
     return columns.map((field, index) =>
@@ -1034,237 +1134,302 @@ function WidgetBuilder({
     );
   }
 
+  const widgetDiscoverSplitSource = isValidWidgetIndex
+    ? dashboard.widgets[widgetIndexNum]!.datasetSource
+    : undefined;
+  const originalWidgetType = isValidWidgetIndex
+    ? dashboard.widgets[widgetIndexNum]!.widgetType
+    : undefined;
+
   return (
     <SentryDocumentTitle title={dashboard.title} orgSlug={orgSlug}>
       <PageFiltersContainer
         defaultSelection={{
           datetime: {start: null, end: null, utc: null, period: DEFAULT_STATS_PERIOD},
         }}
+        disablePersistence
+        skipLoadLastUsed
       >
+        <OnRouteLeave message={UNSAVED_CHANGES_MESSAGE} when={onRouteLeave} />
         <CustomMeasurementsProvider organization={organization} selection={selection}>
-          <DashboardsMEPProvider>
-            <MetricsCardinalityProvider organization={organization} location={location}>
-              <MetricsDataSwitcher
-                organization={organization}
-                eventView={EventView.fromLocation(location)}
-                location={location}
-                hideLoadingIndicator
-              >
-                {metricsDataSide => (
-                  <MEPSettingProvider
+          <OnDemandControlProvider location={location}>
+            <MetricsResultsMetaProvider>
+              <DashboardsMEPProvider>
+                <MetricsCardinalityProvider
+                  organization={organization}
+                  location={location}
+                >
+                  <MetricsDataSwitcher
+                    organization={organization}
+                    eventView={EventView.fromLocation(location)}
                     location={location}
-                    forceTransactions={metricsDataSide.forceTransactionsOnly}
+                    hideLoadingIndicator
                   >
-                    <Layout.Page>
-                      <Header
-                        orgSlug={orgSlug}
-                        dashboardTitle={dashboard.title}
-                        goBackLocation={previousLocation}
-                      />
-                      <Body>
-                        <MainWrapper>
-                          <Main>
-                            <BuildSteps symbol="colored-numeric">
-                              <NameWidgetStep title={t('Name your widget')}>
-                                <TitleInput
-                                  name="title"
-                                  inline={false}
-                                  aria-label={t('Widget title')}
-                                  placeholder={t('Enter title')}
-                                  error={state.errors?.title}
-                                  data-test-id="widget-builder-title-input"
-                                  onChange={newTitle => {
-                                    handleDisplayTypeOrAnnotationChange(
-                                      'title',
-                                      newTitle
-                                    );
-                                  }}
-                                  value={state.title}
-                                />
-                                <StyledTextAreaField
-                                  name="description"
-                                  rows={4}
-                                  autosize
-                                  inline={false}
-                                  aria-label={t('Widget Description')}
-                                  placeholder={t('Enter description (Optional)')}
-                                  error={state.errors?.description}
-                                  onChange={newDescription => {
-                                    handleDisplayTypeOrAnnotationChange(
-                                      'description',
-                                      newDescription
-                                    );
-                                  }}
-                                  value={state.description}
-                                />
-                              </NameWidgetStep>
-                              <VisualizationStep
-                                location={location}
-                                onDataFetched={handleWidgetDataFetched}
-                                widget={currentWidget}
-                                dashboardFilters={dashboard.filters}
-                                organization={organization}
-                                pageFilters={pageFilters}
-                                displayType={state.displayType}
-                                error={state.errors?.displayType}
-                                onChange={newDisplayType => {
-                                  handleDisplayTypeOrAnnotationChange(
-                                    'displayType',
-                                    newDisplayType
-                                  );
-                                }}
-                                noDashboardsMEPProvider
-                                isWidgetInvalid={!state.queryConditionsValid}
-                              />
-                              <DataSetStep
-                                dataSet={state.dataSet}
-                                displayType={state.displayType}
-                                onChange={handleDataSetChange}
-                                hasReleaseHealthFeature={hasReleaseHealthFeature}
-                              />
-                              {isTabularChart && (
-                                <DashboardsMEPConsumer>
-                                  {({isMetricsData}) => (
-                                    <ColumnsStep
+                    {metricsDataSide => (
+                      <MEPSettingProvider
+                        location={location}
+                        forceTransactions={metricsDataSide.forceTransactionsOnly}
+                      >
+                        <Layout.Page>
+                          <Header
+                            orgSlug={orgSlug}
+                            dashboardTitle={dashboard.title}
+                            goBackLocation={previousLocation}
+                          />
+                          <Body>
+                            <MainWrapper>
+                              <Main>
+                                <BuildSteps symbol="colored-numeric">
+                                  <NameWidgetStep title={t('Name your widget')}>
+                                    <TitleInput
+                                      name="title"
+                                      inline={false}
+                                      aria-label={t('Widget title')}
+                                      placeholder={t('Enter title')}
+                                      error={state.errors?.title}
+                                      data-test-id="widget-builder-title-input"
+                                      onChange={(newTitle: any) => {
+                                        handleDisplayTypeOrAnnotationChange(
+                                          'title',
+                                          newTitle
+                                        );
+                                      }}
+                                      value={state.title}
+                                      onBlur={() => {
+                                        trackAnalytics(
+                                          'dashboards_views.widget_builder.change',
+                                          {
+                                            from: source,
+                                            field: 'title',
+                                            value: '',
+                                            widget_type: widgetType,
+                                            organization,
+                                            new_widget: !isEditing,
+                                            builder_version: WidgetBuilderVersion.PAGE,
+                                          }
+                                        );
+                                      }}
+                                    />
+                                    <StyledTextAreaField
+                                      name="description"
+                                      rows={4}
+                                      autosize
+                                      inline={false}
+                                      aria-label={t('Widget Description')}
+                                      placeholder={t('Enter description (Optional)')}
+                                      error={state.errors?.description}
+                                      onChange={(newDescription: any) => {
+                                        handleDisplayTypeOrAnnotationChange(
+                                          'description',
+                                          newDescription
+                                        );
+                                      }}
+                                      value={state.description}
+                                      onBlur={() => {
+                                        trackAnalytics(
+                                          'dashboards_views.widget_builder.change',
+                                          {
+                                            from: source,
+                                            field: 'description',
+                                            value: '',
+                                            widget_type: widgetType,
+                                            organization,
+                                            new_widget: !isEditing,
+                                            builder_version: WidgetBuilderVersion.PAGE,
+                                          }
+                                        );
+                                      }}
+                                    />
+                                  </NameWidgetStep>
+                                  <VisualizationStep
+                                    location={location}
+                                    onDataFetched={handleWidgetDataFetched}
+                                    widget={currentWidget}
+                                    dashboardFilters={dashboard.filters}
+                                    pageFilters={pageFilters}
+                                    displayType={state.displayType}
+                                    error={state.errors?.displayType}
+                                    onChange={newDisplayType => {
+                                      handleDisplayTypeOrAnnotationChange(
+                                        'displayType',
+                                        newDisplayType
+                                      );
+                                      trackAnalytics(
+                                        'dashboards_views.widget_builder.change',
+                                        {
+                                          from: source,
+                                          field: 'displayType',
+                                          value: newDisplayType,
+                                          widget_type: widgetType,
+                                          organization,
+                                          new_widget: !isEditing,
+                                          builder_version: WidgetBuilderVersion.PAGE,
+                                        }
+                                      );
+                                    }}
+                                    isWidgetInvalid={!state.queryConditionsValid}
+                                    onWidgetSplitDecision={
+                                      handleUpdateWidgetSplitDecision
+                                    }
+                                    widgetLegendState={widgetLegendState}
+                                  />
+                                  <DataSetStep
+                                    dataSet={state.dataSet}
+                                    displayType={state.displayType}
+                                    onChange={handleDataSetChange}
+                                    splitDecision={
+                                      splitDecision ??
+                                      // The original widget type is used for a forced split decision
+                                      (widgetDiscoverSplitSource === DatasetSource.FORCED
+                                        ? originalWidgetType
+                                        : undefined)
+                                    }
+                                    source={widgetDiscoverSplitSource}
+                                  />
+                                  {isTabularChart && (
+                                    <DashboardsMEPConsumer>
+                                      {({isMetricsData}) => (
+                                        <ColumnsStep
+                                          dataSet={state.dataSet}
+                                          displayType={state.displayType}
+                                          widgetType={widgetType}
+                                          queryErrors={state.errors?.queries}
+                                          onQueryChange={handleQueryChange}
+                                          handleColumnFieldChange={getHandleColumnFieldChange(
+                                            isMetricsData
+                                          )}
+                                          explodedFields={explodedFields}
+                                          tags={tags}
+                                          isOnDemandWidget={isOnDemandWidget}
+                                        />
+                                      )}
+                                    </DashboardsMEPConsumer>
+                                  )}
+                                  {![DisplayType.TABLE].includes(state.displayType) && (
+                                    <YAxisStep
                                       dataSet={state.dataSet}
-                                      queries={state.queries}
                                       displayType={state.displayType}
                                       widgetType={widgetType}
                                       queryErrors={state.errors?.queries}
-                                      onQueryChange={handleQueryChange}
-                                      handleColumnFieldChange={getHandleColumnFieldChange(
-                                        isMetricsData
-                                      )}
-                                      explodedFields={explodedFields}
+                                      onYAxisChange={(newFields, newSelectedField) => {
+                                        handleYAxisChange(newFields, newSelectedField);
+                                      }}
+                                      aggregates={explodedAggregates}
+                                      selectedAggregate={
+                                        state.queries[0]!.selectedAggregate
+                                      }
                                       tags={tags}
-                                      organization={organization}
                                     />
                                   )}
-                                </DashboardsMEPConsumer>
-                              )}
-                              {![DisplayType.TABLE].includes(state.displayType) && (
-                                <YAxisStep
-                                  dataSet={state.dataSet}
-                                  displayType={state.displayType}
-                                  widgetType={widgetType}
-                                  queryErrors={state.errors?.queries}
-                                  onYAxisChange={newFields => {
-                                    handleYAxisChange(newFields);
-                                  }}
-                                  aggregates={explodedAggregates}
-                                  tags={tags}
-                                  organization={organization}
-                                />
-                              )}
-                              <FilterResultsStep
-                                queries={state.queries}
-                                hideLegendAlias={hideLegendAlias}
-                                canAddSearchConditions={canAddSearchConditions}
-                                organization={organization}
-                                queryErrors={state.errors?.queries}
-                                onAddSearchConditions={handleAddSearchConditions}
-                                onQueryChange={handleQueryChange}
-                                onQueryRemove={handleQueryRemove}
-                                selection={pageFilters}
-                                widgetType={widgetType}
-                                dashboardFilters={dashboard.filters}
-                                location={location}
-                                onQueryConditionChange={setQueryConditionsValid}
-                              />
-                              {isTimeseriesChart && (
-                                <GroupByStep
-                                  columns={columns
-                                    .filter(field => !(field === 'equation|'))
-                                    .map((field, index) =>
-                                      explodeField({field, alias: fieldAliases[index]})
-                                    )}
-                                  onGroupByChange={handleGroupByChange}
-                                  organization={organization}
-                                  tags={tags}
-                                  dataSet={state.dataSet}
-                                />
-                              )}
-                              {displaySortByStep && (
-                                <SortByStep
-                                  limit={state.limit}
-                                  displayType={state.displayType}
-                                  queries={state.queries}
-                                  dataSet={state.dataSet}
-                                  error={state.errors?.orderby}
-                                  onSortByChange={handleSortByChange}
-                                  onLimitChange={handleLimitChange}
-                                  organization={organization}
-                                  widgetType={widgetType}
-                                  tags={tags}
-                                />
-                              )}
-                              {state.displayType === 'big_number' &&
-                                state.dataType !== 'date' &&
-                                organization.features.includes(
-                                  'dashboard-widget-indicators'
-                                ) && (
-                                  <ThresholdsStep
-                                    onThresholdChange={handleThresholdChange}
-                                    onUnitChange={handleThresholdUnitChange}
-                                    thresholdsConfig={state.thresholds ?? null}
-                                    dataType={state.dataType}
-                                    dataUnit={state.dataUnit}
-                                    errors={state.errors?.thresholds}
+                                  <FilterResultsStep
+                                    queries={state.queries}
+                                    hideLegendAlias={hideLegendAlias}
+                                    canAddSearchConditions={canAddSearchConditions}
+                                    queryErrors={state.errors?.queries}
+                                    onAddSearchConditions={handleAddSearchConditions}
+                                    onQueryChange={handleQueryChange}
+                                    onQueryRemove={handleQueryRemove}
+                                    selection={pageFilters}
+                                    widgetType={widgetType}
+                                    dashboardFilters={dashboard.filters}
+                                    location={location}
+                                    onQueryConditionChange={setQueryConditionsValid}
+                                    validatedWidgetResponse={validatedWidgetResponse}
                                   />
-                                )}
-                            </BuildSteps>
-                          </Main>
-                          <Footer
-                            goBackLocation={previousLocation}
-                            isEditing={isEditing}
-                            onSave={handleSave}
-                            onDelete={handleDelete}
-                            invalidForm={isFormInvalid()}
-                          />
-                        </MainWrapper>
-                        <Side>
-                          <WidgetLibrary
-                            organization={organization}
-                            selectedWidgetId={
-                              state.userHasModified ? null : state.prebuiltWidgetId
-                            }
-                            onWidgetSelect={prebuiltWidget => {
-                              setLatestLibrarySelectionTitle(prebuiltWidget.title);
-                              setDataSetConfig(
-                                getDatasetConfig(
-                                  prebuiltWidget.widgetType || WidgetType.DISCOVER
-                                )
-                              );
-                              const {id, ...prebuiltWidgetProps} = prebuiltWidget;
-                              setState({
-                                ...state,
-                                ...prebuiltWidgetProps,
-                                dataSet: prebuiltWidget.widgetType
-                                  ? WIDGET_TYPE_TO_DATA_SET[prebuiltWidget.widgetType]
-                                  : DataSet.EVENTS,
-                                userHasModified: false,
-                                prebuiltWidgetId: id || null,
-                              });
-                            }}
-                            bypassOverwriteModal={!state.userHasModified}
-                          />
-                        </Side>
-                      </Body>
-                    </Layout.Page>
-                  </MEPSettingProvider>
-                )}
-              </MetricsDataSwitcher>
-            </MetricsCardinalityProvider>
-          </DashboardsMEPProvider>
+                                  {isTimeseriesChart && (
+                                    <GroupByStep
+                                      columns={columns
+                                        .filter(field => !(field === 'equation|'))
+                                        .map((field, index) =>
+                                          explodeField({
+                                            field,
+                                            alias: fieldAliases[index],
+                                          })
+                                        )}
+                                      onGroupByChange={handleGroupByChange}
+                                      validatedWidgetResponse={validatedWidgetResponse}
+                                      tags={tags}
+                                      dataSet={state.dataSet}
+                                    />
+                                  )}
+                                  {displaySortByStep && (
+                                    <SortByStep
+                                      limit={state.limit}
+                                      displayType={state.displayType}
+                                      queries={state.queries}
+                                      dataSet={state.dataSet}
+                                      error={state.errors?.orderby}
+                                      onSortByChange={handleSortByChange}
+                                      onLimitChange={handleLimitChange}
+                                      widgetType={widgetType}
+                                      tags={tags}
+                                    />
+                                  )}
+                                  {state.displayType === 'big_number' &&
+                                    state.dataType !== 'date' && (
+                                      <ThresholdsStep
+                                        onThresholdChange={handleThresholdChange}
+                                        onUnitChange={handleThresholdUnitChange}
+                                        thresholdsConfig={state.thresholds ?? null}
+                                        dataType={state.dataType}
+                                        dataUnit={state.dataUnit}
+                                        errors={state.errors?.thresholds}
+                                      />
+                                    )}
+                                </BuildSteps>
+                              </Main>
+                              <Footer
+                                goBackLocation={previousLocation}
+                                isEditing={isEditing}
+                                onSave={handleSave}
+                                onDelete={handleDelete}
+                                invalidForm={isFormInvalid()}
+                              />
+                            </MainWrapper>
+                            <Side>
+                              <WidgetLibrary
+                                selectedWidgetId={
+                                  state.userHasModified ? null : state.prebuiltWidgetId
+                                }
+                                onWidgetSelect={prebuiltWidget => {
+                                  setLatestLibrarySelectionTitle(prebuiltWidget.title);
+                                  setDataSetConfig(
+                                    getDatasetConfig(
+                                      prebuiltWidget.widgetType || defaultWidgetType
+                                    )
+                                  );
+                                  const {id, ...prebuiltWidgetProps} = prebuiltWidget;
+                                  setState({
+                                    ...state,
+                                    ...prebuiltWidgetProps,
+                                    dataSet: prebuiltWidget.widgetType
+                                      ? WIDGET_TYPE_TO_DATA_SET[prebuiltWidget.widgetType]
+                                      : defaultDataset,
+                                    userHasModified: false,
+                                    prebuiltWidgetId: id || null,
+                                  });
+                                }}
+                                bypassOverwriteModal={!state.userHasModified}
+                              />
+                            </Side>
+                          </Body>
+                        </Layout.Page>
+                      </MEPSettingProvider>
+                    )}
+                  </MetricsDataSwitcher>
+                </MetricsCardinalityProvider>
+              </DashboardsMEPProvider>
+            </MetricsResultsMetaProvider>
+          </OnDemandControlProvider>
         </CustomMeasurementsProvider>
       </PageFiltersContainer>
     </SentryDocumentTitle>
   );
 }
 
-export default withPageFilters(withTags(WidgetBuilder));
+export default withPageFilters(WidgetBuilder);
 
-const TitleInput = styled(InputField)`
+const TitleInput = styled(TextField)`
   padding: 0 ${space(2)} 0 0;
 `;
 

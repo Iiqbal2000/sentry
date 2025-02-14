@@ -1,6 +1,5 @@
 import {useCallback, useMemo} from 'react';
-import {WithRouterProps} from 'react-router';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import {updateProjects} from 'sentry/actionCreators/pageFilters';
 import {Alert} from 'sentry/components/alert';
@@ -9,13 +8,15 @@ import Link from 'sentry/components/links/link';
 import {SidebarPanelKey} from 'sentry/components/sidebar/types';
 import {t, tct} from 'sentry/locale';
 import SidebarPanelStore from 'sentry/stores/sidebarPanelStore';
-import {Organization, Project} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
-import {MetricDataSwitcherOutcome} from 'sentry/utils/performance/contexts/metricsCardinality';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {MetricDataSwitcherOutcome} from 'sentry/utils/performance/contexts/metricsCardinality';
 
+import type {DiscoverQueryPageSource} from '../utils';
 import {
   createUnnamedTransactionsDiscoverTarget,
-  DiscoverQueryPageSource,
   getIsMultiProject,
   getSelectedProjectPlatformsArray,
 } from '../utils';
@@ -70,7 +71,7 @@ export function MetricsDataSwitcherAlert(
       return null;
     }
 
-    const platform = platforms[0];
+    const platform = platforms[0]!;
     if (UNSUPPORTED_TRANSACTION_NAME_DOCS.includes(platform)) {
       return null;
     }

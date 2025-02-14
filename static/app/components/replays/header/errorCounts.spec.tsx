@@ -1,4 +1,7 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {ReplayErrorFixture} from 'sentry-fixture/replayError';
+import {ReplayRecordFixture} from 'sentry-fixture/replayRecord';
 
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
@@ -7,25 +10,27 @@ import useProjects from 'sentry/utils/useProjects';
 
 jest.mock('sentry/utils/useProjects');
 
-const replayRecord = TestStubs.ReplayRecord();
-const organization = Organization({});
+const replayRecord = ReplayRecordFixture();
+const organization = OrganizationFixture();
+
+const baseErrorProps = {id: '1', issue: '', timestamp: new Date().toISOString()};
 
 describe('ErrorCounts', () => {
   beforeEach(() => {
     jest.mocked(useProjects).mockReturnValue({
       fetching: false,
       projects: [
-        TestStubs.Project({
+        ProjectFixture({
           id: replayRecord.project_id,
           slug: 'my-js-app',
           platform: 'javascript',
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '123123123',
           slug: 'my-py-backend',
           platform: 'python',
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '234234234',
           slug: 'my-node-service',
           platform: 'node',
@@ -35,28 +40,27 @@ describe('ErrorCounts', () => {
       hasMore: false,
       initiallyLoaded: true,
       onSearch: () => Promise.resolve(),
+      reloadProjects: jest.fn(),
       placeholders: [],
     });
   });
 
-  it('should render 0 when there are no errors in the array', async () => {
-    const errors = [];
-
-    render(<ErrorCounts replayErrors={errors} replayRecord={replayRecord} />, {
+  it('should render 0 when there are no errors in the array', () => {
+    render(<ErrorCounts replayErrors={[]} replayRecord={replayRecord} />, {
       organization,
     });
-    const countNode = await screen.getByLabelText('number of errors');
+    const countNode = screen.getByLabelText('number of errors');
     expect(countNode).toHaveTextContent('0');
   });
 
   it('should render an icon & count when all errors come from a single project', async () => {
-    const errors = [TestStubs.ReplayError({'project.name': 'my-js-app'})];
+    const errors = [ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-js-app'})];
 
     render(<ErrorCounts replayErrors={errors} replayRecord={replayRecord} />, {
       organization,
     });
 
-    const countNode = await screen.getByLabelText('number of errors');
+    const countNode = screen.getByLabelText('number of errors');
     expect(countNode).toHaveTextContent('1');
 
     const icon = await screen.findByTestId('platform-icon-javascript');
@@ -70,16 +74,16 @@ describe('ErrorCounts', () => {
 
   it('should render an icon & count with links when there are errors in two unique projects', async () => {
     const errors = [
-      TestStubs.ReplayError({'project.name': 'my-js-app'}),
-      TestStubs.ReplayError({'project.name': 'my-py-backend'}),
-      TestStubs.ReplayError({'project.name': 'my-py-backend'}),
+      ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-js-app'}),
+      ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-py-backend'}),
+      ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-py-backend'}),
     ];
 
     render(<ErrorCounts replayErrors={errors} replayRecord={replayRecord} />, {
       organization,
     });
 
-    const countNodes = await screen.getAllByLabelText('number of errors');
+    const countNodes = screen.getAllByLabelText('number of errors');
     expect(countNodes[0]).toHaveTextContent('1');
     expect(countNodes[1]).toHaveTextContent('2');
 
@@ -88,11 +92,11 @@ describe('ErrorCounts', () => {
     const pyIcon = await screen.findByTestId('platform-icon-python');
     expect(pyIcon).toBeInTheDocument();
 
-    expect(countNodes[0].parentElement).toHaveAttribute(
+    expect(countNodes[0]!.parentElement).toHaveAttribute(
       'href',
       '/mock-pathname/?f_e_project=my-js-app&t_main=errors'
     );
-    expect(countNodes[1].parentElement).toHaveAttribute(
+    expect(countNodes[1]!.parentElement).toHaveAttribute(
       'href',
       '/mock-pathname/?f_e_project=my-py-backend&t_main=errors'
     );
@@ -100,19 +104,19 @@ describe('ErrorCounts', () => {
 
   it('should render multiple icons, but a single count and link, when there are errors in three or more projects', async () => {
     const errors = [
-      TestStubs.ReplayError({'project.name': 'my-js-app'}),
-      TestStubs.ReplayError({'project.name': 'my-py-backend'}),
-      TestStubs.ReplayError({'project.name': 'my-py-backend'}),
-      TestStubs.ReplayError({'project.name': 'my-node-service'}),
-      TestStubs.ReplayError({'project.name': 'my-node-service'}),
-      TestStubs.ReplayError({'project.name': 'my-node-service'}),
+      ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-js-app'}),
+      ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-py-backend'}),
+      ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-py-backend'}),
+      ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-node-service'}),
+      ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-node-service'}),
+      ReplayErrorFixture({...baseErrorProps, 'project.name': 'my-node-service'}),
     ];
 
     render(<ErrorCounts replayErrors={errors} replayRecord={replayRecord} />, {
       organization,
     });
 
-    const countNode = await screen.getByLabelText('total errors');
+    const countNode = screen.getByLabelText('total errors');
     expect(countNode).toHaveTextContent('6');
 
     const jsIcon = await screen.findByTestId('platform-icon-javascript');
@@ -121,7 +125,7 @@ describe('ErrorCounts', () => {
     const pyIcon = await screen.findByTestId('platform-icon-python');
     expect(pyIcon).toBeInTheDocument();
 
-    const plusOne = await screen.getByLabelText('hidden projects');
+    const plusOne = screen.getByLabelText('hidden projects');
     expect(plusOne).toHaveTextContent('+1');
 
     expect(countNode.parentElement).toHaveAttribute(

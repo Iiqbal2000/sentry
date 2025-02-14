@@ -1,3 +1,5 @@
+import {EventFixture} from 'sentry-fixture/event';
+
 import {initializeData} from 'sentry-test/performance/initializePerformanceData';
 import {
   MockSpan,
@@ -6,7 +8,9 @@ import {
 } from 'sentry-test/performance/utils';
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
-import {EntryType, IssueTitle, IssueType} from 'sentry/types';
+import type {EventTransaction} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
+import {IssueTitle, IssueType} from 'sentry/types/group';
 import {sanitizeQuerySelector} from 'sentry/utils/sanitizeQuerySelector';
 
 import {SpanEvidenceSection} from './spanEvidence';
@@ -74,7 +78,7 @@ describe('spanEvidence', () => {
 
     render(
       <SpanEvidenceSection
-        event={builder.getEvent()}
+        event={builder.getEventFixture()}
         organization={organization}
         projectSlug={project.slug}
       />,
@@ -88,7 +92,7 @@ describe('spanEvidence', () => {
   });
 
   it('renders settings button for issue with configurable thresholds', () => {
-    const event = TestStubs.Event({
+    const event = EventFixture({
       occurrence: {
         type: 1001,
         issueTitle: IssueTitle.PERFORMANCE_SLOW_DB_QUERY,
@@ -100,11 +104,10 @@ describe('spanEvidence', () => {
         },
       ],
     });
-    organization.features = ['project-performance-settings-admin'];
 
     render(
       <SpanEvidenceSection
-        event={event}
+        event={event as EventTransaction}
         organization={organization}
         projectSlug={project.slug}
       />,
@@ -117,14 +120,14 @@ describe('spanEvidence', () => {
     expect(settingsBtn).toBeInTheDocument();
     expect(settingsBtn).toHaveAttribute(
       'href',
-      `/settings/projects/project-slug/performance/?issueType=${
+      `/settings/${organization.slug}/projects/${project.slug}/performance/?issueType=${
         IssueType.PERFORMANCE_SLOW_DB_QUERY
       }#${sanitizeQuerySelector(IssueTitle.PERFORMANCE_SLOW_DB_QUERY)}`
     );
   });
 
   it('does not render settings button for issue without configurable thresholds', () => {
-    const event = TestStubs.Event({
+    const event = EventFixture({
       occurrence: {
         type: 2003, // profile_json_decode_main_thread
       },
@@ -138,7 +141,7 @@ describe('spanEvidence', () => {
 
     render(
       <SpanEvidenceSection
-        event={event}
+        event={event as EventTransaction}
         organization={organization}
         projectSlug={project.slug}
       />,

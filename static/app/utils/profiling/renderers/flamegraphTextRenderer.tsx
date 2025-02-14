@@ -1,6 +1,6 @@
-import {mat3} from 'gl-matrix';
+import type {mat3} from 'gl-matrix';
 
-import {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
+import type {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
 import {
   computeHighlightedBounds,
   ELLIPSIS,
@@ -11,10 +11,12 @@ import {
 } from 'sentry/utils/profiling/gl/utils';
 import {TextRenderer} from 'sentry/utils/profiling/renderers/textRenderer';
 
-import {Flamegraph} from '../flamegraph';
-import {FlamegraphTheme} from '../flamegraph/flamegraphTheme';
-import {FlamegraphFrame, getFlamegraphFrameSearchId} from '../flamegraphFrame';
-import {findRangeBinarySearch, Rect, trimTextCenter} from '../speedscope';
+import type {Flamegraph} from '../flamegraph';
+import type {FlamegraphTheme} from '../flamegraph/flamegraphTheme';
+import type {FlamegraphFrame} from '../flamegraphFrame';
+import {getFlamegraphFrameSearchId} from '../flamegraphFrame';
+import type {Rect} from '../speedscope';
+import {findRangeBinarySearch, trimTextCenter} from '../speedscope';
 
 class FlamegraphTextRenderer extends TextRenderer {
   flamegraph: Flamegraph;
@@ -100,11 +102,11 @@ class FlamegraphTextRenderer extends TextRenderer {
 
       const endChild = upperBound(configView.right, frame.children);
       for (let i = lowerBound(configView.left, frame.children); i < endChild; i++) {
-        frames.push(frame.children[i]);
+        frames.push(frame.children[i]!);
       }
 
       // If a frame is lower than the top, we can skip drawing its text, however
-      // we can only do so after we have pushed it's children into the queue or else
+      // we can only do so after we have pushed its children into the queue or else
       // those children will never be drawn and the entire sub-tree will be skipped.
       if (frame.depth < TOP_BOUNDARY) {
         continue;
@@ -145,11 +147,8 @@ class FlamegraphTextRenderer extends TextRenderer {
         if (frameResults) {
           this.context.fillStyle = HIGHLIGHT_BACKGROUND_COLOR;
 
-          for (let i = 0; i < frameResults.match.length; i++) {
-            const highlightedBounds = computeHighlightedBounds(
-              frameResults.match[i],
-              trim
-            );
+          for (const match of frameResults.match) {
+            const highlightedBounds = computeHighlightedBounds(match, trim);
 
             const frontMatter = trim.text.slice(0, highlightedBounds[0]);
             const highlightWidth = this.measureAndCacheText(

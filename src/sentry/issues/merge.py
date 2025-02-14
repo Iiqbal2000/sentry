@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, Sequence, TypedDict
+from collections.abc import Mapping, Sequence
+from typing import TypedDict
 from uuid import uuid4
 
 import rest_framework
@@ -10,9 +11,10 @@ from sentry.issues.grouptype import GroupCategory
 from sentry.models.activity import Activity
 from sentry.models.group import Group, GroupStatus
 from sentry.models.project import Project
-from sentry.models.user import User
 from sentry.tasks.merge import merge_groups
 from sentry.types.activity import ActivityType
+from sentry.users.models.user import User
+from sentry.users.services.user import RpcUser
 
 
 class MergedGroup(TypedDict):
@@ -22,8 +24,8 @@ class MergedGroup(TypedDict):
 
 def handle_merge(
     group_list: Sequence[Group],
-    project_lookup: Dict[int, Project],
-    acting_user: User | None,
+    project_lookup: Mapping[int, Project],
+    acting_user: RpcUser | User | None,
 ) -> MergedGroup:
     """
     Merge a list of groups into a single group.
@@ -31,9 +33,7 @@ def handle_merge(
     Returns a dict with the primary group id and a list of the merged group ids.
     """
     if any([group.issue_category != GroupCategory.ERROR for group in group_list]):
-        raise rest_framework.exceptions.ValidationError(
-            detail="Only error issues can be merged.", code=400
-        )
+        raise rest_framework.exceptions.ValidationError(detail="Only error issues can be merged.")
 
     group_list_by_times_seen = sorted(group_list, key=lambda g: (g.times_seen, g.id), reverse=True)
     primary_group, groups_to_merge = group_list_by_times_seen[0], group_list_by_times_seen[1:]
@@ -43,7 +43,9 @@ def handle_merge(
         primary_group.project_id, group_ids_to_merge, primary_group.id
     )
 
-    Group.objects.filter(id__in=group_ids_to_merge).update(status=GroupStatus.PENDING_MERGE)
+    Group.objects.filter(id__in=group_ids_to_merge).update(
+        status=GroupStatus.PENDING_MERGE, substatus=None
+    )
 
     transaction_id = uuid4().hex
     merge_groups.delay(

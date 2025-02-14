@@ -1,9 +1,10 @@
-import {ComponentProps, CSSProperties, forwardRef} from 'react';
+import type {ComponentProps, CSSProperties} from 'react';
+import {forwardRef} from 'react';
 
 import HeaderCell from 'sentry/components/replays/virtualizedGrid/headerCell';
-import {Tooltip} from 'sentry/components/tooltip';
+import type {Tooltip} from 'sentry/components/tooltip';
 import {t} from 'sentry/locale';
-import useSortErrors from 'sentry/views/replays/detail/errorList/useSortErrors';
+import type useSortErrors from 'sentry/views/replays/detail/errorList/useSortErrors';
 
 type SortConfig = ReturnType<typeof useSortErrors>['sortConfig'];
 type Props = {
@@ -13,11 +14,11 @@ type Props = {
   style: CSSProperties;
 };
 
-const COLUMNS: {
+const COLUMNS: Array<{
   field: SortConfig['by'];
   label: string;
   tooltipTitle?: ComponentProps<typeof Tooltip>['title'];
-}[] = [
+}> = [
   {field: 'id', label: t('Event ID')},
   {field: 'title', label: t('Title')},
   {field: 'project', label: t('Issue')},
@@ -28,7 +29,7 @@ export const COLUMN_COUNT = COLUMNS.length;
 
 const ErrorHeaderCell = forwardRef<HTMLButtonElement, Props>(
   ({handleSort, index, sortConfig, style}: Props, ref) => {
-    const {field, label, tooltipTitle} = COLUMNS[index];
+    const {field, label, tooltipTitle} = COLUMNS[index]!;
     return (
       <HeaderCell
         ref={ref}

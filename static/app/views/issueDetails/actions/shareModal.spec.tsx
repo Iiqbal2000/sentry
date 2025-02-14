@@ -1,4 +1,6 @@
-import {Organization} from 'sentry-fixture/organization';
+import {GroupFixture} from 'sentry-fixture/group';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {act, renderGlobalModal, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
@@ -8,8 +10,8 @@ import ModalStore from 'sentry/stores/modalStore';
 import ShareIssueModal from 'sentry/views/issueDetails/actions/shareModal';
 
 describe('shareModal', () => {
-  const project = TestStubs.Project();
-  const organization = Organization();
+  const project = ProjectFixture();
+  const organization = OrganizationFixture();
   const onToggle = jest.fn();
 
   beforeEach(() => {
@@ -22,8 +24,8 @@ describe('shareModal', () => {
     jest.clearAllMocks();
   });
 
-  it('should share on open', async () => {
-    const group = TestStubs.Group();
+  it('should share', async () => {
+    const group = GroupFixture();
     GroupStore.add([group]);
 
     const issuesApi = MockApiClient.addMockResponse({
@@ -46,13 +48,14 @@ describe('shareModal', () => {
     );
 
     expect(screen.getByText('Share Issue')).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText('Share'));
     expect(await screen.findByRole('button', {name: 'Copy Link'})).toBeInTheDocument();
     expect(issuesApi).toHaveBeenCalledTimes(1);
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
   it('should unshare', async () => {
-    const group = TestStubs.Group({isPublic: true, shareId: '12345'});
+    const group = GroupFixture({isPublic: true, shareId: '12345'});
     GroupStore.add([group]);
 
     const issuesApi = MockApiClient.addMockResponse({
