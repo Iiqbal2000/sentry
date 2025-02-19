@@ -3,7 +3,8 @@ import {Component, createContext, createRef} from 'react';
 import {rectOfContent} from 'sentry/components/performance/waterfall/utils';
 import clamp from 'sentry/utils/number/clamp';
 import toPercent from 'sentry/utils/number/toPercent';
-import {setBodyUserSelect, UserSelectValues} from 'sentry/utils/userselect';
+import type {UserSelectValues} from 'sentry/utils/userselect';
+import {setBodyUserSelect} from 'sentry/utils/userselect';
 
 // divider handle is positioned at 50% width from the left-hand side
 const DEFAULT_DIVIDER_POSITION = 0.4;
@@ -58,7 +59,7 @@ export class Provider extends Component<PropType, StateType> {
 
   previousUserSelect: UserSelectValues | null = null;
   dividerHandlePosition: number = DEFAULT_DIVIDER_POSITION;
-  isDragging: boolean = false;
+  isDragging = false;
   dividerLineRefs: Array<React.RefObject<HTMLDivElement>> = [];
   ghostDividerLineRefs: Array<React.RefObject<HTMLDivElement>> = [];
 

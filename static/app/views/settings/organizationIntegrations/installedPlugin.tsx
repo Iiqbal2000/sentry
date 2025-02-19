@@ -6,23 +6,20 @@ import {
   addLoadingMessage,
   addSuccessMessage,
 } from 'sentry/actionCreators/indicator';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import Access from 'sentry/components/acl/access';
-import {Alert} from 'sentry/components/alert';
-import {Button} from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
 import Confirm from 'sentry/components/confirm';
+import {Alert} from 'sentry/components/core/alert';
 import ProjectBadge from 'sentry/components/idBadge/projectBadge';
 import Switch from 'sentry/components/switchButton';
 import {IconDelete, IconSettings} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {
-  AvatarProject,
-  Organization,
-  PluginNoProject,
-  PluginProjectItem,
-} from 'sentry/types';
-import {IntegrationAnalyticsKey} from 'sentry/utils/analytics/integrations';
+import type {PluginNoProject, PluginProjectItem} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
+import type {AvatarProject} from 'sentry/types/project';
+import type {IntegrationAnalyticsKey} from 'sentry/utils/analytics/integrations';
 import withApi from 'sentry/utils/withApi';
 
 type Props = {
@@ -43,16 +40,21 @@ export class InstalledPlugin extends Component<Props> {
   getConfirmMessage() {
     return (
       <Fragment>
-        <Alert type="error" showIcon>
-          {t(
-            'Deleting this installation will disable the integration for this project and remove any configurations.'
-          )}
-        </Alert>
+        <Alert.Container>
+          <Alert type="error" showIcon>
+            {t(
+              'Deleting this installation will disable the integration for this project and remove any configurations.'
+            )}
+          </Alert>
+        </Alert.Container>
       </Fragment>
     );
   }
 
-  pluginUpdate = async (data: object, method: 'POST' | 'DELETE' = 'POST') => {
+  pluginUpdate = async (
+    data: Record<PropertyKey, unknown>,
+    method: 'POST' | 'DELETE' = 'POST'
+  ) => {
     const {organization, projectItem, plugin} = this.props;
     // no try/catch so the caller will have to have it
     await this.props.api.requestPromise(
@@ -88,7 +90,7 @@ export class InstalledPlugin extends Component<Props> {
     this.props.trackIntegrationAnalytics('integrations.uninstall_clicked');
   };
 
-  toggleEnablePlugin = async (projectId: string, status: boolean = true) => {
+  toggleEnablePlugin = async (projectId: string, status = true) => {
     try {
       addLoadingMessage(t('Enabling...'));
       await this.updatePluginEnableStatus(status);
@@ -128,7 +130,7 @@ export class InstalledPlugin extends Component<Props> {
                 <ProjectBadge project={this.projectForBadge} />
               </IntegrationItemBox>
               <div>
-                <StyledButton
+                <StyledLinkButton
                   borderless
                   icon={<IconSettings />}
                   disabled={!hasAccess}
@@ -136,7 +138,7 @@ export class InstalledPlugin extends Component<Props> {
                   data-test-id="integration-configure-button"
                 >
                   {t('Configure')}
-                </StyledButton>
+                </StyledLinkButton>
               </div>
               <div>
                 <Confirm
@@ -186,6 +188,10 @@ const Container = styled('div')`
 `;
 
 const StyledButton = styled(Button)`
+  color: ${p => p.theme.gray300};
+`;
+
+const StyledLinkButton = styled(LinkButton)`
   color: ${p => p.theme.gray300};
 `;
 

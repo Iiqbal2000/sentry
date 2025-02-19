@@ -1,7 +1,7 @@
 from sentry.api.bases.team import TeamPermission
 from sentry.testutils.cases import TestCase
 from sentry.testutils.helpers import with_feature
-from sentry.testutils.silo import region_silo_test
+from sentry.testutils.requests import drf_request_from_request
 
 
 class TeamPermissionBase(TestCase):
@@ -15,10 +15,12 @@ class TeamPermissionBase(TestCase):
         request = self.make_request(user=user, auth=auth, method=method)
         if is_superuser:
             request.superuser.set_logged_in(request.user)
-        return perm.has_permission(request, None) and perm.has_object_permission(request, None, obj)
+        drf_request = drf_request_from_request(request)
+        return perm.has_permission(drf_request, None) and perm.has_object_permission(
+            drf_request, None, obj
+        )
 
 
-@region_silo_test(stable=True)
 class TeamPermissionTest(TeamPermissionBase):
     def test_get_regular_user(self):
         user = self.create_user()
@@ -146,7 +148,6 @@ class TeamPermissionTest(TeamPermissionBase):
         assert not self.has_object_perm("DELETE", self.team, auth=key)
 
 
-@region_silo_test(stable=True)
 class TeamPermissionNoJoinLeaveTest(TeamPermissionBase):
     def setUp(self):
         super().setUp()

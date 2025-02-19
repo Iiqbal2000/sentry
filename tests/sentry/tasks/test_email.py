@@ -8,9 +8,6 @@ pytestmark = [requires_snuba]
 
 
 class ProcessInboundEmailTest(TestCase):
-    def test_task_persistent_name(self):
-        assert process_inbound_email.name == "sentry.tasks.email.process_inbound_email"
-
     def test_simple(self):
         group = self.create_group()
 

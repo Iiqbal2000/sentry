@@ -58,7 +58,7 @@ describe('PlatformPicker', function () {
   it('should clear the platform when clear is clicked', async function () {
     const props = {
       ...baseProps,
-      platform: 'java',
+      platform: 'javascript-react',
       setPlatform: jest.fn(),
     };
 
@@ -66,5 +66,49 @@ describe('PlatformPicker', function () {
 
     await userEvent.click(screen.getByRole('button', {name: 'Clear'}));
     expect(props.setPlatform).toHaveBeenCalledWith(null);
+  });
+
+  it('platforms shall be sorted alphabetically', function () {
+    render(<PlatformPicker setPlatform={jest.fn()} defaultCategory="browser" />);
+
+    const alphabeticallyOrderedPlatformNames = [
+      'Angular',
+      'Astro',
+      'Browser JavaScript',
+      'Dart',
+      'Ember',
+      'Gatsby',
+      'Next.js',
+      'Nuxt',
+      'React',
+      'Remix',
+      'Solid',
+      'SolidStart',
+      'Svelte',
+      'SvelteKit',
+      'Unity',
+      'Vue',
+    ];
+
+    const platformNames = screen.getAllByRole('heading', {level: 3});
+
+    platformNames.forEach((platform, index) => {
+      expect(platform).toHaveTextContent(alphabeticallyOrderedPlatformNames[index]!);
+    });
+  });
+
+  it('"other" platform shall be rendered if filter contains it', async function () {
+    render(<PlatformPicker setPlatform={jest.fn()} />);
+
+    expect(screen.queryByTestId('platform-other')).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByRole('textbox'), 'Oth');
+
+    expect(screen.queryByTestId('platform-other')).not.toBeInTheDocument();
+
+    // complete the word 'other'
+    await userEvent.type(screen.getByRole('textbox'), 'er');
+
+    expect(screen.getByTestId('platform-other')).toBeInTheDocument();
   });
 });

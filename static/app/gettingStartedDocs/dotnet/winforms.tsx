@@ -1,77 +1,55 @@
 import {Fragment} from 'react';
-import styled from '@emotion/styled';
 
-import {Alert} from 'sentry/components/alert';
+import {Alert} from 'sentry/components/core/alert';
 import ExternalLink from 'sentry/components/links/externalLink';
 import List from 'sentry/components/list';
 import ListItem from 'sentry/components/list/listItem';
-import {Layout, LayoutProps} from 'sentry/components/onboarding/gettingStartedDoc/layout';
-import {ModuleProps} from 'sentry/components/onboarding/gettingStartedDoc/sdkDocumentation';
 import {StepType} from 'sentry/components/onboarding/gettingStartedDoc/step';
+import type {
+  Docs,
+  DocsParams,
+  OnboardingConfig,
+} from 'sentry/components/onboarding/gettingStartedDoc/types';
+import {
+  getCrashReportGenericInstallStep,
+  getCrashReportModalConfigDescription,
+  getCrashReportModalIntroduction,
+} from 'sentry/components/onboarding/gettingStartedDoc/utils/feedbackOnboarding';
+import {csharpFeedbackOnboarding} from 'sentry/gettingStartedDocs/dotnet/dotnet';
 import {t, tct} from 'sentry/locale';
+import {getPackageVersion} from 'sentry/utils/gettingStartedDocs/getPackageVersion';
 
-// Configuration Start
-export const steps = ({
-  dsn,
-  sourcePackageRegistries,
-}: Partial<
-  Pick<ModuleProps, 'dsn' | 'sourcePackageRegistries'>
-> = {}): LayoutProps['steps'] => [
-  {
-    type: StepType.INSTALL,
-    description: (
-      <p>
-        {tct('Install the [strong:NuGet] package:', {
-          strong: <strong />,
-        })}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'shell',
-        partialLoading: sourcePackageRegistries?.isLoading,
-        code: `
-# Using Package Manager
-Install-Package Sentry -Version ${
-          sourcePackageRegistries?.isLoading
-            ? t('\u2026loading')
-            : sourcePackageRegistries?.data?.['sentry.dotnet']?.version ?? '3.34.0'
-        }
+type Params = DocsParams;
 
-# Or using .NET Core CLI
-dotnet add package Sentry -v ${
-          sourcePackageRegistries?.isLoading
-            ? t('\u2026loading')
-            : sourcePackageRegistries?.data?.['sentry.dotnet']?.version ?? '3.34.0'
-        }
-        `,
-      },
-    ],
-    additionalInfo: (
-      <AlertWithoutMarginBottom type="info">
-        {tct(
-          '[strong:Using .NET Framework prior to 4.6.1?] Our legacy SDK supports .NET Framework as early as 3.5.',
-          {strong: <strong />}
-        )}
-      </AlertWithoutMarginBottom>
-    ),
-  },
-  {
-    type: StepType.CONFIGURE,
-    description: (
-      <p>
-        {tct(
-          'Initialize the SDK as early as possible, like in the constructor of the [code:App]:',
-          {
-            code: <code />,
-          }
-        )}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'csharp',
-        code: `
+const getInstallSnippetPackageManager = (params: Params) => `
+Install-Package Sentry -Version ${getPackageVersion(
+  params,
+  'sentry.dotnet',
+  params.isProfilingSelected ? '4.3.0' : '3.34.0'
+)}`;
+
+const getInstallSnippetCoreCli = (params: Params) => `
+dotnet add package Sentry -v ${getPackageVersion(
+  params,
+  'sentry.dotnet',
+  params.isProfilingSelected ? '4.3.0' : '3.34.0'
+)}`;
+
+const getInstallProfilingSnippetPackageManager = (params: Params) => `
+Install-Package Sentry.Profiling -Version ${getPackageVersion(
+  params,
+  'sentry.dotnet.profiling',
+  '4.3.0'
+)}`;
+
+const getInstallProfilingSnippetCoreCli = (params: Params) => `
+dotnet add package Sentry.Profiling -v ${getPackageVersion(
+  params,
+  'sentry.dotnet.profiling',
+  '4.3.0'
+)}`;
+
+const getConfigureSnippet = (params: Params) => `
 using System;
 using System.Windows.Forms;
 using Sentry;
@@ -85,12 +63,33 @@ static class Program
         SentrySdk.Init(o =>
         {
             // Tells which project in Sentry to send events to:
-            o.Dsn = "${dsn}";
+            o.Dsn = "${params.dsn.public}";
             // When configuring for the first time, to see what the SDK is doing:
-            o.Debug = true;
-            // Set TracesSampleRate to 1.0 to capture 100% of transactions for performance monitoring.
+            o.Debug = true;${
+              params.isPerformanceSelected
+                ? `
+            // Set TracesSampleRate to 1.0 to capture 100% of transactions for tracing.
             // We recommend adjusting this value in production.
-            o.TracesSampleRate = 1.0;
+            o.TracesSampleRate = 1.0;`
+                : ''
+            }${
+              params.isProfilingSelected
+                ? `
+            // Sample rate for profiling, applied on top of othe TracesSampleRate,
+            // e.g. 0.2 means we want to profile 20 % of the captured transactions.
+            // We recommend adjusting this value in production.
+            o.ProfilesSampleRate = 1.0;
+            // Requires NuGet package: Sentry.Profiling
+            // Note: By default, the profiler is initialized asynchronously. This can
+            // be tuned by passing a desired initialization timeout to the constructor.
+            o.AddIntegration(new ProfilingIntegration(
+                // During startup, wait up to 500ms to profile the app startup code.
+                // This could make launching the app a bit slower so comment it out if you
+                // prefer profiling to start asynchronously
+                TimeSpan.FromMilliseconds(500)
+            ));`
+                : ''
+            }
         });
         // Configure WinForms to throw exceptions so Sentry can capture them.
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
@@ -99,30 +98,9 @@ static class Program
 
         Application.Run(new Form1());
     }
-}
-        `,
-      },
-    ],
-  },
-  {
-    type: StepType.VERIFY,
-    description: t('To verify your set up, you can capture a message with the SDK:'),
-    configurations: [
-      {
-        language: 'csharp',
-        code: 'SentrySdk.CaptureMessage("Hello Sentry");',
-      },
-    ],
-  },
-  {
-    title: t('Performance Monitoring'),
-    description: t(
-      'You can measure the performance of your code by capturing transactions and spans.'
-    ),
-    configurations: [
-      {
-        language: 'csharp',
-        code: `
+}`;
+
+const getPerformanceInstrumentationSnippet = () => `
 // Transaction can be started by providing, at minimum, the name and the operation
 var transaction = SentrySdk.StartTransaction(
   "test-transaction-name",
@@ -137,81 +115,184 @@ var span = transaction.StartChild("test-child-operation");
 // ...
 
 span.Finish(); // Mark the span as finished
-transaction.Finish(); // Mark the transaction as finished and send it to Sentry
-        `,
-      },
-    ],
-    additionalInfo: (
-      <p>
-        {tct(
-          'Check out [link:the documentation] to learn more about the API and automatic instrumentations.',
+transaction.Finish(); // Mark the transaction as finished and send it to Sentry`;
+
+const onboarding: OnboardingConfig = {
+  install: params => [
+    {
+      type: StepType.INSTALL,
+      description: tct('Install the [strong:NuGet] package:', {
+        strong: <strong />,
+      }),
+      configurations: [
+        {
+          partialLoading: params.sourcePackageRegistries.isLoading,
+          code: [
+            {
+              language: 'shell',
+              label: 'Package Manager',
+              value: 'packageManager',
+              code: getInstallSnippetPackageManager(params),
+            },
+            {
+              language: 'shell',
+              label: '.NET Core CLI',
+              value: 'coreCli',
+              code: getInstallSnippetCoreCli(params),
+            },
+          ],
+        },
+        ...(params.isProfilingSelected
+          ? [
+              {
+                description: tct(
+                  'Additionally, you need to add a dependency on the [sentryProfilingPackage:Sentry.Profiling] NuGet package.',
+                  {
+                    sentryProfilingPackage: <code />,
+                  }
+                ),
+                code: [
+                  {
+                    language: 'shell',
+                    label: 'Package Manager',
+                    value: 'packageManager',
+                    code: getInstallProfilingSnippetPackageManager(params),
+                  },
+                  {
+                    language: 'shell',
+                    label: '.NET Core CLI',
+                    value: 'coreCli',
+                    code: getInstallProfilingSnippetCoreCli(params),
+                  },
+                ],
+              },
+              {
+                description: (
+                  <Alert type="info">
+                    {t('Profiling for .NET Framework is not supported.')}
+                  </Alert>
+                ),
+              },
+            ]
+          : []),
+      ],
+    },
+  ],
+  configure: params => [
+    {
+      type: StepType.CONFIGURE,
+      description: tct(
+        'Initialize the SDK as early as possible, like in the constructor of the [code:App]:',
+        {
+          code: <code />,
+        }
+      ),
+      configurations: [
+        {
+          language: 'csharp',
+          code: getConfigureSnippet(params),
+        },
+      ],
+    },
+  ],
+  verify: params => [
+    {
+      type: StepType.VERIFY,
+      description: t('To verify your set up, you can capture a message with the SDK:'),
+      configurations: [
+        {
+          language: 'csharp',
+          code: 'SentrySdk.CaptureMessage("Hello Sentry");',
+        },
+      ],
+    },
+    ...(params.isPerformanceSelected
+      ? [
           {
-            link: (
-              <ExternalLink href="https://docs.sentry.io/platforms/dotnet/performance/instrumentation/" />
+            title: t('Tracing'),
+            description: t(
+              'You can measure the performance of your code by capturing transactions and spans.'
             ),
-          }
-        )}
-      </p>
-    ),
-  },
-  {
-    title: t('Documentation'),
-    description: (
-      <p>
-        {tct(
-          "Once you've verified the package is initialized properly and sent a test event, consider visiting our [link:complete WinForms docs].",
-          {
-            link: (
-              <ExternalLink href="https://docs.sentry.io/platforms/dotnet/guides/winforms/" />
-            ),
-          }
-        )}
-      </p>
-    ),
-  },
-  {
-    title: t('Samples'),
-    description: (
-      <Fragment>
-        {t(
-          'See the following examples that demonstrate how to integrate Sentry with various frameworks.'
-        )}
-        <List symbol="bullet">
-          <ListItem>
-            {tct(
-              '[link:Multiple samples in the [code:dotnet] SDK repository] [strong:(C#)]',
+            configurations: [
+              {
+                language: 'csharp',
+                code: getPerformanceInstrumentationSnippet(),
+              },
+            ],
+            additionalInfo: tct(
+              'Check out [link:the documentation] to learn more about the API and automatic instrumentations.',
               {
                 link: (
-                  <ExternalLink href="https://github.com/getsentry/sentry-dotnet/tree/main/samples" />
+                  <ExternalLink href="https://docs.sentry.io/platforms/dotnet/tracing/instrumentation/" />
                 ),
-                code: <code />,
-                strong: <strong />,
               }
-            )}
-          </ListItem>
-          <ListItem>
-            {tct('[link:Basic F# sample] [strong:(F#)]', {
-              link: <ExternalLink href="https://github.com/sentry-demos/fsharp" />,
-              strong: <strong />,
-            })}
-          </ListItem>
-        </List>
-      </Fragment>
-    ),
-  },
-];
-// Configuration End
+            ),
+          },
+          {
+            title: t('Documentation'),
+            description: tct(
+              "Once you've verified the package is initialized properly and sent a test event, consider visiting our [link:complete WinForms docs].",
+              {
+                link: (
+                  <ExternalLink href="https://docs.sentry.io/platforms/dotnet/guides/winforms/" />
+                ),
+              }
+            ),
+          },
+        ]
+      : []),
+    {
+      title: t('Samples'),
+      description: (
+        <Fragment>
+          {t(
+            'See the following examples that demonstrate how to integrate Sentry with various frameworks.'
+          )}
+          <List symbol="bullet">
+            <ListItem>
+              {tct(
+                '[link:Multiple samples in the [code:dotnet] SDK repository] [strong:(C#)]',
+                {
+                  link: (
+                    <ExternalLink href="https://github.com/getsentry/sentry-dotnet/tree/main/samples" />
+                  ),
+                  code: <code />,
+                  strong: <strong />,
+                }
+              )}
+            </ListItem>
+            <ListItem>
+              {tct('[link:Basic F# sample] [strong:(F#)]', {
+                link: <ExternalLink href="https://github.com/sentry-demos/fsharp" />,
+                strong: <strong />,
+              })}
+            </ListItem>
+          </List>
+        </Fragment>
+      ),
+    },
+  ],
+};
 
-export function GettingStartedWithWinForms({
-  dsn,
-  sourcePackageRegistries,
-  ...props
-}: ModuleProps) {
-  return <Layout steps={steps({dsn, sourcePackageRegistries})} {...props} />;
-}
+const crashReportOnboarding: OnboardingConfig = {
+  introduction: () => getCrashReportModalIntroduction(),
+  install: (params: Params) => getCrashReportGenericInstallStep(params),
+  configure: () => [
+    {
+      type: StepType.CONFIGURE,
+      description: getCrashReportModalConfigDescription({
+        link: 'https://docs.sentry.io/platforms/dotnet/guides/winforms/user-feedback/configuration/#crash-report-modal',
+      }),
+    },
+  ],
+  verify: () => [],
+  nextSteps: () => [],
+};
 
-export default GettingStartedWithWinForms;
+const docs: Docs = {
+  onboarding,
+  feedbackOnboardingCrashApi: csharpFeedbackOnboarding,
+  crashReportOnboarding,
+};
 
-const AlertWithoutMarginBottom = styled(Alert)`
-  margin-bottom: 0;
-`;
+export default docs;

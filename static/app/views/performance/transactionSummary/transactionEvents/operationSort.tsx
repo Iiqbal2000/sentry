@@ -1,16 +1,16 @@
 import {Component} from 'react';
 import {createPortal} from 'react-dom';
 import {Manager, Popper, Reference} from 'react-popper';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location, LocationDescriptorObject} from 'history';
+import type {Location, LocationDescriptorObject} from 'history';
 
-import {GetActorPropsFn} from 'sentry/components/deprecatedDropdownMenu';
+import type {GetActorPropsFn} from 'sentry/components/deprecatedDropdownMenu';
 import MenuItem from 'sentry/components/menuItem';
 import Radio from 'sentry/components/radio';
 import {t} from 'sentry/locale';
-import {TableData} from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import type {TableData} from 'sentry/utils/discover/discoverQuery';
+import type EventView from 'sentry/utils/discover/eventView';
 
 export type TitleProps = Partial<ReturnType<GetActorPropsFn>>;
 
@@ -62,7 +62,7 @@ class OperationSort extends Component<Props, State> {
     this.setState(({isOpen}) => ({isOpen: !isOpen}));
   };
 
-  generateSortLink(field): LocationDescriptorObject | undefined {
+  generateSortLink(field: any): LocationDescriptorObject | undefined {
     const {eventView, tableMeta, location} = this.props;
     if (!tableMeta) {
       return undefined;
@@ -77,7 +77,7 @@ class OperationSort extends Component<Props, State> {
     };
   }
 
-  renderMenuItem(operation, title) {
+  renderMenuItem(operation: any, title: any) {
     const {eventView} = this.props;
     return (
       <DropdownMenuItem>
@@ -130,7 +130,7 @@ class OperationSort extends Component<Props, State> {
         {({ref: popperRef, style, placement}) => (
           <DropdownWrapper
             ref={ref => {
-              (popperRef as Function)(ref);
+              (popperRef as CallableFunction)(ref);
               this.menuEl = ref;
             }}
             style={style}
@@ -253,7 +253,7 @@ const RadioLabel = styled('label')`
   grid-template-columns: max-content auto;
   align-items: center;
   outline: none;
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
   margin: 0;
 `;
 

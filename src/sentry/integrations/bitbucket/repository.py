@@ -1,8 +1,8 @@
 from sentry.locks import locks
 from sentry.models.apitoken import generate_token
 from sentry.models.options.organization_option import OrganizationOption
+from sentry.organizations.services.organization.model import RpcOrganization
 from sentry.plugins.providers import IntegrationRepositoryProvider
-from sentry.services.hybrid_cloud.organization.model import RpcOrganization
 from sentry.shared_integrations.exceptions import ApiError
 from sentry.utils.email import parse_email, parse_user_name
 from sentry.utils.http import absolute_uri
@@ -46,6 +46,7 @@ class BitbucketRepositoryProvider(IntegrationRepositoryProvider):
         installation = self.get_installation(data.get("installation"), organization.id)
         client = installation.get_client()
         try:
+            secret = installation.model.metadata.get("webhook_secret", "")
             resp = client.create_hook(
                 data["identifier"],
                 {
@@ -54,6 +55,7 @@ class BitbucketRepositoryProvider(IntegrationRepositoryProvider):
                         f"/extensions/bitbucket/organizations/{organization.id}/webhook/"
                     ),
                     "active": True,
+                    "secret": secret,
                     "events": ["repo:push", "pullrequest:fulfilled"],
                 },
             )

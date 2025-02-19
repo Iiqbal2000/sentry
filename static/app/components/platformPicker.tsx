@@ -17,7 +17,8 @@ import platforms, {otherPlatform} from 'sentry/data/platforms';
 import {IconClose, IconProject} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, PlatformIntegration, PlatformKey} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {PlatformIntegration} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
 
 const PlatformList = styled('div')`
@@ -25,11 +26,19 @@ const PlatformList = styled('div')`
   gap: ${space(1)};
   grid-template-columns: repeat(auto-fill, 112px);
   margin-bottom: ${space(2)};
+
+  &.centered {
+    justify-content: center;
+  }
 `;
 
 const selectablePlatforms = platforms.filter(platform =>
   createablePlatforms.has(platform.id)
 );
+
+function startsWithPunctuation(name: string) {
+  return /^[\p{P}]/u.test(name);
+}
 
 export type Category = (typeof categoryList)[number]['id'];
 
@@ -42,9 +51,12 @@ interface PlatformPickerProps {
   defaultCategory?: Category;
   listClassName?: string;
   listProps?: React.HTMLAttributes<HTMLDivElement>;
+  modal?: boolean;
+  navClassName?: string;
   noAutoFilter?: boolean;
   organization?: Organization;
   platform?: string | null;
+  showFilterBar?: boolean;
   showOther?: boolean;
   source?: string;
 }
@@ -60,8 +72,8 @@ class PlatformPicker extends Component<PlatformPickerProps, State> {
   };
 
   state: State = {
-    category: this.props.defaultCategory ?? categoryList[0].id,
-    filter: this.props.noAutoFilter ? '' : (this.props.platform || '').split('-')[0],
+    category: this.props.defaultCategory ?? categoryList[0]!.id,
+    filter: this.props.noAutoFilter ? '' : (this.props.platform || '').split('-')[0]!,
   };
 
   get platformList() {
@@ -74,17 +86,52 @@ class PlatformPicker extends Component<PlatformPickerProps, State> {
     const subsetMatch = (platform: PlatformIntegration) =>
       platform.id.includes(filter) ||
       platform.name.toLowerCase().includes(filter) ||
-      filterAliases[platform.id as PlatformKey]?.some(alias => alias.includes(filter));
+      filterAliases[platform.id]?.some(alias => alias.includes(filter));
 
     const categoryMatch = (platform: PlatformIntegration) => {
       return currentCategory?.platforms?.has(platform.id);
     };
 
-    const filtered = selectablePlatforms
-      .filter(this.state.filter ? subsetMatch : categoryMatch)
-      .sort((a, b) => a.id.localeCompare(b.id));
+    // temporary replacement of selectablePlatforms while `nintendo-switch` is behind feature flag
+    const tempSelectablePlatforms = selectablePlatforms;
 
-    return this.props.showOther ? filtered : filtered.filter(({id}) => id !== 'other');
+    if (this.props.organization?.features.includes('selectable-nintendo-platform')) {
+      const nintendo = platforms.find(p => p.id === 'nintendo-switch');
+      if (nintendo) {
+        if (!tempSelectablePlatforms.includes(nintendo)) {
+          tempSelectablePlatforms.push(nintendo);
+        }
+      }
+    }
+
+    // 'other' is not part of the createablePlatforms list, therefore it won't be included in the filtered list
+    const filtered = tempSelectablePlatforms.filter(
+      this.state.filter ? subsetMatch : categoryMatch
+    );
+
+    if (this.props.showOther && this.state.filter.toLocaleLowerCase() === 'other') {
+      // We only show 'Other' if users click on the 'Other' suggestion rendered in the not found state or type this word in the search bar
+      return [otherPlatform];
+    }
+
+    if (category === 'popular') {
+      const popularPlatformList = Array.from(currentCategory?.platforms ?? []);
+      // We keep the order of the platforms defined in the set
+      return filtered.sort(
+        (a, b) => popularPlatformList.indexOf(a.id) - popularPlatformList.indexOf(b.id)
+      );
+    }
+
+    // We only want to sort the platforms alphabetically if users are not viewing the 'popular' tab category
+    return filtered.sort((a, b) => {
+      if (startsWithPunctuation(a.name) && !startsWithPunctuation(b.name)) {
+        return 1;
+      }
+      if (!startsWithPunctuation(a.name) && startsWithPunctuation(b.name)) {
+        return -1;
+      }
+      return a.name.localeCompare(b.name);
+    });
   }
 
   logSearch = debounce(() => {
@@ -100,12 +147,18 @@ class PlatformPicker extends Component<PlatformPickerProps, State> {
 
   render() {
     const platformList = this.platformList;
-    const {setPlatform, listProps, listClassName} = this.props;
+    const {
+      setPlatform,
+      listProps,
+      listClassName,
+      navClassName,
+      showFilterBar = true,
+    } = this.props;
     const {filter, category} = this.state;
 
     return (
       <Fragment>
-        <NavContainer>
+        <NavContainer className={navClassName}>
           <CategoryNav>
             {categoryList.map(({id, name}) => (
               <ListLink
@@ -126,12 +179,14 @@ class PlatformPicker extends Component<PlatformPickerProps, State> {
               </ListLink>
             ))}
           </CategoryNav>
-          <StyledSearchBar
-            size="sm"
-            query={filter}
-            placeholder={t('Filter Platforms')}
-            onChange={val => this.setState({filter: val}, this.logSearch)}
-          />
+          {showFilterBar && (
+            <StyledSearchBar
+              size="sm"
+              query={filter}
+              placeholder={t('Filter Platforms')}
+              onChange={val => this.setState({filter: val}, this.logSearch)}
+            />
+          )}
         </NavContainer>
         <PlatformList className={listClassName} {...listProps}>
           {platformList.map(platform => {
@@ -191,6 +246,11 @@ const NavContainer = styled('div')`
   grid-template-columns: 1fr minmax(0, 300px);
   align-items: start;
   border-bottom: 1px solid ${p => p.theme.border};
+
+  &.centered {
+    grid-template-columns: none;
+    justify-content: center;
+  }
 `;
 
 const StyledSearchBar = styled(SearchBar)`
@@ -216,6 +276,8 @@ const CategoryNav = styled(NavTabs)`
 
 const StyledPlatformIcon = styled(PlatformIcon)`
   margin: ${space(2)};
+  border: 1px solid ${p => p.theme.gray200};
+  border-radius: ${p => p.theme.borderRadius};
 `;
 
 const ClearButton = styled(Button)`
@@ -233,13 +295,7 @@ const ClearButton = styled(Button)`
   color: ${p => p.theme.textColor};
 `;
 
-ClearButton.defaultProps = {
-  icon: <IconClose isCircled size="xs" />,
-  borderless: true,
-  size: 'xs',
-};
-
-const PlatformCard = styled(({platform, selected, onClear, ...props}) => (
+const PlatformCard = styled(({platform, selected, onClear, ...props}: any) => (
   <div {...props}>
     <StyledPlatformIcon
       platform={platform.id}
@@ -249,7 +305,15 @@ const PlatformCard = styled(({platform, selected, onClear, ...props}) => (
       format="lg"
     />
     <h3>{platform.name}</h3>
-    {selected && <ClearButton onClick={onClear} aria-label={t('Clear')} />}
+    {selected && (
+      <ClearButton
+        icon={<IconClose isCircled />}
+        borderless
+        size="xs"
+        onClick={onClear}
+        aria-label={t('Clear')}
+      />
+    )}
   </div>
 ))`
   position: relative;

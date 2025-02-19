@@ -1,4 +1,4 @@
-import {PinnedPageFilter} from 'sentry/types';
+import type {PinnedPageFilter} from 'sentry/types/core';
 
 interface DateSelector {
   field_changed: 'start' | 'end';
@@ -27,7 +27,7 @@ export type CoreUIEventParameters = {
     count: number;
     path: string;
   };
-  'number_drag_control.clicked': {};
+  'number_drag_control.clicked': Record<string, unknown>;
   'page_filters.pin_click': {
     filter: PinnedPageFilter;
     pin: boolean;

@@ -1,14 +1,16 @@
 import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import partial from 'lodash/partial';
 
 import {Button} from 'sentry/components/button';
 import Count from 'sentry/components/count';
-import {DropdownMenu, MenuItemProps} from 'sentry/components/dropdownMenu';
+import {deviceNameMapper} from 'sentry/components/deviceName';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import Duration from 'sentry/components/duration';
 import FileSize from 'sentry/components/fileSize';
+import BadgeDisplayName from 'sentry/components/idBadge/badgeDisplayName';
 import ProjectBadge from 'sentry/components/idBadge/projectBadge';
 import UserBadge from 'sentry/components/idBadge/userBadge';
 import ExternalLink from 'sentry/components/links/externalLink';
@@ -19,38 +21,48 @@ import {Tooltip} from 'sentry/components/tooltip';
 import UserMisery from 'sentry/components/userMisery';
 import Version from 'sentry/components/version';
 import {IconDownload} from 'sentry/icons';
-import {t} from 'sentry/locale';
+import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {AvatarProject, IssueAttachment, Organization, Project} from 'sentry/types';
-import {defined, isUrl} from 'sentry/utils';
+import type {IssueAttachment} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
+import type {AvatarProject, Project} from 'sentry/types/project';
+import {defined} from 'sentry/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import EventView, {EventData, MetaType} from 'sentry/utils/discover/eventView';
+import toArray from 'sentry/utils/array/toArray';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import type {EventData, MetaType} from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {RateUnit} from 'sentry/utils/discover/fields';
 import {
   AGGREGATIONS,
   getAggregateAlias,
   getSpanOperationName,
   isEquation,
   isRelativeSpanOperationBreakdownField,
-  RateUnits,
+  parseFunction,
   SPAN_OP_BREAKDOWN_FIELDS,
   SPAN_OP_RELATIVE_BREAKDOWN_FIELD,
 } from 'sentry/utils/discover/fields';
 import {getShortEventId} from 'sentry/utils/events';
-import {formatFloat, formatPercentage, formatRate} from 'sentry/utils/formatters';
+import {formatRate} from 'sentry/utils/formatters';
 import getDynamicText from 'sentry/utils/getDynamicText';
+import {formatApdex} from 'sentry/utils/number/formatApdex';
+import {formatFloat} from 'sentry/utils/number/formatFloat';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
 import toPercent from 'sentry/utils/number/toPercent';
 import Projects from 'sentry/utils/projects';
-import toArray from 'sentry/utils/toArray';
+import {isUrl} from 'sentry/utils/string/isUrl';
 import {QuickContextHoverWrapper} from 'sentry/views/discover/table/quickContext/quickContextWrapper';
 import {ContextType} from 'sentry/views/discover/table/quickContext/utils';
+import {PercentChangeCell} from 'sentry/views/insights/common/components/tableCells/percentChangeCell';
+import {ResponseStatusCodeCell} from 'sentry/views/insights/common/components/tableCells/responseStatusCodeCell';
+import {TimeSpentCell} from 'sentry/views/insights/common/components/tableCells/timeSpentCell';
+import {SpanMetricsField} from 'sentry/views/insights/types';
 import {
   filterToLocationQuery,
   SpanOperationBreakdownFilter,
   stringToFilter,
 } from 'sentry/views/performance/transactionSummary/filter';
-import {PercentChangeCell} from 'sentry/views/starfish/components/tableCells/percentChangeCell';
-import {TimeSpentCell} from 'sentry/views/starfish/components/tableCells/timeSpentCell';
-import {SpanMetricsField} from 'sentry/views/starfish/types';
 
 import {decodeScalar} from '../queryString';
 
@@ -121,6 +133,14 @@ const EmptyValueContainer = styled('span')`
 `;
 const emptyValue = <EmptyValueContainer>{t('(no value)')}</EmptyValueContainer>;
 const emptyStringValue = <EmptyValueContainer>{t('(empty string)')}</EmptyValueContainer>;
+const missingUserMisery = tct(
+  'We were unable to calculate User Misery. A likely cause of this is that the user was not set. [link:Read the docs]',
+  {
+    link: (
+      <ExternalLink href="https://docs.sentry.io/platforms/javascript/enriching-events/identify-user/" />
+    ),
+  }
+);
 
 export function nullableValue(value: string | null): string | React.ReactElement {
   switch (value) {
@@ -133,6 +153,7 @@ export function nullableValue(value: string | null): string | React.ReactElement
   }
 }
 
+// TODO: Remove this, use `SIZE_UNIT_MULTIPLIERS` instead
 export const SIZE_UNITS = {
   bit: 1 / 8,
   byte: 1,
@@ -159,6 +180,7 @@ export const ABYTE_UNITS = [
   'exabyte',
 ];
 
+// TODO: Remove this, use `DURATION_UNIT_MULTIPLIERS` instead
 export const DURATION_UNITS = {
   nanosecond: 1 / 1000 ** 2,
   microsecond: 1 / 1000,
@@ -216,6 +238,7 @@ export const FIELD_FORMATTERS: FieldFormatters = {
         <NumberContainer>
           {typeof data[field] === 'number' ? (
             <Duration
+              // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
               seconds={(data[field] * ((unit && DURATION_UNITS[unit]) ?? 1)) / 1000}
               fixedDigits={2}
               abbreviation
@@ -233,7 +256,7 @@ export const FIELD_FORMATTERS: FieldFormatters = {
       const {unit} = baggage ?? {};
       return (
         <NumberContainer>
-          {formatRate(data[field], unit as RateUnits, {minimumValue: 0.01})}
+          {formatRate(data[field], unit as RateUnit, {minimumValue: 0.01})}
         </NumberContainer>
       );
     },
@@ -258,7 +281,9 @@ export const FIELD_FORMATTERS: FieldFormatters = {
     isSortable: true,
     renderFunc: (field, data) => (
       <NumberContainer>
-        {typeof data[field] === 'number' ? formatPercentage(data[field]) : emptyValue}
+        {typeof data[field] === 'number'
+          ? formatPercentage(data[field], undefined, {minimumValue: 0.0001})
+          : emptyValue}
       </NumberContainer>
     ),
   },
@@ -268,9 +293,11 @@ export const FIELD_FORMATTERS: FieldFormatters = {
       const {unit} = baggage ?? {};
       return (
         <NumberContainer>
-          {unit && SIZE_UNITS[unit] && typeof data[field] === 'number' ? (
+          {unit &&
+          SIZE_UNITS[unit as keyof typeof SIZE_UNITS] &&
+          typeof data[field] === 'number' ? (
             <FileSize
-              bytes={data[field] * SIZE_UNITS[unit]}
+              bytes={data[field] * SIZE_UNITS[unit as keyof typeof SIZE_UNITS]}
               base={ABYTE_UNITS.includes(unit) ? 10 : 2}
             />
           ) : (
@@ -287,17 +314,29 @@ export const FIELD_FORMATTERS: FieldFormatters = {
       const value = Array.isArray(data[field])
         ? data[field].slice(-1)
         : defined(data[field])
-        ? data[field]
-        : emptyValue;
+          ? data[field]
+          : emptyValue;
+
       if (isUrl(value)) {
         return (
-          <Container>
-            <ExternalLink href={value} data-test-id="group-tag-url">
-              {value}
-            </ExternalLink>
-          </Container>
+          <Tooltip title={value} containerDisplayMode="block" showOnlyOnOverflow>
+            <Container>
+              <ExternalLink href={value} data-test-id="group-tag-url">
+                {value}
+              </ExternalLink>
+            </Container>
+          </Tooltip>
         );
       }
+
+      if (value && typeof value === 'string') {
+        return (
+          <Tooltip title={value} containerDisplayMode="block" showOnlyOnOverflow>
+            <Container>{nullableValue(value)}</Container>
+          </Tooltip>
+        );
+      }
+
       return <Container>{nullableValue(value)}</Container>;
     },
   },
@@ -327,8 +366,10 @@ type SpecialField = {
 };
 
 type SpecialFields = {
+  'apdex()': SpecialField;
   attachments: SpecialField;
   'count_unique(user)': SpecialField;
+  device: SpecialField;
   'error.handled': SpecialField;
   id: SpecialField;
   issue: SpecialField;
@@ -338,6 +379,8 @@ type SpecialFields = {
   project: SpecialField;
   release: SpecialField;
   replayId: SpecialField;
+  'span.description': SpecialField;
+  'span.status_code': SpecialField;
   team_key_transaction: SpecialField;
   'timestamp.to_day': SpecialField;
   'timestamp.to_hour': SpecialField;
@@ -363,10 +406,22 @@ const RightAlignedContainer = styled('span')`
 const SPECIAL_FIELDS: SpecialFields = {
   // This is a custom renderer for a field outside discover
   // TODO - refactor code and remove from this file or add ability to query for attachments in Discover
+  'apdex()': {
+    sortField: 'apdex()',
+    renderFunc: data => {
+      const field = 'apdex()';
+
+      return (
+        <NumberContainer>
+          {typeof data[field] === 'number' ? formatApdex(data[field]) : emptyValue}
+        </NumberContainer>
+      );
+    },
+  },
   attachments: {
     sortField: null,
     renderFunc: (data, {organization, projectSlug}) => {
-      const attachments: Array<IssueAttachment> = data.attachments;
+      const attachments: IssueAttachment[] = data.attachments;
 
       const items: MenuItemProps[] = attachments
         .filter(attachment => attachment.type !== 'event.minidump')
@@ -441,6 +496,29 @@ const SPECIAL_FIELDS: SpecialFields = {
       return <Container>{getShortEventId(id)}</Container>;
     },
   },
+  'span.description': {
+    sortField: 'span.description',
+    renderFunc: data => {
+      const value = data['span.description'];
+
+      return (
+        <Tooltip
+          title={value}
+          containerDisplayMode="block"
+          showOnlyOnOverflow
+          maxWidth={400}
+        >
+          <Container>
+            {isUrl(value) ? (
+              <ExternalLink href={value}>{value}</ExternalLink>
+            ) : (
+              nullableValue(value)
+            )}
+          </Container>
+        </Tooltip>
+      );
+    },
+  },
   trace: {
     sortField: 'trace',
     renderFunc: data => {
@@ -483,7 +561,7 @@ const SPECIAL_FIELDS: SpecialFields = {
     sortField: 'profile.id',
     renderFunc: data => {
       const id: string | unknown = data?.['profile.id'];
-      if (typeof id !== 'string') {
+      if (typeof id !== 'string' || id === '') {
         return emptyValue;
       }
 
@@ -543,7 +621,7 @@ const SPECIAL_FIELDS: SpecialFields = {
                 project = projects.find(p => p.slug === data.project);
               }
               return (
-                <ProjectBadge
+                <StyledProjectBadge
                   project={project ? project : {slug: data.project}}
                   avatarSize={16}
                 />
@@ -566,6 +644,7 @@ const SPECIAL_FIELDS: SpecialFields = {
           username: '',
           ip_address: '',
         };
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         userObj[key] = value;
 
         const badge = <UserBadge user={userObj} hideEmail avatarSize={16} />;
@@ -607,6 +686,16 @@ const SPECIAL_FIELDS: SpecialFields = {
             <UserIcon size="md" />
           </FlexContainer>
         );
+      }
+
+      return <Container>{emptyValue}</Container>;
+    },
+  },
+  device: {
+    sortField: 'device',
+    renderFunc: data => {
+      if (typeof data.device === 'string') {
+        return <Container>{deviceNameMapper(data.device) || data.device}</Container>;
       }
 
       return <Container>{emptyValue}</Container>;
@@ -688,6 +777,18 @@ const SPECIAL_FIELDS: SpecialFields = {
       </Container>
     ),
   },
+  'span.status_code': {
+    sortField: 'span.status_code',
+    renderFunc: data => (
+      <Container>
+        {data['span.status_code'] ? (
+          <ResponseStatusCodeCell code={parseInt(data['span.status_code'], 10)} />
+        ) : (
+          t('Unknown')
+        )}
+      </Container>
+    ),
+  },
 };
 
 type SpecialFunctionFieldRenderer = (
@@ -708,16 +809,24 @@ const SPECIAL_FUNCTIONS: SpecialFunctions = {
     const userMiseryField = fieldName;
 
     if (!(userMiseryField in data)) {
-      return <NumberContainer>{emptyValue}</NumberContainer>;
+      return (
+        <Tooltip title={missingUserMisery} showUnderline isHoverable>
+          <NumberContainer>{emptyValue}</NumberContainer>
+        </Tooltip>
+      );
     }
 
     const userMisery = data[userMiseryField];
     if (userMisery === null || isNaN(userMisery)) {
-      return <NumberContainer>{emptyValue}</NumberContainer>;
+      return (
+        <Tooltip title={missingUserMisery} showUnderline isHoverable>
+          <NumberContainer>{emptyValue}</NumberContainer>
+        </Tooltip>
+      );
     }
 
     const projectThresholdConfig = 'project_threshold_config';
-    let countMiserableUserField: string = '';
+    let countMiserableUserField = '';
 
     let miseryLimit: number | undefined = parseInt(
       userMiseryField.split('(').pop()?.slice(0, -1) || '',
@@ -764,10 +873,12 @@ const SPECIAL_FUNCTIONS: SpecialFunctions = {
     );
   },
   time_spent_percentage: fieldName => data => {
+    const parsedFunction = parseFunction(fieldName);
+    const column = parsedFunction?.arguments?.[1] ?? SpanMetricsField.SPAN_SELF_TIME;
     return (
       <TimeSpentCell
         percentage={data[fieldName]}
-        total={data[`sum(${SpanMetricsField.SPAN_SELF_TIME})`]}
+        total={data[`sum(${column})`]}
         op={data[`span.op`]}
       />
     );
@@ -796,6 +907,7 @@ export function getSortField(
 
   for (const alias in AGGREGATIONS) {
     if (field.startsWith(alias)) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       return AGGREGATIONS[alias].isSortable ? field : null;
     }
   }
@@ -835,7 +947,7 @@ export const spanOperationRelativeBreakdownRenderer = (
   }
 
   let otherPercentage = 1;
-  let orderedSpanOpsBreakdownFields;
+  let orderedSpanOpsBreakdownFields: any[];
   const sortingOnField = eventView?.sorts?.[0]?.field;
   if (sortingOnField && (SPAN_OP_BREAKDOWN_FIELDS as string[]).includes(sortingOnField)) {
     orderedSpanOpsBreakdownFields = [
@@ -935,6 +1047,12 @@ const StyledLink = styled(Link)`
   max-width: 100%;
 `;
 
+const StyledProjectBadge = styled(ProjectBadge)`
+  ${BadgeDisplayName} {
+    max-width: 100%;
+  }
+`;
+
 /**
  * Get the field renderer for the named field and metadata
  *
@@ -946,9 +1064,10 @@ const StyledLink = styled(Link)`
 export function getFieldRenderer(
   field: string,
   meta: MetaType,
-  isAlias: boolean = true
+  isAlias = true
 ): FieldFormatterRenderFunctionPartial {
   if (SPECIAL_FIELDS.hasOwnProperty(field)) {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     return SPECIAL_FIELDS[field].renderFunc;
   }
 
@@ -957,15 +1076,17 @@ export function getFieldRenderer(
   }
 
   const fieldName = isAlias ? getAggregateAlias(field) : field;
-  const fieldType = meta[fieldName];
+  const fieldType = meta[fieldName] || meta.fields?.[fieldName];
 
   for (const alias in SPECIAL_FUNCTIONS) {
     if (fieldName.startsWith(alias)) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       return SPECIAL_FUNCTIONS[alias](fieldName);
     }
   }
 
   if (FIELD_FORMATTERS.hasOwnProperty(fieldType)) {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     return partial(FIELD_FORMATTERS[fieldType].renderFunc, fieldName);
   }
   return partial(FIELD_FORMATTERS.string.renderFunc, fieldName);
@@ -988,12 +1109,13 @@ type FieldTypeFormatterRenderFunctionPartial = (
 export function getFieldFormatter(
   field: string,
   meta: MetaType,
-  isAlias: boolean = true
+  isAlias = true
 ): FieldTypeFormatterRenderFunctionPartial {
   const fieldName = isAlias ? getAggregateAlias(field) : field;
-  const fieldType = meta[fieldName];
+  const fieldType = meta[fieldName] || meta.fields?.[fieldName];
 
   if (FIELD_FORMATTERS.hasOwnProperty(fieldType)) {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     return partial(FIELD_FORMATTERS[fieldType].renderFunc, fieldName);
   }
   return partial(FIELD_FORMATTERS.string.renderFunc, fieldName);

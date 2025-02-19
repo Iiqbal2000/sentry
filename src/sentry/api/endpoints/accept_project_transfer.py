@@ -2,7 +2,6 @@ from django.core.signing import BadSignature, SignatureExpired
 from django.http import Http404
 from django.utils.encoding import force_str
 from rest_framework.authentication import SessionAuthentication
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
@@ -10,10 +9,13 @@ from sentry import audit_log, roles
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import Endpoint, region_silo_endpoint
 from sentry.api.decorators import sudo_required
+from sentry.api.endpoints.project_transfer import SALT
+from sentry.api.permissions import SentryIsAuthenticated
 from sentry.api.serializers import serialize
 from sentry.api.serializers.models.organization import (
     DetailedOrganizationSerializerWithProjectsAndTeams,
 )
+from sentry.models.options.project_option import ProjectOption
 from sentry.models.organization import Organization
 from sentry.models.project import Project
 from sentry.utils import metrics
@@ -27,15 +29,15 @@ class InvalidPayload(Exception):
 @region_silo_endpoint
 class AcceptProjectTransferEndpoint(Endpoint):
     publish_status = {
-        "GET": ApiPublishStatus.UNKNOWN,
-        "POST": ApiPublishStatus.UNKNOWN,
+        "GET": ApiPublishStatus.PRIVATE,
+        "POST": ApiPublishStatus.PRIVATE,
     }
     authentication_classes = (SessionAuthentication,)
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (SentryIsAuthenticated,)
 
     def get_validated_data(self, data, user):
         try:
-            data = unsign(force_str(data))
+            data = unsign(force_str(data), salt=SALT)
         except SignatureExpired:
             raise InvalidPayload("Project transfer link has expired.")
         except BadSignature:
@@ -50,6 +52,12 @@ class AcceptProjectTransferEndpoint(Endpoint):
             )
         except Project.DoesNotExist:
             raise InvalidPayload("Project no longer exists")
+
+        expected_transaction_id = ProjectOption.objects.get_value(
+            project, "sentry:project-transfer-transaction-id"
+        )
+        if data["transaction_id"] != expected_transaction_id:
+            raise InvalidPayload("Invalid transaction id")
 
         return data, project
 
@@ -117,6 +125,7 @@ class AcceptProjectTransferEndpoint(Endpoint):
             return Response({"detail": "Invalid organization"}, status=400)
 
         project.transfer_to(organization=organization)
+        ProjectOption.objects.unset_value(project, "sentry:project-transfer-transaction-id")
 
         self.create_audit_entry(
             request=request,

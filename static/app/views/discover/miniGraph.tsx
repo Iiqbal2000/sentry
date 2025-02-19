@@ -1,24 +1,28 @@
 import {Component} from 'react';
-import {Theme, withTheme} from '@emotion/react';
+import type {Theme} from '@emotion/react';
+import {withTheme} from '@emotion/react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import isEqual from 'lodash/isEqual';
 
-import {Client} from 'sentry/api';
-import {AreaChart, AreaChartProps} from 'sentry/components/charts/areaChart';
-import {BarChart, BarChartProps} from 'sentry/components/charts/barChart';
+import type {Client} from 'sentry/api';
+import type {AreaChartProps} from 'sentry/components/charts/areaChart';
+import {AreaChart} from 'sentry/components/charts/areaChart';
+import type {BarChartProps} from 'sentry/components/charts/barChart';
+import {BarChart} from 'sentry/components/charts/barChart';
 import EventsRequest from 'sentry/components/charts/eventsRequest';
 import {LineChart} from 'sentry/components/charts/lineChart';
 import {getInterval} from 'sentry/components/charts/utils';
 import LoadingContainer from 'sentry/components/loading/loadingContainer';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {IconWarning} from 'sentry/icons';
-import {Organization} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {Series} from 'sentry/types/echarts';
+import type {Organization} from 'sentry/types/organization';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
 import {axisLabelFormatter} from 'sentry/utils/discover/charts';
-import EventView from 'sentry/utils/discover/eventView';
-import {aggregateOutputType, PlotType} from 'sentry/utils/discover/fields';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {PlotType} from 'sentry/utils/discover/fields';
+import {aggregateOutputType} from 'sentry/utils/discover/fields';
 import {DisplayModes, TOP_N} from 'sentry/utils/discover/types';
 import {decodeScalar} from 'sentry/utils/queryString';
 import withApi from 'sentry/utils/withApi';
@@ -34,7 +38,7 @@ type Props = {
 };
 
 class MiniGraph extends Component<Props> {
-  shouldComponentUpdate(nextProps) {
+  shouldComponentUpdate(nextProps: any) {
     // We pay for the cost of the deep comparison here since it is cheaper
     // than the cost for rendering the graph, which can take ~200ms to ~300ms to
     // render.
@@ -66,8 +70,8 @@ class MiniGraph extends Component<Props> {
     const interval = isDaily
       ? '1d'
       : eventView.interval
-      ? eventView.interval
-      : getInterval({start, end, period}, intervalFidelity);
+        ? eventView.interval
+        : getInterval({start, end, period}, intervalFidelity);
 
     return {
       organization,
@@ -87,6 +91,7 @@ class MiniGraph extends Component<Props> {
       expired: eventView.expired,
       name: eventView.name,
       display,
+      dataset: eventView.dataset,
     };
   }
 
@@ -137,6 +142,7 @@ class MiniGraph extends Component<Props> {
       expired,
       name,
       display,
+      dataset,
     } = this.getRefreshProps(this.props);
 
     return (
@@ -158,6 +164,7 @@ class MiniGraph extends Component<Props> {
         expired={expired}
         name={name}
         referrer={referrer}
+        dataset={dataset}
         hideError
         partial
       >
@@ -184,7 +191,7 @@ class MiniGraph extends Component<Props> {
               ? display
               : this.getChartType({
                   showDaily,
-                  yAxis: Array.isArray(yAxis) ? yAxis[0] : yAxis,
+                  yAxis: Array.isArray(yAxis) ? yAxis[0]! : yAxis,
                   timeseriesData: allSeries,
                 });
           const data = allSeries.map(series => ({
@@ -196,11 +203,15 @@ class MiniGraph extends Component<Props> {
 
           const hasOther = topEvents && topEvents + 1 === allSeries.length;
           const chartColors = allSeries.length
-            ? [...theme.charts.getColorPalette(allSeries.length - 2 - (hasOther ? 1 : 0))]
+            ? (theme.charts
+                .getColorPalette(allSeries.length - 2 - (hasOther ? 1 : 0))
+                ?.slice() as string[] | undefined) ?? []
             : undefined;
-          if (chartColors && chartColors.length && hasOther) {
+
+          if (chartColors?.length && hasOther) {
             chartColors.push(theme.chartOther);
           }
+
           const chartOptions = {
             colors: chartColors,
             height: 150,
@@ -262,7 +273,7 @@ class MiniGraph extends Component<Props> {
   }
 }
 
-const StyledGraphContainer = styled(props => (
+const StyledGraphContainer = styled((props: any) => (
   <LoadingContainer {...props} maskBackgroundColor="transparent" />
 ))`
   height: 150px;

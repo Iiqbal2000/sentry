@@ -1,9 +1,10 @@
 import {Fragment, useCallback, useEffect} from 'react';
 import styled from '@emotion/styled';
+import merge from 'lodash/merge';
 
 import {openModal} from 'sentry/actionCreators/modal';
-import {Alert} from 'sentry/components/alert';
-import {Button} from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
+import {Alert} from 'sentry/components/core/alert';
 import SelectControl from 'sentry/components/forms/controls/selectControl';
 import Input from 'sentry/components/input';
 import ExternalLink from 'sentry/components/links/externalLink';
@@ -12,26 +13,24 @@ import {releaseHealth} from 'sentry/data/platformCategories';
 import {IconDelete, IconSettings} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Choices, IssueOwnership, Organization, Project} from 'sentry/types';
+import type {
+  IssueAlertConfiguration,
+  IssueAlertRuleAction,
+  IssueAlertRuleCondition,
+} from 'sentry/types/alerts';
 import {
   AssigneeTargetType,
   IssueAlertActionType,
   IssueAlertConditionType,
   IssueAlertFilterType,
-  IssueAlertRuleAction,
-  IssueAlertRuleActionTemplate,
-  IssueAlertRuleCondition,
-  IssueAlertRuleConditionTemplate,
   MailActionTargetType,
 } from 'sentry/types/alerts';
+import type {Choices} from 'sentry/types/core';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import MemberTeamFields from 'sentry/views/alerts/rules/issue/memberTeamFields';
 import SentryAppRuleModal from 'sentry/views/alerts/rules/issue/sentryAppRuleModal';
 import TicketRuleModal from 'sentry/views/alerts/rules/issue/ticketRuleModal';
-import {SchemaFormConfig} from 'sentry/views/settings/organizationIntegrations/sentryAppExternalForm';
-
-export function hasStreamlineTargeting(organization: Organization): boolean {
-  return organization.features.includes('streamline-targeting-context');
-}
 
 interface FieldProps {
   data: Props['data'];
@@ -54,7 +53,10 @@ function NumberField({
   fieldConfig,
   onPropertyChange,
 }: FieldProps) {
-  const value = data[name] && typeof data[name] !== 'boolean' ? Number(data[name]) : NaN;
+  const value =
+    (data[name] && typeof data[name] !== 'boolean') || data[name] === 0
+      ? Number(data[name])
+      : NaN;
 
   // Set default value of number fields to the placeholder value
   useEffect(() => {
@@ -117,10 +119,7 @@ function MailActionFields({
   onMemberTeamChange,
 }: FieldProps) {
   const isInitialized = data.targetType !== undefined && `${data.targetType}`.length > 0;
-  let issueOwnersLabel = t('Issue Owners');
-  if (hasStreamlineTargeting(organization)) {
-    issueOwnersLabel = t('Suggested Assignees');
-  }
+  const issueOwnersLabel = t('Suggested Assignees');
   return (
     <MemberTeamFields
       disabled={disabled}
@@ -163,6 +162,7 @@ function ChoiceField({
   // All `value`s are cast to string
   // There are integrations that give the form field choices with the value as number, but
   // when the integration configuration gets saved, it gets saved and returned as a string
+  // @ts-expect-error TS(7031): Binding element 'value' implicitly has an 'any' ty... Remove this comment to see the full error message
   const options = fieldConfig.choices.map(([value, label]) => ({
     value: `${value}`,
     label,
@@ -236,8 +236,7 @@ interface Props {
   project: Project;
   incompatibleBanner?: boolean;
   incompatibleRule?: boolean;
-  node?: IssueAlertRuleActionTemplate | IssueAlertRuleConditionTemplate | null;
-  ownership?: null | IssueOwnership;
+  node?: IssueAlertConfiguration[keyof IssueAlertConfiguration][number] | null;
 }
 
 function RuleNode({
@@ -250,7 +249,6 @@ function RuleNode({
   onDelete,
   onPropertyChange,
   onReset,
-  ownership,
   incompatibleRule,
   incompatibleBanner,
 }: Props) {
@@ -279,6 +277,16 @@ function RuleNode({
       onPropertyChange,
       onReset,
     };
+
+    if (name === 'environment') {
+      return (
+        <ChoiceField
+          {...merge(fieldProps, {
+            fieldConfig: {choices: project.environments.map(env => [env, env])},
+          })}
+        />
+      );
+    }
 
     switch (fieldConfig.type) {
       case 'choice':
@@ -310,17 +318,13 @@ function RuleNode({
 
     if (
       data.id === IssueAlertActionType.NOTIFY_EMAIL &&
-      data.targetType !== MailActionTargetType.ISSUE_OWNERS &&
-      organization.features.includes('issue-alert-fallback-targeting')
+      data.targetType !== MailActionTargetType.ISSUE_OWNERS
     ) {
       // Hide the fallback options when targeting team or member
       label = 'Send a notification to {targetType}';
     }
 
-    if (
-      data.id === IssueAlertConditionType.REAPPEARED_EVENT &&
-      organization.features.includes('escalating-issues')
-    ) {
+    if (data.id === IssueAlertConditionType.REAPPEARED_EVENT) {
       label = t('The issue changes state from archived to escalating');
     }
 
@@ -338,8 +342,9 @@ function RuleNode({
       }
       return (
         <Separator key={key}>
-          {node.formFields && node.formFields.hasOwnProperty(key)
-            ? getField(key, node.formFields[key])
+          {node.formFields?.hasOwnProperty(key)
+            ? // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+              getField(key, node.formFields[key])
             : part}
         </Separator>
       );
@@ -368,7 +373,7 @@ function RuleNode({
       return (
         <Button
           size="sm"
-          icon={<IconSettings size="xs" />}
+          icon={<IconSettings />}
           onClick={() =>
             openModal(deps => (
               <TicketRuleModal
@@ -393,15 +398,15 @@ function RuleNode({
       return (
         <Button
           size="sm"
-          icon={<IconSettings size="xs" />}
+          icon={<IconSettings />}
           disabled={Boolean(data.disabled) || disabled}
           onClick={() => {
             openModal(
               deps => (
                 <SentryAppRuleModal
                   {...deps}
-                  sentryAppInstallationUuid={node.sentryAppInstallationUuid!}
-                  config={node.formFields as SchemaFormConfig}
+                  sentryAppInstallationUuid={node.sentryAppInstallationUuid}
+                  config={node.formFields}
                   appName={node.prompt ?? node.label}
                   onSubmitSuccess={updateParentFromSentryAppRule}
                   resetValues={data}
@@ -456,13 +461,13 @@ function RuleNode({
           type="info"
           showIcon
           trailingItems={
-            <Button
+            <LinkButton
               href="https://docs.sentry.io/product/integrations/notification-incidents/slack/#rate-limiting-error"
               external
               size="xs"
             >
               {t('Learn More')}
-            </Button>
+            </LinkButton>
           }
         >
           {t('Having rate limiting problems? Enter a channel or user ID.')}
@@ -476,80 +481,16 @@ function RuleNode({
           type="info"
           showIcon
           trailingItems={
-            <Button
+            <LinkButton
               href="https://docs.sentry.io/product/accounts/early-adopter-features/discord/#issue-alerts"
               external
               size="xs"
             >
               {t('Learn More')}
-            </Button>
+            </LinkButton>
           }
         >
           {t('Note that you must enter a Discord channel ID, not a channel name.')}
-        </MarginlessAlert>
-      );
-    }
-
-    if (
-      data.id === IssueAlertActionType.NOTIFY_EMAIL &&
-      data.targetType === MailActionTargetType.ISSUE_OWNERS &&
-      !organization.features.includes('issue-alert-fallback-targeting')
-    ) {
-      return (
-        <MarginlessAlert type="warning">
-          {!ownership
-            ? tct(
-                'If there are no matching [issueOwners], ownership is determined by the [ownershipSettings].',
-                {
-                  issueOwners: (
-                    <ExternalLink href="https://docs.sentry.io/product/error-monitoring/issue-owners/">
-                      {t('issue owners')}
-                    </ExternalLink>
-                  ),
-                  ownershipSettings: (
-                    <ExternalLink
-                      href={`/settings/${organization.slug}/projects/${project.slug}/ownership/`}
-                    >
-                      {t('ownership settings')}
-                    </ExternalLink>
-                  ),
-                }
-              )
-            : ownership.fallthrough
-            ? tct(
-                'If there are no matching [issueOwners], all project members will receive this alert. To change this behavior, see [ownershipSettings].',
-                {
-                  issueOwners: (
-                    <ExternalLink href="https://docs.sentry.io/product/error-monitoring/issue-owners/">
-                      {t('issue owners')}
-                    </ExternalLink>
-                  ),
-                  ownershipSettings: (
-                    <ExternalLink
-                      href={`/settings/${organization.slug}/projects/${project.slug}/ownership/`}
-                    >
-                      {t('ownership settings')}
-                    </ExternalLink>
-                  ),
-                }
-              )
-            : tct(
-                'If there are no matching [issueOwners], this action will have no effect. To change this behavior, see [ownershipSettings].',
-                {
-                  issueOwners: (
-                    <ExternalLink href="https://docs.sentry.io/product/error-monitoring/issue-owners/">
-                      {t('issue owners')}
-                    </ExternalLink>
-                  ),
-                  ownershipSettings: (
-                    <ExternalLink
-                      href={`/settings/${organization.slug}/projects/${project.slug}/ownership/`}
-                    >
-                      {t('ownership settings')}
-                    </ExternalLink>
-                  ),
-                }
-              )}
         </MarginlessAlert>
       );
     }
@@ -691,6 +632,5 @@ const MarginlessAlert = styled(Alert)`
   border-top-right-radius: 0;
   border-width: 0;
   border-top: 1px ${p => p.theme.innerBorder} solid;
-  margin: 0;
   padding: ${space(1)} ${space(1)};
 `;

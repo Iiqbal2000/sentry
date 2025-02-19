@@ -1,30 +1,31 @@
 from __future__ import annotations
 
-from sentry import features
-from sentry.api.utils import generate_organization_url
-from sentry.models.organizationmapping import OrganizationMapping
-from sentry.silo.base import SiloMode
-
-__all__ = ["IntegrationPipeline"]
-
 import logging
 
 from django.db import IntegrityError
+from django.http import HttpResponseRedirect
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
+from sentry import features
 from sentry.api.serializers import serialize
 from sentry.constants import ObjectStatus
-from sentry.models.identity import Identity, IdentityProvider, IdentityStatus
-from sentry.models.integrations.integration import Integration
-from sentry.models.integrations.organization_integration import OrganizationIntegration
+from sentry.integrations.manager import default_manager
+from sentry.integrations.models.integration import Integration
+from sentry.integrations.models.organization_integration import OrganizationIntegration
+from sentry.models.organizationmapping import OrganizationMapping
+from sentry.organizations.absolute_url import generate_organization_url
+from sentry.organizations.services.organization import organization_service
 from sentry.pipeline import Pipeline, PipelineAnalyticsEntry
 from sentry.shared_integrations.exceptions import IntegrationError, IntegrationProviderError
+from sentry.silo.base import SiloMode
+from sentry.users.models.identity import Identity, IdentityProvider, IdentityStatus
+from sentry.utils import metrics
 from sentry.web.helpers import render_to_response
 
-logger = logging.getLogger(__name__)
+__all__ = ["IntegrationPipeline"]
 
-from . import default_manager
+logger = logging.getLogger(__name__)
 
 
 def ensure_integration(key, data):
@@ -72,7 +73,7 @@ def is_violating_region_restriction(organization_id: int, integration_id: int):
     try:
         mapping = OrganizationMapping.objects.get(organization_id=organization_id)
     except OrganizationMapping.DoesNotExist:
-        logger.error("mapping_missing", extra=logger_extra)
+        logger.exception("mapping_missing", extra=logger_extra)
         return True
 
     return mapping.region_name not in region_names
@@ -86,7 +87,35 @@ class IntegrationPipeline(Pipeline):
         pipeline_type = "reauth" if self.fetch_state("integration_id") else "install"
         return PipelineAnalyticsEntry("integrations.pipeline_step", pipeline_type)
 
+    def initialize(self) -> None:
+        super().initialize()
+
+        metrics.incr(
+            "sentry.integrations.installation_attempt", tags={"integration": self.provider.key}
+        )
+
     def finish_pipeline(self):
+        org_context = organization_service.get_organization_by_id(
+            id=self.organization.id, user_id=self.request.user.id
+        )
+
+        if org_context and (
+            not org_context.member or "org:integrations" not in org_context.member.scopes
+        ):
+            error_message = (
+                "You must be an organization owner, manager or admin to install this integration."
+            )
+            logger.info(
+                "build-integration.permission_error",
+                extra={
+                    "error_message": error_message,
+                    "organization_id": self.organization.id if self.organization else None,
+                    "user_id": self.request.user.id,
+                    "provider_key": self.provider.key,
+                },
+            )
+            return self.error(error_message)
+
         try:
             data = self.provider.build_integration(self.state.data)
         except IntegrationError as e:
@@ -95,6 +124,7 @@ class IntegrationPipeline(Pipeline):
                 extra={
                     "error_message": str(e),
                     "error_status": getattr(e, "code", None),
+                    "organization_id": self.organization.id if self.organization else None,
                     "provider_key": self.provider.key,
                 },
             )
@@ -105,6 +135,7 @@ class IntegrationPipeline(Pipeline):
                 extra={
                     "error_message": str(e),
                     "error_status": getattr(e, "code", None),
+                    "organization_id": self.organization.id if self.organization else None,
                     "provider_key": self.provider.key,
                 },
             )
@@ -119,16 +150,15 @@ class IntegrationPipeline(Pipeline):
         )
         self.provider.post_install(self.integration, self.organization, extra=extra)
         self.clear_session()
+
+        metrics.incr(
+            "sentry.integrations.installation_finished", tags={"integration": self.provider.key}
+        )
+
         return response
 
     def _finish_pipeline(self, data):
-        if "reinstall_id" in data:
-            self.integration = Integration.objects.get(
-                provider=self.provider.integration_key, id=data["reinstall_id"]
-            )
-            self.integration.update(external_id=data["external_id"], status=ObjectStatus.ACTIVE)
-            self.integration.get_installation(self.organization.id).reinstall()
-        elif "expect_exists" in data:
+        if "expect_exists" in data:
             self.integration = Integration.objects.get(
                 provider=self.provider.integration_key, external_id=data["external_id"]
             )
@@ -191,6 +221,8 @@ class IntegrationPipeline(Pipeline):
                             "object_id": matched_identity.id,
                             "user_id": self.request.user.id,
                             "type": identity["type"],
+                            "organization_id": self.organization.id if self.organization else None,
+                            "provider_key": self.provider.key,
                         },
                     )
                     # if we don't need a default identity, we don't have to throw an error
@@ -216,19 +248,27 @@ class IntegrationPipeline(Pipeline):
         if self.provider.is_region_restricted and is_violating_region_restriction(
             organization_id=self.organization.id, integration_id=self.integration.id
         ):
-            return self._dialog_response(
-                {
-                    "error": _(
-                        "This integration has already been installed on another Sentry organization "
-                        "which resides in a different region. Installation could not be completed."
-                    )
+            self.get_logger().info(
+                "finish_pipeline.multi_region_install_error",
+                extra={
+                    "organization_id": self.organization.id if self.organization else None,
+                    "provider_key": self.provider.key,
+                    "integration_id": self.integration.id,
                 },
-                False,
+            )
+            return self.error(
+                "This integration has already been installed on another Sentry organization which resides in a different region. Installation could not be completed."
             )
 
         org_integration = self.integration.add_organization(
             self.organization, self.request.user, default_auth_id=default_auth_id
         )
+
+        extra = data.get("post_install_data", {})
+        # If a particular provider has a redirect for a successful install, use that instead of the generic success
+        redirect_url_format = extra.get("redirect_url_format", None)
+        if redirect_url_format is not None:
+            return self._get_redirect_response(redirect_url_format=redirect_url_format)
         return self._dialog_success(org_integration)
 
     def _dialog_success(self, org_integration):
@@ -236,7 +276,7 @@ class IntegrationPipeline(Pipeline):
 
     def _dialog_response(self, data, success):
         document_origin = "document.origin"
-        if features.has("organizations:customer-domains", self.organization):
+        if features.has("system:multi-region"):
             document_origin = f'"{generate_organization_url(self.organization.slug)}"'
         context = {
             "payload": {"success": success, "data": data},
@@ -247,7 +287,13 @@ class IntegrationPipeline(Pipeline):
             extra={
                 "document_origin": document_origin,
                 "success": success,
-                "organization_id": self.organization.id,
+                "organization_id": self.organization.id if self.organization else None,
+                "provider_key": self.provider.key,
+                "dialog": data,
             },
         )
         return render_to_response("sentry/integrations/dialog-complete.html", context, self.request)
+
+    def _get_redirect_response(self, redirect_url_format: str) -> HttpResponseRedirect:
+        redirect_url = redirect_url_format.format(org_slug=self.organization.slug)
+        return HttpResponseRedirect(redirect_url)

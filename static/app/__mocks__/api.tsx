@@ -1,15 +1,17 @@
 import isEqual from 'lodash/isEqual';
 
-import * as ApiNamespace from 'sentry/api';
+import type * as ApiNamespace from 'sentry/api';
 
 const RealApi: typeof ApiNamespace = jest.requireActual('sentry/api');
-
-export class Request {}
 
 export const initApiClientErrorHandling = RealApi.initApiClientErrorHandling;
 export const hasProjectBeenRenamed = RealApi.hasProjectBeenRenamed;
 
-const respond = (asyncDelay: AsyncDelay, fn?: Function, ...args: any[]): void => {
+const respond = (
+  asyncDelay: AsyncDelay,
+  fn: FunctionCallback | undefined,
+  ...args: any[]
+): void => {
   if (!fn) {
     return;
   }
@@ -27,15 +29,14 @@ type FunctionCallback<Args extends any[] = any[]> = (...args: Args) => void;
 /**
  * Callables for matching requests based on arbitrary conditions.
  */
-interface MatchCallable {
-  (url: string, options: ApiNamespace.RequestOptions): boolean;
-}
+type MatchCallable = (url: string, options: ApiNamespace.RequestOptions) => boolean;
 
 type AsyncDelay = undefined | number;
 interface ResponseType extends ApiNamespace.ResponseMeta {
   body: any;
   callCount: 0;
   headers: Record<string, string>;
+  host: string;
   match: MatchCallable[];
   method: string;
   statusCode: number;
@@ -140,6 +141,7 @@ class Client implements ApiNamespace.Client {
 
     Client.mockResponses.unshift([
       {
+        host: '',
         url: '',
         status: 200,
         statusCode: 200,
@@ -163,6 +165,9 @@ class Client implements ApiNamespace.Client {
 
   static findMockResponse(url: string, options: Readonly<ApiNamespace.RequestOptions>) {
     return Client.mockResponses.find(([response]) => {
+      if (response.host && (options.host || '') !== response.host) {
+        return false;
+      }
       if (url !== response.url) {
         return false;
       }
@@ -188,13 +193,12 @@ class Client implements ApiNamespace.Client {
   wrapCallback<T extends any[]>(
     _id: string,
     func: FunctionCallback<T> | undefined,
-    _cleanup: boolean = false
+    _cleanup = false
   ) {
     const asyncDelay = Client.asyncDelay;
 
     return (...args: T) => {
-      // @ts-expect-error
-      if (RealApi.hasProjectBeenRenamed(...args)) {
+      if ((RealApi.hasProjectBeenRenamed as any)(...args)) {
         return;
       }
       respond(asyncDelay, func, ...args);
@@ -212,7 +216,7 @@ class Client implements ApiNamespace.Client {
       this.request(path, {
         ...options,
         success: (data, ...args) => {
-          includeAllArgs ? resolve([data, ...args]) : resolve(data);
+          resolve(includeAllArgs ? [data, ...args] : data);
         },
         error: (error, ..._args) => {
           reject(error);
@@ -255,7 +259,7 @@ class Client implements ApiNamespace.Client {
       const body =
         typeof response.body === 'function' ? response.body(url, options) : response.body;
 
-      if (![200, 202].includes(response.statusCode)) {
+      if (response.statusCode >= 300) {
         response.callCount++;
 
         const errorResponse = Object.assign(

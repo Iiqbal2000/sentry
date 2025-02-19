@@ -25,7 +25,7 @@ class OrganizationReleaseFilesEndpoint(OrganizationReleasesBaseEndpoint, Release
 
         Retrieve a list of files for a given release.
 
-        :pparam string organization_slug: the slug of the organization the
+        :pparam string organization_id_or_slug: the id or slug of the organization the
                                           release belongs to.
         :pparam string version: the version identifier of the release.
         :qparam string query: If set, only files with these partial names will be returned.
@@ -52,11 +52,14 @@ class OrganizationReleaseFilesEndpoint(OrganizationReleasesBaseEndpoint, Release
         Unlike other API requests, files must be uploaded using the
         traditional multipart/form-data content-type.
 
+        Requests to this endpoint should use the region-specific domain
+        eg. `us.sentry.io` or `de.sentry.io`
+
         The optional 'name' attribute should reflect the absolute path
         that this file will be referenced as. For example, in the case of
         JavaScript you might specify the full web URI.
 
-        :pparam string organization_slug: the slug of the organization the
+        :pparam string organization_id_or_slug: the id or slug of the organization the
                                           release belongs to.
         :pparam string version: the version identifier of the release.
         :param string name: the name (full path) of the file.

@@ -1,41 +1,43 @@
 import {Component, Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import Feature from 'sentry/components/acl/feature';
-import {Alert} from 'sentry/components/alert';
-import Breadcrumbs from 'sentry/components/breadcrumbs';
 import {CompactSelect} from 'sentry/components/compactSelect';
-import DatePageFilter from 'sentry/components/datePageFilter';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
+import {Alert} from 'sentry/components/core/alert';
 import SearchBar from 'sentry/components/events/searchBar';
 import * as Layout from 'sentry/components/layouts/thirds';
+import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import PageFilterBar from 'sentry/components/organizations/pageFilterBar';
 import PageFiltersContainer from 'sentry/components/organizations/pageFilters/container';
+import {ProjectPageFilter} from 'sentry/components/organizations/projectPageFilter';
 import TransactionNameSearchBar from 'sentry/components/performance/searchBar';
-import ProjectPageFilter from 'sentry/components/projectPageFilter';
 import {MAX_QUERY_LENGTH} from 'sentry/constants';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, PageFilters, Project} from 'sentry/types';
+import type {PageFilters} from 'sentry/types/core';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import EventView from 'sentry/utils/discover/eventView';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import type EventView from 'sentry/utils/discover/eventView';
 import {generateAggregateFields} from 'sentry/utils/discover/fields';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import withPageFilters from 'sentry/utils/withPageFilters';
+import {TrendsHeader} from 'sentry/views/performance/trends/trendsHeader';
+import getSelectedQueryKey from 'sentry/views/performance/trends/utils/getSelectedQueryKey';
 
-import {getPerformanceLandingUrl, getTransactionSearchQuery} from '../utils';
+import {getTransactionSearchQuery} from '../utils';
 
 import ChangedTransactions from './changedTransactions';
-import {TrendChangeType, TrendFunctionField, TrendView} from './types';
+import type {TrendFunctionField, TrendView} from './types';
+import {TrendChangeType} from './types';
 import {
   DEFAULT_MAX_DURATION,
   DEFAULT_TRENDS_STATS_PERIOD,
   getCurrentTrendFunction,
   getCurrentTrendParameter,
-  getSelectedQueryKey,
   modifyTransactionNameTrendsQuery,
   modifyTrendsViewDefaultPeriod,
   resetCursors,
@@ -88,7 +90,7 @@ class TrendsContent extends Component<Props, State> {
   handleTrendFunctionChange = (field: string) => {
     const {organization, location} = this.props;
 
-    const offsets = {};
+    const offsets: Record<string, undefined> = {};
 
     Object.values(TrendChangeType).forEach(trendChangeType => {
       const queryKey = getSelectedQueryKey(trendChangeType);
@@ -125,9 +127,11 @@ class TrendsContent extends Component<Props, State> {
     }
 
     return (
-      <Alert type="error" showIcon>
-        {error}
-      </Alert>
+      <Alert.Container>
+        <Alert type="error" showIcon>
+          {error}
+        </Alert>
+      </Alert.Container>
     );
   }
 
@@ -162,26 +166,6 @@ class TrendsContent extends Component<Props, State> {
       return conditions.freeText.join(' ');
     }
     return '';
-  }
-
-  getPerformanceLink() {
-    const {location} = this.props;
-
-    const newQuery = {
-      ...location.query,
-    };
-    const query = decodeScalar(location.query.query, '');
-    const conditions = new MutableSearch(query);
-
-    // This stops errors from occurring when navigating to other views since we are appending aggregates to the trends view
-    conditions.removeFilter('tpm()');
-    conditions.removeFilter('confidence()');
-    conditions.removeFilter('transaction.duration');
-    newQuery.query = conditions.formatString();
-    return {
-      pathname: getPerformanceLandingUrl(this.props.organization),
-      query: newQuery,
-    };
   }
 
   render() {
@@ -233,22 +217,7 @@ class TrendsContent extends Component<Props, State> {
           datetime: defaultTrendsSelectionDate,
         }}
       >
-        <Layout.Header>
-          <Layout.HeaderContent>
-            <Breadcrumbs
-              crumbs={[
-                {
-                  label: 'Performance',
-                  to: this.getPerformanceLink(),
-                },
-                {
-                  label: 'Trends',
-                },
-              ]}
-            />
-            <Layout.Title>{t('Trends')}</Layout.Title>
-          </Layout.HeaderContent>
-        </Layout.Header>
+        <TrendsHeader />
         <Layout.Body>
           <Layout.Main fullWidth>
             <DefaultTrends location={location} eventView={eventView} projects={projects}>
@@ -256,14 +225,14 @@ class TrendsContent extends Component<Props, State> {
                 <PageFilterBar condensed>
                   <ProjectPageFilter />
                   <EnvironmentPageFilter />
-                  <DatePageFilter alignDropdown="left" />
+                  <DatePageFilter />
                 </PageFilterBar>
                 {organization.features.includes('performance-new-trends') ? (
                   <StyledTransactionNameSearchBar
                     organization={organization}
                     eventView={trendView}
                     onSearch={this.handleSearch}
-                    query={this.getFreeTextFromQuery(query)}
+                    query={this.getFreeTextFromQuery(query)!}
                   />
                 ) : (
                   <StyledSearchBar
@@ -317,24 +286,6 @@ class TrendsContent extends Component<Props, State> {
                   )}
                 />
               </ListContainer>
-              <Feature features={['organizations:performance-trendsv2-dev-only']}>
-                <ListContainer>
-                  <ChangedTransactions
-                    trendChangeType={TrendChangeType.IMPROVED}
-                    previousTrendFunction={previousTrendFunction}
-                    trendView={trendView}
-                    location={location}
-                    setError={this.setError}
-                  />
-                  <ChangedTransactions
-                    trendChangeType={TrendChangeType.REGRESSION}
-                    previousTrendFunction={previousTrendFunction}
-                    trendView={trendView}
-                    location={location}
-                    setError={this.setError}
-                  />
-                </ListContainer>
-              </Feature>
             </DefaultTrends>
           </Layout.Main>
         </Layout.Body>

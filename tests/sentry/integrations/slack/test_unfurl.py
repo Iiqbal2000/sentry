@@ -7,20 +7,22 @@ from django.test import RequestFactory
 from django.utils import timezone
 
 from sentry.charts.types import ChartType
-from sentry.discover.models import DiscoverSavedQuery
+from sentry.discover.models import DiscoverSavedQuery, DiscoverSavedQueryTypes
 from sentry.incidents.logic import CRITICAL_TRIGGER_LABEL
+from sentry.integrations.services.integration.serial import serialize_integration
 from sentry.integrations.slack.message_builder.discover import SlackDiscoverMessageBuilder
 from sentry.integrations.slack.message_builder.issues import SlackIssuesMessageBuilder
 from sentry.integrations.slack.message_builder.metric_alerts import SlackMetricAlertMessageBuilder
-from sentry.integrations.slack.unfurl import LinkType, UnfurlableUrl, link_handlers, match_link
-from sentry.services.hybrid_cloud.integration.serial import serialize_integration
+from sentry.integrations.slack.unfurl.handlers import link_handlers, match_link
+from sentry.integrations.slack.unfurl.types import LinkType, UnfurlableUrl
+from sentry.snuba import discover, errors, spans_eap, transactions
 from sentry.snuba.dataset import Dataset
 from sentry.testutils.cases import TestCase
 from sentry.testutils.helpers import install_slack
-from sentry.testutils.helpers.datetime import before_now, freeze_time, iso_format
+from sentry.testutils.helpers.datetime import before_now, freeze_time
 from sentry.testutils.skips import requires_snuba
 
-pytestmark = [requires_snuba]
+pytestmark = [requires_snuba, pytest.mark.sentry_metrics]
 
 INTERVAL_COUNT = 300
 INTERVALS_PER_DAY = int(60 * 60 * 24 / INTERVAL_COUNT)
@@ -187,7 +189,7 @@ class UnfurlTest(TestCase):
         self.frozen_time.stop()
 
     def test_unfurl_issues(self):
-        min_ago = iso_format(before_now(minutes=1))
+        min_ago = before_now(minutes=1).isoformat()
         event = self.store_event(
             data={"fingerprint": ["group2"], "timestamp": min_ago}, project_id=self.project.id
         )
@@ -211,14 +213,45 @@ class UnfurlTest(TestCase):
         assert (
             unfurls[links[1].url]
             == SlackIssuesMessageBuilder(
-                group2, next(iter(event.build_group_events())), link_to_event=True
+                group2, event.for_group(group2), link_to_event=True
+            ).build()
+        )
+
+    def test_unfurl_issues_block_kit(self):
+        min_ago = before_now(minutes=1).isoformat()
+        event = self.store_event(
+            data={"fingerprint": ["group2"], "timestamp": min_ago}, project_id=self.project.id
+        )
+        assert event.group is not None
+        group2 = event.group
+
+        links = [
+            UnfurlableUrl(
+                url=f"https://sentry.io/organizations/{self.organization.slug}/issues/{self.group.id}/",
+                args={"issue_id": self.group.id, "event_id": None},
+            ),
+            UnfurlableUrl(
+                url=f"https://sentry.io/organizations/{self.organization.slug}/issues/{group2.id}/{event.event_id}/",
+                args={"issue_id": group2.id, "event_id": event.event_id},
+            ),
+        ]
+
+        unfurls = link_handlers[LinkType.ISSUES].fn(self.request, self.integration, links)
+
+        assert unfurls[links[0].url] == SlackIssuesMessageBuilder(self.group).build()
+        assert (
+            unfurls[links[1].url]
+            == SlackIssuesMessageBuilder(
+                group2, event.for_group(group2), link_to_event=True
             ).build()
         )
 
     def test_escape_issue(self):
+        # wraps text in markdown code block
+        escape_text = "<https://example.com/|*Click Here*>"
         group = self.create_group(
             project=self.project,
-            data={"type": "error", "metadata": {"value": "<https://example.com/|*Click Here*>"}},
+            data={"type": "error", "metadata": {"value": escape_text}},
         )
 
         links = [
@@ -229,7 +262,7 @@ class UnfurlTest(TestCase):
         ]
 
         unfurls = link_handlers[LinkType.ISSUES].fn(self.request, self.integration, links)
-        assert unfurls[links[0].url]["text"] == "&amp;lt;https://example.com/|*Click Here*&amp;gt;"
+        assert unfurls[links[0].url]["blocks"][1]["text"]["text"] == "```" + escape_text + "```"
 
     def test_unfurl_metric_alert(self):
         alert_rule = self.create_alert_rule()
@@ -375,11 +408,119 @@ class UnfurlTest(TestCase):
         assert chart_data["incidents"][0]["id"] == str(incident.id)
 
     @patch("sentry.charts.backend.generate_chart", return_value="chart-url")
+    @pytest.mark.xfail
+    def test_unfurl_metric_alerts_chart_eap_spans(self, mock_generate_chart):
+        # Using the EventsAnalyticsPlatform dataset
+        alert_rule = self.create_alert_rule(
+            query="span.op:foo", dataset=Dataset.EventsAnalyticsPlatform
+        )
+        incident = self.create_incident(
+            status=2,
+            organization=self.organization,
+            projects=[self.project],
+            alert_rule=alert_rule,
+            date_started=timezone.now() - timedelta(minutes=2),
+        )
+        trigger = self.create_alert_rule_trigger(alert_rule, CRITICAL_TRIGGER_LABEL, 100)
+        self.create_alert_rule_trigger_action(
+            alert_rule_trigger=trigger, triggered_for_incident=incident
+        )
+
+        url = f"https://sentry.io/organizations/{self.organization.slug}/alerts/rules/details/{alert_rule.id}/?alert={incident.identifier}"
+        links = [
+            UnfurlableUrl(
+                url=url,
+                args={
+                    "org_slug": self.organization.slug,
+                    "alert_rule_id": alert_rule.id,
+                    "incident_id": incident.identifier,
+                    "period": None,
+                    "start": None,
+                    "end": None,
+                },
+            ),
+        ]
+
+        with self.feature(
+            [
+                "organizations:incidents",
+                "organizations:discover",
+                "organizations:performance-view",
+                "organizations:metric-alert-chartcuterie",
+            ]
+        ):
+            unfurls = link_handlers[LinkType.METRIC_ALERT].fn(self.request, self.integration, links)
+
+        assert (
+            unfurls[links[0].url]
+            == SlackMetricAlertMessageBuilder(alert_rule, incident, chart_url="chart-url").build()
+        )
+        assert len(mock_generate_chart.mock_calls) == 1
+        chart_data = mock_generate_chart.call_args[0][1]
+        assert chart_data["rule"]["id"] == str(alert_rule.id)
+        assert chart_data["rule"]["dataset"] == "events_analytics_platform"
+        assert chart_data["selectedIncident"]["identifier"] == str(incident.identifier)
+        series_data = chart_data["timeseriesData"][0]["data"]
+        assert len(series_data) > 0
+        # Validate format of timeseries
+        assert type(series_data[0]["name"]) is int
+        assert type(series_data[0]["value"]) is float
+        assert chart_data["incidents"][0]["id"] == str(incident.id)
+
+    @patch(
+        "sentry.api.bases.organization_events.OrganizationEventsV2EndpointBase.get_event_stats_data",
+    )
+    @patch("sentry.charts.backend.generate_chart", return_value="chart-url")
+    @pytest.mark.xfail
+    def test_unfurl_metric_alerts_chart_eap_spans_events_stats_call(
+        self, mock_generate_chart, mock_get_event_stats_data
+    ):
+        # Using the EventsAnalyticsPlatform dataset
+        alert_rule = self.create_alert_rule(
+            query="span.op:foo", dataset=Dataset.EventsAnalyticsPlatform
+        )
+        incident = self.create_incident(
+            status=2,
+            organization=self.organization,
+            projects=[self.project],
+            alert_rule=alert_rule,
+            date_started=timezone.now() - timedelta(minutes=2),
+        )
+
+        url = f"https://sentry.io/organizations/{self.organization.slug}/alerts/rules/details/{alert_rule.id}/?alert={incident.identifier}"
+        links = [
+            UnfurlableUrl(
+                url=url,
+                args={
+                    "org_slug": self.organization.slug,
+                    "alert_rule_id": alert_rule.id,
+                    "incident_id": incident.identifier,
+                    "period": None,
+                    "start": None,
+                    "end": None,
+                },
+            ),
+        ]
+
+        with self.feature(
+            [
+                "organizations:incidents",
+                "organizations:discover",
+                "organizations:performance-view",
+                "organizations:metric-alert-chartcuterie",
+            ]
+        ):
+            link_handlers[LinkType.METRIC_ALERT].fn(self.request, self.integration, links)
+
+        dataset = mock_get_event_stats_data.mock_calls[0][2]["dataset"]
+        assert dataset == spans_eap
+
+    @patch("sentry.charts.backend.generate_chart", return_value="chart-url")
     def test_unfurl_metric_alerts_chart_crash_free(self, mock_generate_chart):
         alert_rule = self.create_alert_rule(
             query="",
             aggregate="percentage(sessions_crashed, sessions) AS _crash_rate_alert_aggregate",
-            dataset=Dataset.Sessions,
+            dataset=Dataset.Metrics,
             time_window=60,
             resolve_threshold=10,
             threshold_period=1,
@@ -436,7 +577,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -473,7 +614,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -519,7 +660,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -556,7 +697,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -617,7 +758,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -681,7 +822,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -733,7 +874,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -799,7 +940,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -858,7 +999,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -895,12 +1036,14 @@ class UnfurlTest(TestCase):
         },
     )
     @patch("sentry.charts.backend.generate_chart", return_value="chart-url")
-    def test_unfurl_discover_without_project_ids(self, mock_generate_chart, _):
-        url = f"https://sentry.io/organizations/{self.organization.slug}/discover/results/?field=title&field=event.type&field=project&field=user.display&field=timestamp&name=All+Events&query=&sort=-timestamp&statsPeriod=24h"
+    def test_unfurl_discover_without_project_ids(
+        self, mock_generate_chart, mock_get_event_stats_data
+    ):
+        url = f"https://sentry.io/organizations/{self.organization.slug}/discover/results/?dataset=errors&field=title&field=event.type&field=project&field=user.display&field=timestamp&name=All+Events&query=&sort=-timestamp&statsPeriod=24h"
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -924,6 +1067,10 @@ class UnfurlTest(TestCase):
         chart_data = mock_generate_chart.call_args[0][1]
         assert chart_data["seriesName"] == "count()"
         assert len(chart_data["stats"]["data"]) == INTERVALS_PER_DAY
+
+        assert len(mock_get_event_stats_data.mock_calls) == 1
+        dataset = mock_get_event_stats_data.mock_calls[0][2]["dataset"]
+        assert dataset == errors
 
     # patched return value determined by reading events stats output
     @patch(
@@ -952,7 +1099,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -984,7 +1131,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -1019,7 +1166,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -1070,7 +1217,7 @@ class UnfurlTest(TestCase):
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -1099,6 +1246,59 @@ class UnfurlTest(TestCase):
 
     @patch(
         "sentry.api.bases.organization_events.OrganizationEventsV2EndpointBase.get_event_stats_data",
+    )
+    @patch("sentry.charts.backend.generate_chart", return_value="chart-url")
+    def test_saved_query_with_dataset(self, mock_generate_chart, mock_get_event_stats_data):
+        query = {
+            "fields": ["title", "event.type", "project", "user.display", "timestamp"],
+            "query": "",
+            "yAxis": "count()",
+            "interval": "10m",
+            "statsPeriod": "24h",
+        }
+        saved_query = DiscoverSavedQuery.objects.create(
+            organization=self.organization,
+            created_by_id=self.user.id,
+            name="Test query",
+            query=query,
+            version=2,
+            dataset=DiscoverSavedQueryTypes.TRANSACTION_LIKE,
+        )
+        saved_query.set_projects([self.project.id])
+
+        url = f"https://sentry.io/organizations/{self.organization.slug}/discover/results/?id={saved_query.id}&statsPeriod=24h"
+        link_type, args = match_link(url)
+
+        if not args or not link_type:
+            raise AssertionError("Missing link_type/args")
+
+        links = [
+            UnfurlableUrl(url=url, args=args),
+        ]
+
+        with self.feature(
+            [
+                "organizations:discover",
+                "organizations:discover-basic",
+            ]
+        ):
+            unfurls = link_handlers[link_type].fn(self.request, self.integration, links, self.user)
+
+        assert (
+            unfurls[url]
+            == SlackDiscoverMessageBuilder(
+                title=args["query"].get("name"), chart_url="chart-url"
+            ).build()
+        )
+
+        assert len(mock_generate_chart.mock_calls) == 1
+
+        assert len(mock_get_event_stats_data.mock_calls) == 1
+        dataset = mock_get_event_stats_data.mock_calls[0][2]["dataset"]
+        assert dataset == transactions
+
+    @patch(
+        "sentry.api.bases.organization_events.OrganizationEventsV2EndpointBase.get_event_stats_data",
         return_value={
             "data": [(i * INTERVAL_COUNT, [{"count": 0}]) for i in range(INTERVALS_PER_DAY)],
             "end": 1652903400,
@@ -1107,12 +1307,12 @@ class UnfurlTest(TestCase):
         },
     )
     @patch("sentry.charts.backend.generate_chart", return_value="chart-url")
-    def test_unfurl_discover_homepage(self, mock_generate_chart, _):
+    def test_unfurl_discover_homepage(self, mock_generate_chart, mock_get_event_stats_data):
         url = f"https://sentry.io/organizations/{self.organization.slug}/discover/homepage/?field=title&field=event.type&field=project&field=user.display&field=timestamp&name=All+Events&project={self.project.id}&query=&sort=-timestamp&statsPeriod=24h"
         link_type, args = match_link(url)
 
         if not args or not link_type:
-            raise Exception("Missing link_type/args")
+            raise AssertionError("Missing link_type/args")
 
         links = [
             UnfurlableUrl(url=url, args=args),
@@ -1131,3 +1331,7 @@ class UnfurlTest(TestCase):
         chart_data = mock_generate_chart.call_args[0][1]
         assert chart_data["seriesName"] == "count()"
         assert len(chart_data["stats"]["data"]) == INTERVALS_PER_DAY
+
+        assert len(mock_get_event_stats_data.mock_calls) == 1
+        dataset = mock_get_event_stats_data.mock_calls[0][2]["dataset"]
+        assert dataset == discover

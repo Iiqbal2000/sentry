@@ -7,7 +7,7 @@ import {LightFlamegraphTheme as theme} from 'sentry/utils/profiling/flamegraph/f
 import {FlamegraphRendererDOM} from 'sentry/utils/profiling/renderers/flamegraphRendererDOM';
 
 import {CanvasView} from '../canvasView';
-import {Flamegraph} from '../flamegraph';
+import type {Flamegraph} from '../flamegraph';
 import {FlamegraphCanvas} from '../flamegraphCanvas';
 
 const originalDpr = window.devicePixelRatio;
@@ -33,7 +33,7 @@ describe('FlamegraphDomRenderer', () => {
       [{name: 'function 0'}]
     );
 
-    const canvas = makeCanvasMock() as HTMLCanvasElement;
+    const canvas = makeCanvasMock();
 
     // @ts-expect-error parentElement is a mock so readonly does not apply
     canvas.parentElement = document.createElement('div');

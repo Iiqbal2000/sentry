@@ -1,9 +1,9 @@
 import type {Fuse} from 'sentry/utils/fuzzySearch';
 
-import {SpanBarProps} from './spanBar';
-import {SpanDescendantGroupBarProps} from './spanDescendantGroupBar';
-import {SpanSiblingGroupBarProps} from './spanSiblingGroupBar';
-import SpanTreeModel from './spanTreeModel';
+import type {SpanBarProps} from './spanBar';
+import type {SpanDescendantGroupBarProps} from './spanDescendantGroupBar';
+import type {SpanSiblingGroupBarProps} from './spanSiblingGroupBar';
+import type SpanTreeModel from './spanTreeModel';
 
 export type GapSpanType = {
   isOrphan: boolean;
@@ -14,20 +14,41 @@ export type GapSpanType = {
   description?: string;
 };
 
+interface SpanSourceCodeAttributes {
+  'code.column'?: number;
+  'code.filepath'?: string;
+  'code.function'?: string;
+  'code.lineno'?: number;
+  'code.namespace'?: string;
+}
+
+interface SpanDatabaseAttributes {
+  'db.name'?: string;
+  'db.operation'?: string;
+  'db.system'?: string;
+  'db.user'?: string;
+}
+
 export type RawSpanType = {
-  data: Record<string, any>;
   span_id: string;
   start_timestamp: number;
   // this is essentially end_timestamp
   timestamp: number;
   trace_id: string;
+  data?: SpanSourceCodeAttributes & SpanDatabaseAttributes & Record<string, any>;
   description?: string;
   exclusive_time?: number;
   hash?: string;
   op?: string;
   origin?: string;
   parent_span_id?: string;
+  project_slug?: string;
   same_process_as_parent?: boolean;
+  sentry_tags?: Record<string, string>;
+  'span.averageResults'?: {
+    'avg(span.duration)'?: number;
+    'avg(span.self_time)'?: number;
+  };
   status?: string;
   tags?: {[key: string]: string};
 };
@@ -35,6 +56,12 @@ export type RawSpanType = {
 export type AggregateSpanType = RawSpanType & {
   count: number;
   frequency: number;
+  samples: Array<{
+    span: string;
+    timestamp: number;
+    trace: string;
+    transaction: string;
+  }>;
   total: number;
   type: 'aggregate';
 };
@@ -93,7 +120,7 @@ export type SpanSiblingGroupProps = {
 };
 
 type CommonEnhancedProcessedSpanType = {
-  continuingTreeDepths: Array<TreeDepthType>;
+  continuingTreeDepths: TreeDepthType[];
   fetchEmbeddedChildrenState: FetchEmbeddedChildrenState;
   isEmbeddedTransactionTimeAdjusted: boolean;
   isLastSibling: boolean;
@@ -133,20 +160,20 @@ export type EnhancedProcessedSpanType =
       type: 'out_of_view';
     }
   | ({
-      continuingTreeDepths: Array<TreeDepthType>;
+      continuingTreeDepths: TreeDepthType[];
       span: SpanType;
       treeDepth: number;
       type: 'span_group_chain';
     } & SpanGroupProps)
   | ({
-      continuingTreeDepths: Array<TreeDepthType>;
+      continuingTreeDepths: TreeDepthType[];
       span: SpanType;
       treeDepth: number;
       type: 'span_group_siblings';
     } & SpanSiblingGroupProps);
 
 // map span_id to children whose parent_span_id is equal to span_id
-export type SpanChildrenLookupType = {[span_id: string]: Array<SpanType>};
+export type SpanChildrenLookupType = {[span_id: string]: SpanType[]};
 
 export type ParsedTraceType = {
   childSpans: SpanChildrenLookupType;
@@ -167,13 +194,15 @@ export type ParsedTraceType = {
 };
 
 export enum TickAlignment {
-  LEFT,
-  RIGHT,
-  CENTER,
+  LEFT = 0,
+  RIGHT = 1,
+  CENTER = 2,
 }
 
 export type TraceContextType = {
+  client_sample_rate?: number;
   count?: number;
+  data?: Record<string, any>;
   description?: string;
   exclusive_time?: number;
   frequency?: number;
@@ -206,7 +235,7 @@ export type IndexedFusedSpan = {
 };
 
 export type FilterSpans = {
-  results: Fuse.FuseResult<IndexedFusedSpan>[];
+  results: Array<Fuse.FuseResult<IndexedFusedSpan>>;
   spanIDs: Set<string>;
 };
 
@@ -222,15 +251,15 @@ export type DescendantGroup = {
 };
 
 export enum GroupType {
-  DESCENDANTS,
-  SIBLINGS,
+  DESCENDANTS = 0,
+  SIBLINGS = 1,
 }
 
 export enum SpanTreeNodeType {
-  SPAN,
-  DESCENDANT_GROUP,
-  SIBLING_GROUP,
-  MESSAGE,
+  SPAN = 0,
+  DESCENDANT_GROUP = 1,
+  SIBLING_GROUP = 2,
+  MESSAGE = 3,
 }
 
 type SpanBarNode = {

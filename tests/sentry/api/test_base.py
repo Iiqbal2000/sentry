@@ -1,24 +1,28 @@
+from datetime import datetime
 from unittest import mock
 from unittest.mock import MagicMock
 
-from django.http import HttpRequest, QueryDict, StreamingHttpResponse
+from django.http import QueryDict, StreamingHttpResponse
 from django.test import override_settings
 from pytest import raises
+from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.response import Response
 from sentry_sdk import Scope
-from sentry_sdk.utils import exc_info_from_error
 
-from sentry.api.base import Endpoint, EndpointSiloLimit, resolve_region
+from sentry.api.base import Endpoint, EndpointSiloLimit
+from sentry.api.exceptions import SuperuserRequired
 from sentry.api.paginator import GenericOffsetPaginator
+from sentry.api.permissions import SuperuserPermission
+from sentry.deletions.tasks.hybrid_cloud import schedule_hybrid_cloud_foreign_key_jobs
 from sentry.models.apikey import ApiKey
-from sentry.services.hybrid_cloud.util import FunctionSiloLimit
-from sentry.silo import SiloMode
+from sentry.silo.base import FunctionSiloLimit, SiloMode
 from sentry.testutils.cases import APITestCase
 from sentry.testutils.helpers.options import override_options
-from sentry.testutils.region import override_region_config
-from sentry.testutils.silo import all_silo_test, assume_test_silo_mode
-from sentry.types.region import RegionCategory, clear_global_regions
+from sentry.testutils.outbox import outbox_runner
+from sentry.testutils.silo import all_silo_test, assume_test_silo_mode, create_test_regions
+from sentry.types.region import subdomain_is_region
 from sentry.utils.cursors import Cursor
+from sentry.utils.security.orgauthtoken_token import generate_token, hash_token
 
 
 # Though it looks weird to have a method outside a class, this isn't a mistake but rather
@@ -28,10 +32,21 @@ def reraise(self, e: Exception):
 
 
 class DummyEndpoint(Endpoint):
-    permission_classes = ()
+    permission_classes: tuple[type[BasePermission], ...] = ()
 
     def get(self, request):
         return Response({"ok": True})
+
+
+class DummySuperuserPermissionEndpoint(DummyEndpoint):
+    permission_classes = (SuperuserPermission,)
+
+
+class DummySuperuserOrAnyPermissionEndpoint(DummyEndpoint):
+    permission_classes = (
+        SuperuserPermission,
+        AllowAny,
+    )
 
 
 class DummyErroringEndpoint(Endpoint):
@@ -39,7 +54,7 @@ class DummyErroringEndpoint(Endpoint):
     # `as_view` requires that any init args passed to it match attributes already on the
     # class, so even though they're really meant to be instance attributes, we have to
     # add them here as class attributes first
-    error = NotImplementedError()
+    error: Exception = NotImplementedError()
     handler_context_arg = None
     scope_arg = None
 
@@ -53,7 +68,7 @@ class DummyErroringEndpoint(Endpoint):
     ):
         # The error which will be thrown when a GET request is made
         self.error = error
-        # The argumets which will be passed on to `Endpoint.handle_exception` via `super`
+        # The argumets which will be passed on to `Endpoint.handle_exception_with_details` via `super`
         self.handler_context_arg = handler_context_arg
         self.scope_arg = scope_arg
 
@@ -62,8 +77,10 @@ class DummyErroringEndpoint(Endpoint):
     def get(self, request):
         raise self.error
 
-    def handle_exception(self, request, exc, handler_context=None, scope=None):
-        return super().handle_exception(request, exc, self.handler_context_arg, self.scope_arg)
+    def handle_exception_with_details(self, request, exc, handler_context=None, scope=None):
+        return super().handle_exception_with_details(
+            request, exc, self.handler_context_arg, self.scope_arg
+        )
 
 
 class DummyPaginationEndpoint(Endpoint):
@@ -81,9 +98,6 @@ class DummyPaginationEndpoint(Endpoint):
             paginator=GenericOffsetPaginator(data_fn),
             on_results=lambda results: results,
         )
-
-
-_dummy_endpoint = DummyEndpoint.as_view()
 
 
 class DummyPaginationStreamingEndpoint(Endpoint):
@@ -105,10 +119,11 @@ class DummyPaginationStreamingEndpoint(Endpoint):
         )
 
 
+_dummy_endpoint = DummyEndpoint.as_view()
 _dummy_streaming_endpoint = DummyPaginationStreamingEndpoint.as_view()
 
 
-@all_silo_test(stable=True)
+@all_silo_test
 class EndpointTest(APITestCase):
     def test_basic_cors(self):
         org = self.create_organization()
@@ -193,6 +208,35 @@ class EndpointTest(APITestCase):
         assert response["Access-Control-Allow-Methods"] == "GET, HEAD, OPTIONS"
         assert response["Access-Control-Allow-Credentials"] == "true"
 
+    @override_options({"system.base-hostname": "example.com"})
+    @override_settings(ALLOWED_CREDENTIAL_ORIGINS=["http://docs.example.org"])
+    def test_allow_credentials_allowed_domain(self):
+        org = self.create_organization()
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            apikey = ApiKey.objects.create(organization_id=org.id, allowed_origins="*")
+
+        request = self.make_request(method="GET")
+        # Origin is an allowed domain
+        request.META["HTTP_ORIGIN"] = "http://docs.example.org"
+        request.META["HTTP_AUTHORIZATION"] = self.create_basic_auth_header(apikey.key)
+
+        response = _dummy_endpoint(request)
+        response.render()
+
+        assert response.status_code == 200, response.content
+        assert response["Access-Control-Allow-Origin"] == "http://docs.example.org"
+        assert response["Access-Control-Allow-Headers"] == (
+            "X-Sentry-Auth, X-Requested-With, Origin, Accept, "
+            "Content-Type, Authentication, Authorization, Content-Encoding, "
+            "sentry-trace, baggage, X-CSRFToken"
+        )
+        assert response["Access-Control-Expose-Headers"] == (
+            "X-Sentry-Error, X-Sentry-Direct-Hit, X-Hits, X-Max-Hits, "
+            "Endpoint, Retry-After, Link"
+        )
+        assert response["Access-Control-Allow-Methods"] == "GET, HEAD, OPTIONS"
+        assert response["Access-Control-Allow-Credentials"] == "true"
+
     @override_options({"system.base-hostname": "acme.com"})
     def test_allow_credentials_incorrect(self):
         org = self.create_organization()
@@ -251,6 +295,30 @@ class EndpointTest(APITestCase):
         )
         assert response["Access-Control-Allow-Methods"] == "GET, HEAD, OPTIONS"
 
+    def test_update_token_access_record_is_called(self):
+        token_str = generate_token(self.organization.slug, "")
+        token_hashed = hash_token(token_str)
+        token = self.create_org_auth_token(
+            name="org-auth-token",
+            token_hashed=token_hashed,
+            organization_id=self.organization.id,
+            token_last_characters="xyz",
+            scope_list=["org:ci"],
+            date_last_used=None,
+        )
+        assert token.date_last_used is None
+
+        with outbox_runner():
+            request = self.make_request(method="GET")
+            request.META["HTTP_AUTHORIZATION"] = f"Bearer {token_str}"
+            _dummy_endpoint(request=request)
+
+        with self.tasks(), assume_test_silo_mode(SiloMode.REGION):
+            schedule_hybrid_cloud_foreign_key_jobs()
+
+        token.refresh_from_db()
+        assert isinstance(token.date_last_used, datetime)
+
     @mock.patch("sentry.api.base.Endpoint.convert_args")
     def test_method_not_allowed(self, mock_convert_args):
         request = self.make_request(method="POST")
@@ -273,7 +341,7 @@ class EndpointHandleExceptionTest(APITestCase):
         mock_endpoint = DummyErroringEndpoint.as_view(error=Exception("nope"))
         response = mock_endpoint(self.make_request(method="GET"))
 
-        # The endpoint should pass along the response generated by `APIView.handle_exception`
+        # The endpoint should pass along the response generated by `APIView.handle_exception_with_details`
         assert response == mock_super_handle_exception.return_value
 
     @mock.patch("rest_framework.views.APIView.handle_exception", new=reraise)
@@ -310,28 +378,26 @@ class EndpointHandleExceptionTest(APITestCase):
                 scope_arg=scope_arg,
             )
 
-            with mock.patch("sys.exc_info", return_value=exc_info_from_error(handler_error)):
-                with mock.patch("sys.stderr.write") as mock_stderr_write:
-                    response = mock_endpoint(self.make_request(method="GET"))
+            with mock.patch("sys.stderr.write") as mock_stderr_write:
+                response = mock_endpoint(self.make_request(method="GET"))
 
-                    assert response.status_code == 500
-                    assert response.data == {
-                        "detail": "Internal Error",
-                        "errorId": "1231201211212012",
-                    }
-                    assert response.exception is True
+                assert response.status_code == 500
+                assert response.data == {
+                    "detail": "Internal Error",
+                    "errorId": "1231201211212012",
+                }
+                assert response.exception is True
 
-                    mock_stderr_write.assert_called_with("Exception: nope\n")
+                (((s,), _),) = mock_stderr_write.call_args_list
+                assert s.splitlines()[-1] == "Exception: nope"
 
-                    capture_exception_handler_context_arg = mock_capture_exception.call_args.args[0]
-                    capture_exception_scope_kwarg = mock_capture_exception.call_args.kwargs.get(
-                        "scope"
-                    )
+                capture_exception_handler_context_arg = mock_capture_exception.call_args.args[0]
+                capture_exception_scope_kwarg = mock_capture_exception.call_args.kwargs.get("scope")
 
-                    assert capture_exception_handler_context_arg == handler_error
-                    assert isinstance(capture_exception_scope_kwarg, Scope)
-                    assert capture_exception_scope_kwarg._contexts == expected_scope_contexts
-                    assert capture_exception_scope_kwarg._tags == expected_scope_tags
+                assert capture_exception_handler_context_arg == handler_error
+                assert isinstance(capture_exception_scope_kwarg, Scope)
+                assert capture_exception_scope_kwarg._contexts == expected_scope_contexts
+                assert capture_exception_scope_kwarg._tags == expected_scope_tags
 
 
 class CursorGenerationTest(APITestCase):
@@ -339,11 +405,13 @@ class CursorGenerationTest(APITestCase):
         request = self.make_request(method="GET", path="/api/0/organizations/")
         request.GET = QueryDict("member=1&cursor=foo")
         endpoint = Endpoint()
-        result = endpoint.build_cursor_link(request, "next", "1492107369532:0:0")
+        result = endpoint.build_cursor_link(
+            request, "next", Cursor.from_string("1492107369532:0:0")
+        )
 
         assert result == (
             "<http://testserver/api/0/organizations/?member=1&cursor=1492107369532:0:0>;"
-            ' rel="next"; results="true"; cursor="1492107369532:0:0"'
+            ' rel="next"; results="false"; cursor="1492107369532:0:0"'
         )
 
     def test_preserves_ssl_proto(self):
@@ -351,11 +419,13 @@ class CursorGenerationTest(APITestCase):
         request.GET = QueryDict("member=1&cursor=foo")
         endpoint = Endpoint()
         with override_options({"system.url-prefix": "https://testserver"}):
-            result = endpoint.build_cursor_link(request, "next", "1492107369532:0:0")
+            result = endpoint.build_cursor_link(
+                request, "next", Cursor.from_string("1492107369532:0:0")
+            )
 
         assert result == (
             "<https://testserver/api/0/organizations/?member=1&cursor=1492107369532:0:0>;"
-            ' rel="next"; results="true"; cursor="1492107369532:0:0"'
+            ' rel="next"; results="false"; cursor="1492107369532:0:0"'
         )
 
     def test_handles_customer_domains(self):
@@ -370,21 +440,25 @@ class CursorGenerationTest(APITestCase):
                 "system.organization-url-template": "https://{hostname}",
             }
         ):
-            result = endpoint.build_cursor_link(request, "next", "1492107369532:0:0")
+            result = endpoint.build_cursor_link(
+                request, "next", Cursor.from_string("1492107369532:0:0")
+            )
 
         assert result == (
             "<https://bebe.testserver/api/0/organizations/?member=1&cursor=1492107369532:0:0>;"
-            ' rel="next"; results="true"; cursor="1492107369532:0:0"'
+            ' rel="next"; results="false"; cursor="1492107369532:0:0"'
         )
 
     def test_unicode_path(self):
         request = self.make_request(method="GET", path="/api/0/organizations/üuuuu/")
         endpoint = Endpoint()
-        result = endpoint.build_cursor_link(request, "next", "1492107369532:0:0")
+        result = endpoint.build_cursor_link(
+            request, "next", Cursor.from_string("1492107369532:0:0")
+        )
 
         assert result == (
             "<http://testserver/api/0/organizations/%C3%BCuuuu/?&cursor=1492107369532:0:0>;"
-            ' rel="next"; results="true"; cursor="1492107369532:0:0"'
+            ' rel="next"; results="false"; cursor="1492107369532:0:0"'
         )
 
     def test_encodes_url(self):
@@ -399,105 +473,54 @@ class CursorGenerationTest(APITestCase):
 
 
 class PaginateTest(APITestCase):
-    def setUp(self):
-        super().setUp()
-        self.request = self.make_request(method="GET")
-        self.view = DummyPaginationEndpoint().as_view()
+    view = staticmethod(DummyPaginationEndpoint().as_view())
 
     def test_success(self):
-        response = self.view(self.request)
+        response = self.view(self.make_request())
         assert response.status_code == 200, response.content
         assert (
             response["Link"]
             == '<http://testserver/?&cursor=0:0:1>; rel="previous"; results="false"; cursor="0:0:1", <http://testserver/?&cursor=0:100:0>; rel="next"; results="false"; cursor="0:100:0"'
         )
 
-    def test_invalid_per_page(self):
-        self.request.GET = {"per_page": "nope"}
-        response = self.view(self.request)
-        assert response.status_code == 400
-
     def test_invalid_cursor(self):
-        self.request.GET = {"cursor": "no:no:no"}
-        response = self.view(self.request)
+        request = self.make_request(GET={"cursor": "no:no:no"})
+        response = self.view(request)
         assert response.status_code == 400
 
-    def test_per_page_out_of_bounds(self):
-        self.request.GET = {"per_page": "101"}
-        response = self.view(self.request)
+    def test_non_int_per_page(self):
+        request = self.make_request(GET={"per_page": "nope"})
+        response = self.view(request)
+        assert response.status_code == 400
+
+    def test_per_page_too_low(self):
+        request = self.make_request(GET={"per_page": "0"})
+        response = self.view(request)
+        assert response.status_code == 400
+
+    def test_per_page_too_high(self):
+        request = self.make_request(GET={"per_page": "101"})
+        response = self.view(request)
         assert response.status_code == 400
 
     def test_custom_response_type(self):
-        response = _dummy_streaming_endpoint(self.request)
+        response = _dummy_streaming_endpoint(self.make_request())
         assert response.status_code == 200
         assert isinstance(response, StreamingHttpResponse)
         assert response.has_header("content-type")
 
 
-class EndpointJSONBodyTest(APITestCase):
-    def setUp(self):
-        super().setUp()
-
-        self.request = HttpRequest()
-        self.request.method = "GET"
-        self.request.META["CONTENT_TYPE"] = "application/json"
-
-    def test_json(self):
-        self.request._body = '{"foo":"bar"}'
-
-        Endpoint().load_json_body(self.request)
-
-        assert self.request.json_body == {"foo": "bar"}
-
-    def test_invalid_json(self):
-        self.request._body = "hello"
-
-        Endpoint().load_json_body(self.request)
-
-        assert not self.request.json_body
-
-    def test_empty_request_body(self):
-        self.request._body = ""
-
-        Endpoint().load_json_body(self.request)
-
-        assert not self.request.json_body
-
-    def test_non_json_content_type(self):
-        self.request.META["CONTENT_TYPE"] = "text/plain"
-
-        Endpoint().load_json_body(self.request)
-
-        assert not self.request.json_body
-
-
+@all_silo_test(regions=create_test_regions("us", "eu"))
 class CustomerDomainTest(APITestCase):
     def test_resolve_region(self):
-        clear_global_regions()
-
         def request_with_subdomain(subdomain):
             request = self.make_request(method="GET")
             request.subdomain = subdomain
-            return resolve_region(request)
+            return subdomain_is_region(request)
 
-        region_config = [
-            {
-                "name": "us",
-                "snowflake_id": 1,
-                "address": "http://us.testserver",
-                "category": RegionCategory.MULTI_TENANT.name,
-            },
-            {
-                "name": "eu",
-                "snowflake_id": 1,
-                "address": "http://eu.testserver",
-                "category": RegionCategory.MULTI_TENANT.name,
-            },
-        ]
-        with override_region_config(region_config):
-            assert request_with_subdomain("us") == "us"
-            assert request_with_subdomain("eu") == "eu"
-            assert request_with_subdomain("sentry") is None
+        assert request_with_subdomain("us")
+        assert request_with_subdomain("eu")
+        assert not request_with_subdomain("sentry")
 
 
 class EndpointSiloLimitTest(APITestCase):
@@ -563,3 +586,25 @@ class FunctionSiloLimitTest(APITestCase):
     def test_with_monolith_mode(self):
         self._test_active_on(SiloMode.REGION, SiloMode.MONOLITH, True)
         self._test_active_on(SiloMode.CONTROL, SiloMode.MONOLITH, True)
+
+
+class SuperuserPermissionTest(APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.request = self.make_request(user=self.user, method="GET")
+        self.superuser_permission_view = DummySuperuserPermissionEndpoint().as_view()
+        self.superuser_or_any_permission_view = DummySuperuserOrAnyPermissionEndpoint().as_view()
+
+    def test_superuser_exception_raised(self):
+        response = self.superuser_permission_view(self.request)
+        response_detail = response.data["detail"]
+
+        assert response.status_code == SuperuserRequired.status_code
+        assert response_detail["code"] == SuperuserRequired.code
+        assert response_detail["message"] == SuperuserRequired.message
+
+    @mock.patch("sentry.api.permissions.is_active_superuser", return_value=True)
+    def test_superuser_or_any_no_exception_raised(self, mock_is_active_superuser):
+        response = self.superuser_or_any_permission_view(self.request)
+
+        assert response.status_code == 200, response.content

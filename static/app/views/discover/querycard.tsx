@@ -7,11 +7,11 @@ import ErrorBoundary from 'sentry/components/errorBoundary';
 import Link from 'sentry/components/links/link';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {User} from 'sentry/types';
+import type {User} from 'sentry/types/user';
 
 type Props = {
   renderGraph: () => React.ReactNode;
-  to: object;
+  to: Record<PropertyKey, unknown>;
   createdBy?: User | undefined;
   dateStatus?: React.ReactNode;
   onEventClick?: () => void;
@@ -66,7 +66,7 @@ class QueryCard extends PureComponent<Props> {
                 </DateStatus>
               ) : null}
             </DateSelected>
-            {renderContextMenu && renderContextMenu()}
+            {renderContextMenu?.()}
           </QueryCardFooter>
         </StyledQueryCard>
       </Link>
@@ -101,9 +101,13 @@ const QueryCardHeader = styled('div')`
 `;
 
 const QueryTitle = styled('div')`
-  ${p => p.theme.text.cardTitle};
   color: ${p => p.theme.headingColor};
   ${p => p.theme.overflowEllipsis};
+
+  /* @TODO(jonasbadalic) This should be a title component and not a div */
+  font-size: 1rem;
+  line-height: 1.2;
+  /* @TODO(jonasbadalic) font-weight: initial? */
   font-weight: initial;
 `;
 

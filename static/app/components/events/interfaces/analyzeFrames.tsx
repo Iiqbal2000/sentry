@@ -1,5 +1,4 @@
 import styled from '@emotion/styled';
-import isNil from 'lodash/isNil';
 
 import {
   getMappedThreadState,
@@ -8,14 +7,15 @@ import {
 import {getCurrentThread} from 'sentry/components/events/interfaces/utils';
 import ExternalLink from 'sentry/components/links/externalLink';
 import {t, tct} from 'sentry/locale';
-import {EntryException, EntryType, Event, Frame, Lock, Thread} from 'sentry/types';
+import type {EntryException, Event, Frame, Lock, Thread} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
 import {defined} from 'sentry/utils';
 
 type SuspectFrame = {
   module: string | RegExp;
   resources: React.ReactNode;
   exceptionMessage?: string;
-  functions?: (string | RegExp)[];
+  functions?: Array<string | RegExp>;
   offendingThreadStates?: ThreadStates[];
 };
 
@@ -150,7 +150,7 @@ const CULPRIT_FRAMES: SuspectFrame[] = [
 ];
 
 function satisfiesModuleCondition(frame: Frame, suspect: SuspectFrame) {
-  if (isNil(suspect.module)) {
+  if (suspect.module === null || suspect.module === undefined) {
     return true;
   }
   const matchFuction = suspect.module;
@@ -160,18 +160,21 @@ function satisfiesModuleCondition(frame: Frame, suspect: SuspectFrame) {
 }
 
 function satisfiesFunctionCondition(frame: Frame, suspect: SuspectFrame) {
-  if (isNil(suspect.functions) || suspect.functions.length === 0) {
+  if (
+    suspect.functions === undefined ||
+    suspect.functions === null ||
+    suspect.functions.length === 0
+  ) {
     return true;
   }
-  if (isNil(frame.function)) {
+  if (frame.function === null || frame.function === undefined) {
     return false;
   }
-  for (let index = 0; index < suspect.functions.length; index++) {
-    const matchFuction = suspect.functions[index];
+  for (const matchFunction of suspect.functions) {
     const match =
-      typeof matchFuction === 'string'
-        ? frame.function === matchFuction
-        : matchFuction.test(frame.function);
+      typeof matchFunction === 'string'
+        ? frame.function === matchFunction
+        : matchFunction.test(frame.function);
     if (match) {
       return true;
     }
@@ -183,12 +186,12 @@ function satisfiesOffendingThreadCondition(
   threadState: string | undefined | null,
   offendingThreadStates?: ThreadStates[]
 ) {
-  if (isNil(offendingThreadStates) || offendingThreadStates.length === 0) {
+  if (offendingThreadStates === undefined || offendingThreadStates.length === 0) {
     return true;
   }
   const mappedState = getMappedThreadState(threadState);
 
-  if (isNil(mappedState)) {
+  if (mappedState === undefined) {
     return false;
   }
   return offendingThreadStates.includes(mappedState);
@@ -201,13 +204,13 @@ export function analyzeFramesForRootCause(event: Event): {
   const exception = event.entries.find(entry => entry.type === EntryType.EXCEPTION) as
     | EntryException
     | undefined;
-  if (isNil(exception)) {
+  if (exception === undefined) {
     return null;
   }
 
   const exceptionFrames = exception.data.values?.[0]?.stacktrace?.frames;
 
-  if (isNil(exceptionFrames)) {
+  if (exceptionFrames === undefined) {
     return null;
   }
 
@@ -215,7 +218,7 @@ export function analyzeFramesForRootCause(event: Event): {
 
   // iterating the frames in reverse order, because the topmost frames most like the root cause
   for (let index = exceptionFrames.length - 1; index >= 0; index--) {
-    const frame = exceptionFrames[index];
+    const frame = exceptionFrames[index]!;
     const rootCause = analyzeFrameForRootCause(frame, currentThread);
     if (defined(rootCause)) {
       return rootCause;
@@ -294,5 +297,5 @@ export function analyzeFrameForRootCause(
 }
 
 const Bold = styled('span')`
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
 `;

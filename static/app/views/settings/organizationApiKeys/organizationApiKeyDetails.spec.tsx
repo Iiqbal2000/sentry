@@ -1,27 +1,30 @@
-import {DeprecatedApiKey} from 'sentry-fixture/deprecatedApiKey';
+import {DeprecatedApiKeyFixture} from 'sentry-fixture/deprecatedApiKey';
+import {RouterFixture} from 'sentry-fixture/routerFixture';
 
-import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
 import OrganizationApiKeyDetails from 'sentry/views/settings/organizationApiKeys/organizationApiKeyDetails';
 
 describe('OrganizationApiKeyDetails', function () {
+  const apiKey = DeprecatedApiKeyFixture();
+  const router = RouterFixture({
+    params: {
+      apiKey: apiKey.id,
+    },
+  });
   beforeEach(function () {
     MockApiClient.clearMockResponses();
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/api-keys/1/',
+      url: `/organizations/org-slug/api-keys/${apiKey.id}/`,
       method: 'GET',
-      body: DeprecatedApiKey(),
+      body: apiKey,
     });
   });
 
-  it('renders', function () {
-    const {organization, routerContext, routerProps} = initializeOrg();
-    render(<OrganizationApiKeyDetails {...routerProps} params={{apiKey: '1'}} />, {
-      context: routerContext,
-      organization,
-    });
+  it('renders', async function () {
+    render(<OrganizationApiKeyDetails />, {router});
 
-    expect(screen.queryByTestId('loading-indicator')).not.toBeInTheDocument();
+    expect(await screen.findByRole('textbox', {name: 'API Key'})).toBeInTheDocument();
+    expect(screen.getByRole('textbox', {name: 'API Key'})).toHaveValue(apiKey.key);
   });
 });

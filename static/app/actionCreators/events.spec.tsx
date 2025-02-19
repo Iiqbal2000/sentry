@@ -1,14 +1,15 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {doEventsRequest} from 'sentry/actionCreators/events';
 
 describe('Events ActionCreator', function () {
   const api = new MockApiClient();
-  const organization = Organization();
-  const project = TestStubs.Project();
+  const organization = OrganizationFixture();
+  const project = ProjectFixture();
   const opts = {
     organization,
-    project: [project.id],
+    project: [parseInt(project.id, 10)],
     environment: [],
   };
 
@@ -43,7 +44,28 @@ describe('Events ActionCreator', function () {
       '/organizations/org-slug/events-stats/',
       expect.objectContaining({
         query: expect.objectContaining({
-          project: [project.id],
+          project: [parseInt(project.id, 10)],
+          environment: [],
+          statsPeriod: '7d',
+        }),
+      })
+    );
+  });
+
+  it('sets useRpc param', function () {
+    doEventsRequest(api, {
+      ...opts,
+      includePrevious: false,
+      period: '7d',
+      partial: true,
+      useRpc: true,
+    });
+
+    expect(mock).toHaveBeenLastCalledWith(
+      '/organizations/org-slug/events-stats/',
+      expect.objectContaining({
+        query: expect.objectContaining({
+          project: [parseInt(project.id, 10)],
           environment: [],
           statsPeriod: '7d',
         }),
@@ -63,7 +85,7 @@ describe('Events ActionCreator', function () {
       '/organizations/org-slug/events-stats/',
       expect.objectContaining({
         query: expect.objectContaining({
-          project: [project.id],
+          project: [parseInt(project.id, 10)],
           environment: [],
           statsPeriod: '14d',
         }),
@@ -87,7 +109,7 @@ describe('Events ActionCreator', function () {
       '/organizations/org-slug/events-stats/',
       expect.objectContaining({
         query: expect.objectContaining({
-          project: [project.id],
+          project: [parseInt(project.id, 10)],
           environment: [],
           start: '2017-10-12T12:00:00',
           end: '2017-10-17T00:00:00',
@@ -111,10 +133,29 @@ describe('Events ActionCreator', function () {
       '/organizations/org-slug/events-stats/',
       expect.objectContaining({
         query: expect.objectContaining({
-          project: [project.id],
+          project: [parseInt(project.id, 10)],
           environment: [],
           start: '2017-10-08T00:00:00',
           end: '2017-10-17T00:00:00',
+        }),
+      })
+    );
+  });
+
+  it('spreads query extras', async function () {
+    await doEventsRequest(api, {
+      ...opts,
+      queryExtras: {useOnDemandMetrics: 'true'},
+      partial: true,
+    });
+
+    expect(mock).toHaveBeenLastCalledWith(
+      '/organizations/org-slug/events-stats/',
+      expect.objectContaining({
+        query: expect.objectContaining({
+          project: [parseInt(project.id, 10)],
+          environment: [],
+          useOnDemandMetrics: 'true',
         }),
       })
     );

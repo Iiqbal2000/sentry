@@ -1,13 +1,12 @@
 import {Component, Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import isEqual from 'lodash/isEqual';
 import * as qs from 'query-string';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import GuideAnchor from 'sentry/components/assistant/guideAnchor';
-import {Button} from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import GroupList from 'sentry/components/issues/groupList';
 import Pagination from 'sentry/components/pagination';
@@ -16,14 +15,16 @@ import {SegmentedControl} from 'sentry/components/segmentedControl';
 import {DEFAULT_RELATIVE_PERIODS} from 'sentry/constants';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import withApi from 'sentry/utils/withApi';
 import withOrganization from 'sentry/utils/withOrganization';
 import {IssueSortOptions} from 'sentry/views/issueList/utils';
 
-import {getReleaseParams, ReleaseBounds} from '../../utils';
-import EmptyState from '../commitsAndFiles/emptyState';
+import type {ReleaseBounds} from '../../utils';
+import {getReleaseParams} from '../../utils';
+import {EmptyState} from '../commitsAndFiles/emptyState';
 
 enum IssuesType {
   NEW = 'new',
@@ -284,7 +285,7 @@ class ReleaseIssues extends Component<Props, State> {
     });
   };
 
-  handleFetchSuccess = (groupListState, onCursor) => {
+  handleFetchSuccess = (groupListState: any, onCursor: any) => {
     this.setState({pageLinks: groupListState.pageLinks, onCursor});
   };
 
@@ -299,6 +300,7 @@ class ReleaseIssues extends Component<Props, State> {
       releaseBounds,
     });
 
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     const selectedTimePeriod = statsPeriod ? DEFAULT_RELATIVE_PERIODS[statsPeriod] : null;
     const displayedPeriod = selectedTimePeriod
       ? selectedTimePeriod.toLowerCase()
@@ -389,9 +391,9 @@ class ReleaseIssues extends Component<Props, State> {
           </GuideAnchor>
 
           <OpenInButtonBar gap={1}>
-            <Button to={this.getIssuesUrl()} size="xs">
+            <LinkButton to={this.getIssuesUrl()} size="xs">
               {t('Open in Issues')}
-            </Button>
+            </LinkButton>
 
             <StyledPagination pageLinks={pageLinks} onCursor={onCursor} size="xs" />
           </OpenInButtonBar>

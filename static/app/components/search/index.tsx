@@ -17,7 +17,7 @@ import replaceRouterParams from 'sentry/utils/replaceRouterParams';
 import {useParams} from 'sentry/utils/useParams';
 import useRouter from 'sentry/utils/useRouter';
 
-import {Result} from './sources/types';
+import type {Result} from './sources/types';
 import List from './list';
 
 type AutoCompleteOpts = Parameters<AutoComplete<Result['item']>['props']['children']>[0];
@@ -67,7 +67,7 @@ interface SearchProps {
    * The sources to query
    */
   // TODO(ts): Improve any type here
-  sources?: React.ComponentType<any>[];
+  sources?: Array<React.ComponentType<any>>;
 }
 
 function Search({
@@ -92,7 +92,7 @@ function Search({
   }, [entryPoint]);
 
   const handleSelectItem = useCallback(
-    (item: Result['item'], state?: AutoComplete<Result['item']>['state']) => {
+    (item: Readonly<Result['item']>, state?: AutoComplete<Result['item']>['state']) => {
       if (!item) {
         return;
       }
@@ -115,12 +115,14 @@ function Search({
         return;
       }
 
-      if (item.to.startsWith('http')) {
+      const pathname = typeof item.to === 'string' ? item.to : item.to.pathname;
+      if (pathname.startsWith('http')) {
         const open = window.open();
 
         if (open) {
           open.opener = null;
-          open.location.href = item.to;
+          // `to` is a full URL when starting with http
+          open.location.href = item.to as string;
           return;
         }
 
@@ -130,9 +132,14 @@ function Search({
         return;
       }
 
-      const nextPath = replaceRouterParams(item.to, params);
-
-      navigateTo(nextPath, router, item.configUrl);
+      const nextTo =
+        typeof item.to === 'string'
+          ? replaceRouterParams(item.to, params)
+          : {
+              ...item.to,
+              pathname: replaceRouterParams(item.to.pathname, params),
+            };
+      navigateTo(nextTo, router, item.configUrl);
     },
     [entryPoint, router, params]
   );
@@ -178,15 +185,7 @@ function Search({
                 searchOptions={searchOptions}
                 query={searchQuery}
                 params={params}
-                sources={
-                  sources ??
-                  ([
-                    ApiSource,
-                    FormSource,
-                    RouteSource,
-                    CommandSource,
-                  ] as React.ComponentType[])
-                }
+                sources={sources ?? [ApiSource, FormSource, RouteSource, CommandSource]}
               >
                 {({isLoading, results, hasAnyResults}) => (
                   <List
@@ -211,7 +210,8 @@ function Search({
   );
 }
 
-export {Search, SearchProps};
+export type {SearchProps};
+export {Search};
 
 const SearchWrapper = styled('div')`
   position: relative;

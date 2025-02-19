@@ -6,8 +6,10 @@ from django import forms
 from django.core.exceptions import ValidationError
 from django.forms.fields import ChoiceField
 
+from sentry.constants import ObjectStatus
 from sentry.integrations.discord.utils.channel import validate_channel_id
-from sentry.services.hybrid_cloud.integration import integration_service
+from sentry.integrations.discord.utils.channel_from_url import get_channel_id_from_url
+from sentry.integrations.services.integration import integration_service
 from sentry.shared_integrations.exceptions import ApiTimeoutError, IntegrationError
 
 
@@ -35,7 +37,9 @@ class DiscordNotifyServiceForm(forms.Form):
         cleaned_data: dict[str, object] = super().clean() or {}
         channel_id = cleaned_data.get("channel_id")
         server = cleaned_data.get("server")
-        integration = integration_service.get_integration(integration_id=server)
+        integration = integration_service.get_integration(
+            integration_id=server, status=ObjectStatus.ACTIVE
+        )
 
         if not server or not integration:
             raise forms.ValidationError(
@@ -45,12 +49,13 @@ class DiscordNotifyServiceForm(forms.Form):
 
         if channel_id and isinstance(channel_id, str):
             try:
+                channel = get_channel_id_from_url(channel_id)
                 validate_channel_id(
-                    channel_id=channel_id,
+                    channel_id=channel,
                     guild_id=integration.external_id,
-                    integration_id=integration.id,
                     guild_name=integration.name,
                 )
+                cleaned_data["channel_id"] = channel
             except ValidationError as e:
                 raise forms.ValidationError(
                     self._format_discord_error_message("; ".join(e.messages)),

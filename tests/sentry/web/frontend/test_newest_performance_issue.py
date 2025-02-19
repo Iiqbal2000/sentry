@@ -78,13 +78,9 @@ class NewestIssueViewTest(TestCase, PerformanceIssueTestCase):
     @override_options({"store.use-ingest-performance-detection-only": 1.0})
     @override_options({"performance.issues.all.problem-detection": 1.0})
     @override_options({"performance.issues.n_plus_one_db.problem-creation": 1.0})
-    @with_feature("organizations:customer-domains")
+    @with_feature("system:multi-region")
     def test_simple_customer_domains(self):
-        with mock.patch("sentry_sdk.tracing.Span.containing_transaction"), self.feature(
-            {
-                "projects:performance-suspect-spans-ingestion": True,
-            }
-        ):
+        with mock.patch("sentry_sdk.tracing.Span.containing_transaction"):
             latest_event_time = time()
             older_event_time = latest_event_time - 300
 
@@ -103,11 +99,11 @@ class NewestIssueViewTest(TestCase, PerformanceIssueTestCase):
             manager.save(self.project1.id)
 
         domain = f"{self.org.slug}.testserver"
-        resp = self.client.get("/newest-performance-issue/", follow=True, SERVER_NAME=domain)
+        resp = self.client.get("/newest-performance-issue/", follow=True, HTTP_HOST=domain)
         assert resp.redirect_chain == [(f"http://{domain}/issues/{event1.group.id}/", 302)]
 
         self.login_as(self.owner)
-        resp = self.client.get("/newest-performance-issue/", follow=True, SERVER_NAME=domain)
+        resp = self.client.get("/newest-performance-issue/", follow=True, HTTP_HOST=domain)
         assert resp.redirect_chain == [(f"http://{domain}/issues/{event2.group.id}/", 302)]
 
     def test_no_performance_issue(self):

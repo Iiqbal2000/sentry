@@ -1,24 +1,30 @@
-import {EventsStats} from 'sentry-fixture/events';
-import {Organization} from 'sentry-fixture/organization';
+import {EventsStatsFixture} from 'sentry-fixture/events';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, waitFor} from 'sentry-test/reactTestingLibrary';
 
-import {PageFilters} from 'sentry/types';
+import type {PageFilters} from 'sentry/types/core';
+import {MetricsResultsMetaProvider} from 'sentry/utils/performance/contexts/metricsEnhancedPerformanceDataContext';
 import {MEPSettingProvider} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
 import {DashboardFilterKeys, DisplayType} from 'sentry/views/dashboards/types';
-import {DashboardsMEPContext} from 'sentry/views/dashboards/widgetCard/dashboardsMEPContext';
-import {GenericWidgetQueriesChildrenProps} from 'sentry/views/dashboards/widgetCard/genericWidgetQueries';
-import WidgetQueries, {
-  flattenMultiSeriesDataWithGrouping,
-} from 'sentry/views/dashboards/widgetCard/widgetQueries';
+import {
+  DashboardsMEPContext,
+  DashboardsMEPProvider,
+} from 'sentry/views/dashboards/widgetCard/dashboardsMEPContext';
+import type {GenericWidgetQueriesChildrenProps} from 'sentry/views/dashboards/widgetCard/genericWidgetQueries';
+import WidgetQueries from 'sentry/views/dashboards/widgetCard/widgetQueries';
 
 describe('Dashboards > WidgetQueries', function () {
   const initialData = initializeOrg();
 
-  const renderWithProviders = component =>
+  const renderWithProviders = (component: React.ReactNode) =>
     render(
-      <MEPSettingProvider forceTransactions={false}>{component}</MEPSettingProvider>
+      <MetricsResultsMetaProvider>
+        <DashboardsMEPProvider>
+          <MEPSettingProvider forceTransactions={false}>{component}</MEPSettingProvider>
+        </DashboardsMEPProvider>
+      </MetricsResultsMetaProvider>
     );
 
   const multipleQueryWidget = {
@@ -139,7 +145,7 @@ describe('Dashboards > WidgetQueries', function () {
       '/organizations/org-slug/events-stats/',
       expect.objectContaining({
         query: expect.objectContaining({
-          query: 'event.type:error release:[abc@1.2.0,abc@1.3.0] ',
+          query: '(event.type:error) release:["abc@1.2.0","abc@1.3.0"] ',
         }),
       })
     );
@@ -167,7 +173,7 @@ describe('Dashboards > WidgetQueries', function () {
       '/organizations/org-slug/events/',
       expect.objectContaining({
         query: expect.objectContaining({
-          query: 'event.type:error release:abc@1.3.0 ',
+          query: '(event.type:error) release:"abc@1.3.0" ',
         }),
       })
     );
@@ -202,10 +208,12 @@ describe('Dashboards > WidgetQueries', function () {
     );
 
     // Child should be rendered and 2 requests should be sent.
-    await screen.findByTestId('child');
+    expect(await screen.findByTestId('child')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(error).toBe('Bad request data');
+    });
     expect(okMock).toHaveBeenCalledTimes(1);
     expect(failMock).toHaveBeenCalledTimes(1);
-    expect(error).toEqual('Bad request data');
   });
 
   it('adjusts interval based on date window', async function () {
@@ -314,16 +322,16 @@ describe('Dashboards > WidgetQueries', function () {
       expect.objectContaining({
         query: expect.objectContaining({
           query: 'event.type:error',
-          field: ['sdk.name'],
+          field: 'sdk.name',
           statsPeriod: '14d',
-          environment: ['prod'],
-          project: [1],
+          environment: 'prod',
+          project: '1',
         }),
       })
     );
     expect(childProps?.timeseriesResults).toBeUndefined();
-    expect(childProps?.tableResults?.[0].data).toHaveLength(1);
-    expect(childProps?.tableResults?.[0].meta).toBeDefined();
+    await waitFor(() => expect(childProps?.tableResults?.[0]!.data).toHaveLength(1));
+    expect(childProps?.tableResults?.[0]!.meta).toBeDefined();
   });
 
   it('can send multiple table queries', async function () {
@@ -388,9 +396,9 @@ describe('Dashboards > WidgetQueries', function () {
     expect(firstQuery).toHaveBeenCalledTimes(1);
     expect(secondQuery).toHaveBeenCalledTimes(1);
 
-    expect(childProps?.tableResults).toHaveLength(2);
-    expect(childProps?.tableResults?.[0].data[0]['sdk.name']).toBeDefined();
-    expect(childProps?.tableResults?.[1].data[0].title).toBeDefined();
+    await waitFor(() => expect(childProps?.tableResults).toHaveLength(2));
+    expect(childProps?.tableResults?.[0]!.data[0]!['sdk.name']).toBeDefined();
+    expect(childProps?.tableResults?.[1]!.data[0]!.title).toBeDefined();
   });
 
   it('can send big number result queries', async function () {
@@ -440,15 +448,15 @@ describe('Dashboards > WidgetQueries', function () {
         query: expect.objectContaining({
           referrer: 'api.dashboards.bignumberwidget',
           query: 'event.type:error',
-          field: ['sdk.name'],
+          field: 'sdk.name',
           statsPeriod: '14d',
-          environment: ['prod'],
-          project: [1],
+          environment: 'prod',
+          project: '1',
         }),
       })
     );
     expect(childProps?.timeseriesResults).toBeUndefined();
-    expect(childProps?.tableResults?.[0]?.data).toHaveLength(1);
+    await waitFor(() => expect(childProps?.tableResults?.[0]?.data).toHaveLength(1));
     expect(childProps?.tableResults?.[0]?.meta).toBeDefined();
   });
 
@@ -512,7 +520,7 @@ describe('Dashboards > WidgetQueries', function () {
     expect(firstQuery).toHaveBeenCalledTimes(1);
     expect(secondQuery).toHaveBeenCalledTimes(1);
 
-    expect(childProps?.loading).toEqual(false);
+    await waitFor(() => expect(childProps?.loading).toBe(false));
   });
 
   it('sets bar charts to 1d interval', async function () {
@@ -604,13 +612,15 @@ describe('Dashboards > WidgetQueries', function () {
     await screen.findByTestId('child');
     expect(defaultMock).toHaveBeenCalledTimes(1);
     expect(errorMock).toHaveBeenCalledTimes(1);
-    expect(child).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        timeseriesResults: [
-          {data: [{name: 1000000, value: 200}], seriesName: 'errors : count()'},
-          {data: [{name: 1000000, value: 100}], seriesName: 'default : count()'},
-        ],
-      })
+    await waitFor(() =>
+      expect(child).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          timeseriesResults: [
+            {data: [{name: 1000000, value: 200}], seriesName: 'errors : count()'},
+            {data: [{name: 1000000, value: 100}], seriesName: 'default : count()'},
+          ],
+        })
+      )
     );
   });
 
@@ -655,14 +665,14 @@ describe('Dashboards > WidgetQueries', function () {
   it('does not re-query events and sets name in widgets', async function () {
     const eventsStatsMock = MockApiClient.addMockResponse({
       url: '/organizations/org-slug/events-stats/',
-      body: EventsStats(),
+      body: EventsStatsFixture(),
     });
     const lineWidget = {
       ...singleQueryWidget,
       displayType: DisplayType.LINE,
       interval: '5m',
     };
-    let childProps;
+    let childProps!: GenericWidgetQueriesChildrenProps;
     const {rerender} = renderWithProviders(
       <WidgetQueries
         api={new MockApiClient()}
@@ -678,146 +688,46 @@ describe('Dashboards > WidgetQueries', function () {
     );
 
     expect(eventsStatsMock).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(childProps.loading).toEqual(false));
+    await waitFor(() => expect(childProps.loading).toBe(false));
 
     // Simulate a re-render with a new query alias
     rerender(
-      <MEPSettingProvider forceTransactions={false}>
-        <WidgetQueries
-          api={new MockApiClient()}
-          widget={{
-            ...lineWidget,
-            queries: [
-              {
-                conditions: 'event.type:error',
-                fields: ['count()'],
-                aggregates: ['count()'],
-                columns: [],
-                name: 'this query alias changed',
-                orderby: '',
-              },
-            ],
-          }}
-          organization={initialData.organization}
-          selection={selection}
-        >
-          {props => {
-            childProps = props;
-            return <div data-test-id="child" />;
-          }}
-        </WidgetQueries>
-      </MEPSettingProvider>
+      <MetricsResultsMetaProvider>
+        <DashboardsMEPProvider>
+          <MEPSettingProvider forceTransactions={false}>
+            <WidgetQueries
+              api={new MockApiClient()}
+              widget={{
+                ...lineWidget,
+                queries: [
+                  {
+                    conditions: 'event.type:error',
+                    fields: ['count()'],
+                    aggregates: ['count()'],
+                    columns: [],
+                    name: 'this query alias changed',
+                    orderby: '',
+                  },
+                ],
+              }}
+              organization={initialData.organization}
+              selection={selection}
+            >
+              {props => {
+                childProps = props;
+                return <div data-test-id="child" />;
+              }}
+            </WidgetQueries>
+          </MEPSettingProvider>
+        </DashboardsMEPProvider>
+      </MetricsResultsMetaProvider>
     );
 
     // Did not re-query
     expect(eventsStatsMock).toHaveBeenCalledTimes(1);
-    expect(childProps.timeseriesResults[0].seriesName).toEqual(
+    expect(childProps.timeseriesResults![0]!.seriesName).toBe(
       'this query alias changed : count()'
     );
-  });
-
-  describe('multi-series grouped data', () => {
-    const [START, END] = [1647399900, 1647399901];
-    let mockCountData, mockCountUniqueData, mockRawResultData;
-
-    beforeEach(() => {
-      mockCountData = {
-        start: START,
-        end: END,
-        data: [
-          [START, [{'count()': 0}]],
-          [END, [{'count()': 0}]],
-        ],
-      };
-      mockCountUniqueData = {
-        start: START,
-        end: END,
-        data: [
-          [START, [{'count_unique()': 0}]],
-          [END, [{'count_unique()': 0}]],
-        ],
-      };
-      mockRawResultData = {
-        local: {
-          'count()': mockCountData,
-          'count_unique()': mockCountUniqueData,
-          order: 0,
-        },
-        prod: {
-          'count()': mockCountData,
-          'count_unique()': mockCountUniqueData,
-          order: 1,
-        },
-      };
-    });
-
-    it('combines group name and aggregate names in grouped multi series data', () => {
-      const actual = flattenMultiSeriesDataWithGrouping(mockRawResultData, '');
-      expect(actual).toEqual([
-        [
-          0,
-          expect.objectContaining({
-            seriesName: 'local : count()',
-            data: expect.anything(),
-          }),
-        ],
-        [
-          0,
-          expect.objectContaining({
-            seriesName: 'local : count_unique()',
-            data: expect.anything(),
-          }),
-        ],
-        [
-          1,
-          expect.objectContaining({
-            seriesName: 'prod : count()',
-            data: expect.anything(),
-          }),
-        ],
-        [
-          1,
-          expect.objectContaining({
-            seriesName: 'prod : count_unique()',
-            data: expect.anything(),
-          }),
-        ],
-      ]);
-    });
-
-    it('prefixes with a query alias when provided', () => {
-      const actual = flattenMultiSeriesDataWithGrouping(mockRawResultData, 'Query 1');
-      expect(actual).toEqual([
-        [
-          0,
-          expect.objectContaining({
-            seriesName: 'Query 1 > local : count()',
-            data: expect.anything(),
-          }),
-        ],
-        [
-          0,
-          expect.objectContaining({
-            seriesName: 'Query 1 > local : count_unique()',
-            data: expect.anything(),
-          }),
-        ],
-        [
-          1,
-          expect.objectContaining({
-            seriesName: 'Query 1 > prod : count()',
-            data: expect.anything(),
-          }),
-        ],
-        [
-          1,
-          expect.objectContaining({
-            seriesName: 'Query 1 > prod : count_unique()',
-            data: expect.anything(),
-          }),
-        ],
-      ]);
-    });
   });
 
   it('charts send metricsEnhanced requests', async function () {
@@ -926,7 +836,7 @@ describe('Dashboards > WidgetQueries', function () {
   it('does not inject equation aliases for top N requests', async function () {
     const testData = initializeOrg({
       organization: {
-        ...Organization(),
+        ...OrganizationFixture(),
       },
     });
     const eventsStatsMock = MockApiClient.addMockResponse({

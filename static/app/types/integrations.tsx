@@ -1,6 +1,5 @@
-import type {AlertProps} from 'sentry/components/alert';
+import type {AlertProps} from 'sentry/components/core/alert';
 import type {Field} from 'sentry/components/forms/types';
-import {PlatformKey} from 'sentry/types/project';
 import type {
   DISABLED as DISABLED_STATUS,
   INSTALLED,
@@ -11,6 +10,7 @@ import type {
 
 import type {Avatar, Choice, Choices, ObjectStatus, Scope} from './core';
 import type {ParsedOwnershipRule} from './group';
+import type {PlatformKey} from './project';
 import type {BaseRelease} from './release';
 import type {User} from './user';
 
@@ -23,6 +23,7 @@ export type Permissions = {
   Project: PermissionValue;
   Release: PermissionValue;
   Team: PermissionValue;
+  Alerts?: PermissionValue;
 };
 
 export type PermissionResource = keyof Permissions;
@@ -137,7 +138,12 @@ export type PullRequest = {
 /**
  * Sentry Apps
  */
-export type SentryAppStatus = 'unpublished' | 'published' | 'internal';
+export type SentryAppStatus =
+  | 'unpublished'
+  | 'published'
+  | 'internal'
+  | 'publish_request_inprogress'
+  | 'deletion_in_progress';
 
 export type SentryAppSchemaIssueLink = {
   create: {
@@ -157,7 +163,22 @@ export type SentryAppSchemaStacktraceLink = {
   type: 'stacktrace-link';
   uri: string;
   url: string;
-  params?: Array<string>;
+  params?: string[];
+};
+
+export type SentryAppSchemaAlertRuleAction = {
+  settings: SentryAppSchemaAlertRuleActionSettings;
+  title: string;
+  type: 'alert-rule-action';
+};
+
+export type SentryAppSchemaAlertRuleActionSettings = {
+  description: string;
+  // a list of FormFields
+  required_fields: any[];
+  type: 'alert-rule-settings';
+  uri: string;
+  optional_fields?: any[];
 };
 
 export enum Coverage {
@@ -181,14 +202,13 @@ export interface CodecovResponse {
   lineCoverage?: LineCoverage[];
 }
 
-export type StacktraceLinkResult = {
+export interface StacktraceLinkResult {
   integrations: Integration[];
   attemptedUrl?: string;
-  codecov?: CodecovResponse;
   config?: RepositoryProjectPathConfigWithIntegration;
   error?: StacktraceErrorMessage;
   sourceUrl?: string;
-};
+}
 
 export type StacktraceErrorMessage =
   | 'file_not_found'
@@ -197,6 +217,7 @@ export type StacktraceErrorMessage =
 
 export type SentryAppSchemaElement =
   | SentryAppSchemaIssueLink
+  | SentryAppSchemaAlertRuleAction
   | SentryAppSchemaStacktraceLink;
 
 export type SentryApp = {
@@ -218,7 +239,7 @@ export type SentryApp = {
   uuid: string;
   verifyInstall: boolean;
   webhookUrl: string | null;
-  avatars?: Avatar[];
+  avatars?: SentryAppAvatar[];
   clientId?: string;
   clientSecret?: string;
   // optional params below
@@ -264,8 +285,14 @@ export type SentryAppComponent<
   };
   type: 'issue-link' | 'alert-rule-action' | 'issue-media' | 'stacktrace-link';
   uuid: string;
-  error?: boolean;
+  error?: string | boolean;
 };
+
+export type SentryAppAvatar = Avatar & {
+  photoType: SentryAppAvatarPhotoType;
+};
+
+export type SentryAppAvatarPhotoType = 'icon' | 'logo';
 
 export type SentryAppWebhookRequest = {
   date: string;
@@ -356,16 +383,19 @@ export interface OrganizationIntegrationProvider extends BaseIntegrationProvider
   aspects: IntegrationAspects;
 }
 
-export interface Integration {
-  accountType: string;
-  domainName: string;
-  gracePeriodEnd: string;
-  icon: string;
+interface CommonIntegration {
+  accountType: string | null;
+  domainName: string | null;
+  gracePeriodEnd: string | null;
+  icon: string | null;
   id: string;
   name: string;
   organizationIntegrationStatus: ObjectStatus;
   provider: OrganizationIntegrationProvider;
   status: ObjectStatus;
+}
+
+export interface Integration extends CommonIntegration {
   dynamicDisplayInformation?: {
     configure_integration?: {
       instructions: string[];
@@ -381,21 +411,12 @@ type ConfigData = {
   installationType?: string;
 };
 
-export type OrganizationIntegration = {
-  accountType: string | null;
+export interface OrganizationIntegration extends Integration {
   configData: ConfigData | null;
   configOrganization: Field[];
-  domainName: string | null;
   externalId: string;
-  gracePeriodEnd: string;
-  icon: string | null;
-  id: string;
-  name: string;
   organizationId: string;
-  organizationIntegrationStatus: ObjectStatus;
-  provider: OrganizationIntegrationProvider;
-  status: ObjectStatus;
-};
+}
 
 // we include the configOrganization when we need it
 export interface IntegrationWithConfig extends Integration {
@@ -427,6 +448,16 @@ export type PlatformExternalIssue = {
   webUrl: string;
 };
 
+export type ExternalIssue = {
+  description: string;
+  displayName: string;
+  id: string;
+  integrationKey: string;
+  integrationName: string;
+  key: string;
+  title: string;
+};
+
 /**
  * The issue config form fields we get are basically the form fields we use in
  * the UI but with some extra information. Some fields marked optional in the
@@ -454,7 +485,6 @@ export type IntegrationIssueConfig = {
  * Project Plugins
  */
 export type PluginNoProject = {
-  assets: Array<{url: string}>;
   canDisable: boolean;
   // TODO(ts)
   contexts: any[];
@@ -470,7 +500,6 @@ export type PluginNoProject = {
   name: string;
   shortName: string;
   slug: string;
-  // TODO(ts)
   status: string;
   type: string;
   altIsSentryApp?: boolean;
@@ -478,6 +507,12 @@ export type PluginNoProject = {
   deprecationDate?: string;
   description?: string;
   firstPartyAlternative?: string;
+  issue?: {
+    issue_id: string;
+    // TODO(TS): Label can be an object, unknown shape
+    label: string | any;
+    url: string;
+  };
   resourceLinks?: Array<{title: string; url: string}>;
   version?: string;
 };
@@ -587,17 +622,4 @@ export type ServerlessFunction = {
   outOfDate: boolean;
   runtime: string;
   version: number;
-};
-
-export type SentryFunction = {
-  author: string;
-  code: string;
-  name: string;
-  slug: string;
-  env_variables?: Array<{
-    name: string;
-    value: string;
-  }>;
-  events?: string[];
-  overview?: string;
 };

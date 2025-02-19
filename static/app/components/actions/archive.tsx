@@ -3,18 +3,21 @@ import styled from '@emotion/styled';
 import {getIgnoreActions} from 'sentry/components/actions/ignore';
 import {Button} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
+import {Chevron} from 'sentry/components/chevron';
 import {openConfirmModal} from 'sentry/components/confirm';
-import {DropdownMenu, MenuItemProps} from 'sentry/components/dropdownMenu';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import ExternalLink from 'sentry/components/links/externalLink';
-import {IconChevron} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import {GroupStatus, GroupStatusResolution, GroupSubstatus} from 'sentry/types';
+import type {GroupStatusResolution} from 'sentry/types/group';
+import {GroupStatus, GroupSubstatus} from 'sentry/types/group';
 
 interface ArchiveActionProps {
   onUpdate: (params: GroupStatusResolution) => void;
   className?: string;
   confirmLabel?: string;
   confirmMessage?: () => React.ReactNode;
+  disableArchiveUntilOccurrence?: boolean;
   disabled?: boolean;
   isArchived?: boolean;
   shouldConfirm?: boolean;
@@ -32,15 +35,20 @@ const ARCHIVE_FOREVER: GroupStatusResolution = {
   substatus: GroupSubstatus.ARCHIVED_FOREVER,
 };
 
+type GetArchiveActionsProps = Pick<
+  ArchiveActionProps,
+  'shouldConfirm' | 'confirmMessage' | 'onUpdate' | 'confirmLabel'
+> & {
+  disableArchiveUntilOccurrence?: boolean;
+};
+
 export function getArchiveActions({
   shouldConfirm,
   confirmLabel,
   confirmMessage,
   onUpdate,
-}: Pick<
-  ArchiveActionProps,
-  'shouldConfirm' | 'confirmMessage' | 'onUpdate' | 'confirmLabel'
->): {
+  disableArchiveUntilOccurrence,
+}: GetArchiveActionsProps): {
   dropdownItems: MenuItemProps[];
   onArchive: (resolution: GroupStatusResolution) => void;
 } {
@@ -78,7 +86,12 @@ export function getArchiveActions({
         label: t('Forever'),
         onAction: () => onArchive(ARCHIVE_FOREVER),
       },
-      ...dropdownItems,
+      ...dropdownItems.filter(item => {
+        if (disableArchiveUntilOccurrence) {
+          return item.key !== 'until-reoccur' && item.key !== 'until-affect';
+        }
+        return true;
+      }),
     ],
   };
 }
@@ -86,6 +99,7 @@ export function getArchiveActions({
 function ArchiveActions({
   size = 'xs',
   disabled,
+  disableArchiveUntilOccurrence,
   className,
   shouldConfirm,
   confirmLabel,
@@ -116,6 +130,7 @@ function ArchiveActions({
     onUpdate,
     shouldConfirm,
     confirmMessage,
+    disableArchiveUntilOccurrence,
   });
 
   return (
@@ -139,12 +154,19 @@ function ArchiveActions({
       <DropdownMenu
         minMenuWidth={270}
         size="sm"
-        trigger={triggerProps => (
+        trigger={(triggerProps, isOpen) => (
           <DropdownTrigger
             {...triggerProps}
             aria-label={t('Archive options')}
             size={size}
-            icon={<IconChevron direction="down" size="xs" />}
+            icon={
+              <Chevron
+                light
+                color="subText"
+                weight="medium"
+                direction={isOpen ? 'up' : 'down'}
+              />
+            }
             disabled={disabled}
           />
         )}
@@ -167,12 +189,12 @@ export default ArchiveActions;
 
 const ArchiveButton = styled(Button)`
   box-shadow: none;
-  border-radius: ${p => p.theme.borderRadiusLeft};
+  border-radius: ${p => p.theme.borderRadius} 0 0 ${p => p.theme.borderRadius};
 `;
 
 const DropdownTrigger = styled(Button)`
   box-shadow: none;
-  border-radius: ${p => p.theme.borderRadiusRight};
+  border-radius: 0 ${p => p.theme.borderRadius} ${p => p.theme.borderRadius} 0;
   border-left: none;
 `;
 
@@ -183,5 +205,5 @@ const MenuWrapper = styled('div')`
 `;
 
 const StyledExternalLink = styled(ExternalLink)`
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
 `;

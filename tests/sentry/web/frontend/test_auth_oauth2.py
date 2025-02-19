@@ -40,7 +40,7 @@ class DummyOAuth2Provider(OAuth2Provider):
         raise NotImplementedError
 
     def build_config(self, state):
-        pass
+        raise NotImplementedError
 
     def get_auth_pipeline(self):
         return [DummyOAuth2Login(), DummyOAuth2Callback()]
@@ -52,7 +52,7 @@ class DummyOAuth2Provider(OAuth2Provider):
 MockResponse = namedtuple("MockResponse", ["headers", "content"])
 
 
-@control_silo_test(stable=True)
+@control_silo_test
 class AuthOAuth2Test(AuthProviderTestCase):
     provider = DummyOAuth2Provider
     provider_name = "oauth2_dummy"

@@ -1,18 +1,17 @@
 import {useState} from 'react';
 import isPropValid from '@emotion/is-prop-valid';
 import styled from '@emotion/styled';
-import {motion} from 'framer-motion';
-import {LocationDescriptor} from 'history';
-import debounce from 'lodash/debounce';
+import {AnimatePresence, motion} from 'framer-motion';
+import type {LocationDescriptor} from 'history';
 
-import {TagSegment} from 'sentry/actionCreators/events';
+import type {TagSegment} from 'sentry/actionCreators/events';
 import {Button} from 'sentry/components/button';
 import Link from 'sentry/components/links/link';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconChevron} from 'sentry/icons/iconChevron';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
+import type {Project} from 'sentry/types/project';
 import {percent} from 'sentry/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import {isMobilePlatform} from 'sentry/utils/platform';
@@ -31,34 +30,10 @@ type Props = {
   colors?: string[];
   expandByDefault?: boolean;
   onTagClick?: (title: string, value: TagSegment) => void;
+  onTagValueClick?: (title: string, value: TagSegment) => void;
   otherUrl?: LocationDescriptor;
   project?: Project;
 };
-
-const _debounceTrackHover = debounce(
-  ({
-    tag,
-    value,
-    platform,
-    is_mobile,
-    organization,
-  }: {
-    is_mobile: boolean;
-    organization: Organization;
-    tag: string;
-    value: string;
-    platform?: string;
-  }) => {
-    trackAnalytics('issue_group_details.tags.bar.hovered', {
-      tag,
-      value,
-      platform,
-      is_mobile,
-      organization,
-    });
-  },
-  300
-);
 
 function TagFacetsDistributionMeter({
   colors = COLORS,
@@ -66,6 +41,7 @@ function TagFacetsDistributionMeter({
   title,
   totalValues,
   onTagClick,
+  onTagValueClick,
   project,
   expandByDefault,
   otherUrl,
@@ -91,9 +67,9 @@ function TagFacetsDistributionMeter({
         <Tooltip
           skipWrapper
           delay={TOOLTIP_DELAY}
-          title={topSegments[0].name || t('n/a')}
+          title={topSegments[0]!.name || t('n/a')}
         >
-          <TitleDescription>{topSegments[0].name || t('n/a')}</TitleDescription>
+          <TitleDescription>{topSegments[0]!.name || t('n/a')}</TitleDescription>
         </Tooltip>
         <ExpandToggleButton
           borderless
@@ -142,25 +118,18 @@ function TagFacetsDistributionMeter({
               style={{width: pct + '%'}}
               onMouseOver={() => {
                 setHoveredValue(value);
-                _debounceTrackHover({
-                  tag: title,
-                  value: value.value,
-                  platform: project?.platform,
-                  is_mobile: isMobilePlatform(project?.platform),
-                  organization,
-                });
               }}
               onMouseLeave={() => setHoveredValue(null)}
             >
               {value.isOther ? (
                 <OtherSegment
                   aria-label={t('Other segment')}
-                  color={colors[colors.length - 1]}
+                  color={colors[colors.length - 1]!}
                 />
               ) : (
                 <Segment
                   aria-label={`${value.value} ${t('segment')}`}
-                  color={colors[index]}
+                  color={colors[index]!}
                   {...segmentProps}
                 >
                   {/* if the first segment is 6% or less, the label won't fit cleanly into the segment, so don't show the label */}
@@ -176,36 +145,42 @@ function TagFacetsDistributionMeter({
 
   function renderLegend() {
     return (
-      <LegendAnimateContainer
-        expanded={expanded}
-        animate={expanded ? {height: '100%', opacity: 1} : {height: '0', opacity: 0}}
-      >
-        <LegendContainer>
-          {topSegments.map((segment, index) => {
-            const pctLabel = Math.floor(percent(segment.count, totalValues));
-            const unfocus = !!hoveredValue && hoveredValue.value !== segment.value;
-            const focus = hoveredValue?.value === segment.value;
-            const linkLabel = segment.isOther
-              ? t(
-                  'Other %s tag values, %s of all events. View other tags.',
-                  title,
-                  `${pctLabel}%`
-                )
-              : t(
-                  '%s, %s, %s of all events. View events with this tag value.',
-                  title,
-                  segment.value,
-                  `${pctLabel}%`
-                );
-            return (
-              <li key={`segment-${segment.name}-${index}`}>
-                <Link to={segment.url} aria-label={linkLabel}>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            variants={{
+              open: {height: ['100%', 'auto'], opacity: 1},
+              closed: {height: '0', opacity: 0, overflow: 'hidden'},
+            }}
+            initial="closed"
+            animate="open"
+            exit="closed"
+          >
+            <LegendContainer>
+              {topSegments.map((segment, index) => {
+                const pctLabel = Math.floor(percent(segment.count, totalValues));
+                const unfocus = !!hoveredValue && hoveredValue.value !== segment.value;
+                const focus = hoveredValue?.value === segment.value;
+                const linkLabel = segment.isOther
+                  ? t(
+                      'Other %s tag values, %s of all events. View other tags.',
+                      title,
+                      `${pctLabel}%`
+                    )
+                  : t(
+                      '%s, %s, %s of all events. View events with this tag value.',
+                      title,
+                      segment.value,
+                      `${pctLabel}%`
+                    );
+
+                const legend = (
                   <LegendRow
                     onMouseOver={() => setHoveredValue(segment)}
                     onMouseLeave={() => setHoveredValue(null)}
                   >
                     <LegendDot
-                      color={colors[segment.isOther ? colors.length - 1 : index]}
+                      color={colors[segment.isOther ? colors.length - 1 : index]!}
                       focus={focus}
                     />
                     <Tooltip skipWrapper delay={TOOLTIP_DELAY} title={segment.name}>
@@ -215,14 +190,32 @@ function TagFacetsDistributionMeter({
                         )}
                       </LegendText>
                     </Tooltip>
-                    {<LegendPercent>{`${pctLabel}%`}</LegendPercent>}
+                    <LegendPercent>{`${pctLabel}%`}</LegendPercent>
                   </LegendRow>
-                </Link>
-              </li>
-            );
-          })}
-        </LegendContainer>
-      </LegendAnimateContainer>
+                );
+
+                return (
+                  <li key={`segment-${segment.name}-${index}`}>
+                    {onTagValueClick ? (
+                      <StyledButton
+                        aria-label={linkLabel}
+                        onClick={() => onTagValueClick?.(title, segment)}
+                        priority="link"
+                      >
+                        {legend}
+                      </StyledButton>
+                    ) : (
+                      <Link to={segment.url} aria-label={linkLabel}>
+                        {legend}
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
+            </LegendContainer>
+          </motion.div>
+        )}
+      </AnimatePresence>
     );
   }
 
@@ -290,7 +283,7 @@ const Title = styled('div')`
 const TitleType = styled('div')`
   flex: none;
   color: ${p => p.theme.textColor};
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   font-size: ${p => p.theme.fontSizeMedium};
   margin-right: ${space(1)};
   align-self: center;
@@ -328,15 +321,7 @@ const Segment = styled('span', {shouldForwardProp: isPropValid})<{color: string}
   text-align: right;
   font-size: ${p => p.theme.fontSizeExtraSmall};
   padding: 1px ${space(0.5)} 0 0;
-`;
-
-const LegendAnimateContainer = styled(motion.div, {
-  shouldForwardProp: prop =>
-    prop === 'animate' || (prop !== 'expanded' && isPropValid(prop)),
-})<{expanded: boolean}>`
-  height: 0;
-  opacity: 0;
-  ${p => (!p.expanded ? 'overflow: hidden;' : '')}
+  user-select: none;
 `;
 
 const LegendContainer = styled('ol')`
@@ -406,5 +391,12 @@ const NotApplicableLabel = styled('span')`
 const StyledSummary = styled('summary')`
   &::-webkit-details-marker {
     display: none;
+  }
+`;
+
+const StyledButton = styled(Button)`
+  width: 100%;
+  > span {
+    display: block;
   }
 `;

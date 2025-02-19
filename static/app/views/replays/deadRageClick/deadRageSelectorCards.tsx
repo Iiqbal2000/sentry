@@ -1,21 +1,21 @@
-import {ComponentProps, ReactNode, useState} from 'react';
+import type {ReactNode} from 'react';
+import {useState} from 'react';
 import styled from '@emotion/styled';
 
-import {LinkButton} from 'sentry/components/button';
+import {LinkButton, type LinkButtonProps} from 'sentry/components/button';
+import {Flex} from 'sentry/components/container/flex';
 import EmptyStateWarning from 'sentry/components/emptyStateWarning';
-import FeatureBadge from 'sentry/components/featureBadge';
 import Placeholder from 'sentry/components/placeholder';
 import QuestionTooltip from 'sentry/components/questionTooltip';
+import Accordion from 'sentry/components/replays/accordion';
 import TextOverflow from 'sentry/components/textOverflow';
-import {IconCursorArrow} from 'sentry/icons';
+import {IconCursorArrow, IconSearch} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import useDeadRageSelectors from 'sentry/utils/replays/hooks/useDeadRageSelectors';
-import {ColorOrAlias} from 'sentry/utils/theme';
+import type {ColorOrAlias} from 'sentry/utils/theme';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
-import Accordion from 'sentry/views/performance/landing/widgets/components/accordion';
 import {
   ContentContainer,
   HeaderContainer,
@@ -29,6 +29,7 @@ import {
   SelectorLink,
   transformSelectorQuery,
 } from 'sentry/views/replays/deadRageClick/selectorTable';
+import {makeReplaysPathname} from 'sentry/views/replays/pathnames';
 
 function DeadRageSelectorCards() {
   return (
@@ -43,11 +44,12 @@ function DeadRageSelectorCards() {
                 <QuestionTooltip
                   size="xs"
                   position="top"
-                  title={t('The top selectors your users have dead clicked on.')}
+                  title={t(
+                    'The top selectors your users have dead clicked on (i.e., a user click that does not result in any page activity after 7 seconds).'
+                  )}
                   isHoverable
                 />
               </TitleTooltipContainer>
-              <FeatureBadge type="beta" />
             </StyledWidgetHeader>
             <Subtitle>{t('Suggested replays to watch')}</Subtitle>
           </div>
@@ -64,11 +66,12 @@ function DeadRageSelectorCards() {
                 <QuestionTooltip
                   size="xs"
                   position="top"
-                  title={t('The top selectors your users have rage clicked on.')}
+                  title={t(
+                    'The top selectors your users have rage clicked on (i.e., 5 or more clicks on a dead element, which exhibits no page activity after 7 seconds).'
+                  )}
                   isHoverable
                 />
               </TitleTooltipContainer>
-              <FeatureBadge type="beta" />
             </StyledWidgetHeader>
             <Subtitle>{t('Suggested replays to watch')}</Subtitle>
           </div>
@@ -101,11 +104,9 @@ function AccordionWidget({
   const clickColor = deadOrRage === 'dead' ? 'yellow300' : 'red300';
 
   return (
-    <StyledWidgetContainer>
+    <StyledWidgetContainer data-test-id="selector-widget">
       <StyledHeaderContainer>
-        <ClickColor color={clickColor}>
-          <IconCursorArrow />
-        </ClickColor>
+        <IconCursorArrow color={clickColor} />
         {header}
       </StyledHeaderContainer>
       {isLoading ? (
@@ -116,11 +117,14 @@ function AccordionWidget({
         </LoadingContainer>
       ) : isError || (!isLoading && filteredData.length === 0) ? (
         <CenteredContentContainer>
-          <EmptyStateWarning>
-            <div>{t('No results found')}</div>
+          <EmptyStateWarning withIcon={false}>
+            <EmptyHeader>
+              <IconSearch size="sm" />
+              {t('No results found')}
+            </EmptyHeader>
             <EmptySubtitle>
               {tct(
-                "Once your users start clicking around, you'll see the top selectors that were [type] clicked here.",
+                'There were no [type] clicks within this timeframe. Expand your timeframe, or increase your replay sample rate to see more data.',
                 {type: deadOrRage}
               )}
             </EmptySubtitle>
@@ -129,7 +133,7 @@ function AccordionWidget({
       ) : (
         <LeftAlignedContentContainer>
           <Accordion
-            buttonOnLeft
+            collapsible
             expandedIndex={selectedListIndex}
             setExpandedIndex={setSelectListIndex}
             items={filteredData.map(d => {
@@ -137,7 +141,7 @@ function AccordionWidget({
                 d.dom_element.fullSelector
               )}"`;
               return {
-                header: () => (
+                header: (
                   <AccordionItemHeader
                     count={d[clickType] ?? 0}
                     selector={d.dom_element.selector}
@@ -146,7 +150,7 @@ function AccordionWidget({
                     id={d.project_id}
                   />
                 ),
-                content: () => (
+                content: (
                   <ExampleReplaysList
                     location={location}
                     clickType={clickType}
@@ -161,7 +165,7 @@ function AccordionWidget({
       )}
       <SearchButton
         label={t('See all selectors')}
-        path="selectors"
+        path="/selectors/"
         sort={`-${clickType}`}
       />
     </StyledWidgetContainer>
@@ -182,10 +186,10 @@ function AccordionItemHeader({
   selectorQuery: string;
 }) {
   const clickCount = (
-    <ClickColor color={clickColor}>
-      <IconCursorArrow size="xs" />
+    <ClickCount>
+      <IconCursorArrow size="xs" color={clickColor} />
       {count}
-    </ClickColor>
+    </ClickCount>
   );
   return (
     <StyledAccordionHeader>
@@ -209,18 +213,23 @@ function SearchButton({
   ...props
 }: {
   label: ReactNode;
-  path: string;
+  path: '/' | `/${string}/`;
   sort: string;
-} & Omit<ComponentProps<typeof LinkButton>, 'size' | 'to'>) {
+} & Omit<LinkButtonProps, 'size' | 'to' | 'external'>) {
   const location = useLocation();
   const organization = useOrganization();
+
+  const pathname = makeReplaysPathname({
+    path,
+    organization,
+  });
 
   return (
     <StyledButton
       {...props}
       size="xs"
       to={{
-        pathname: normalizeUrl(`/organizations/${organization.slug}/replays/${path}/`),
+        pathname,
         query: {
           ...location.query,
           sort,
@@ -243,8 +252,8 @@ const SplitCardContainer = styled('div')`
   align-items: stretch;
 `;
 
-const ClickColor = styled(TextOverflow)<{color: ColorOrAlias}>`
-  color: ${p => p.theme[p.color]};
+const ClickCount = styled(TextOverflow)`
+  color: ${p => p.theme.gray400};
   display: grid;
   grid-template-columns: auto auto;
   gap: ${space(0.75)};
@@ -268,12 +277,13 @@ const CenteredContentContainer = styled(ContentContainer)`
 
 const StyledButton = styled(LinkButton)`
   width: 100%;
-  border-radius: ${p => p.theme.borderRadiusBottom};
+  border-radius: 0 0 ${p => p.theme.borderRadius} ${p => p.theme.borderRadius};
   padding: ${space(3)};
   border-bottom: none;
   border-left: none;
   border-right: none;
   font-size: ${p => p.theme.fontSizeMedium};
+  background-color: transparent;
 `;
 
 const StyledAccordionHeader = styled('div')`
@@ -305,11 +315,12 @@ export const RightAlignedCell = styled('div')`
   align-items: center;
   justify-content: center;
   gap: ${space(1)};
+  padding-left: ${space(1)};
 `;
 
 const EmptySubtitle = styled('div')`
   font-size: ${p => p.theme.fontSizeMedium};
-  line-height: 1.8em;
+  line-height: 1.6em;
   padding-left: ${space(1)};
   padding-right: ${space(1)};
 `;
@@ -321,6 +332,13 @@ const LoadingContainer = styled(ContentContainer)`
 
 const StyledPlaceholder = styled(Placeholder)`
   height: 34px;
+`;
+
+const EmptyHeader = styled(Flex)`
+  justify-content: center;
+  align-items: center;
+  gap: ${space(1.5)};
+  color: ${p => p.theme.gray300};
 `;
 
 export default DeadRageSelectorCards;

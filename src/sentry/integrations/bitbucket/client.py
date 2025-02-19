@@ -7,12 +7,12 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 
 from requests import PreparedRequest
 
-from sentry.integrations.utils import get_query_hash
+from sentry.integrations.base import IntegrationFeatureNotImplementedError
+from sentry.integrations.client import ApiClient
+from sentry.integrations.services.integration.model import RpcIntegration
+from sentry.integrations.source_code_management.repository import RepositoryClient
+from sentry.integrations.utils.atlassian_connect import get_query_hash
 from sentry.models.repository import Repository
-from sentry.services.hybrid_cloud.integration.model import RpcIntegration
-from sentry.services.hybrid_cloud.util import control_silo_function
-from sentry.shared_integrations.client.base import BaseApiResponseX
-from sentry.shared_integrations.client.proxy import IntegrationProxyClient, infer_org_integration
 from sentry.utils import jwt
 from sentry.utils.http import absolute_uri
 from sentry.utils.patch_set import patch_to_file_changes
@@ -38,7 +38,6 @@ class BitbucketAPIPath:
 
     repository = "/2.0/repositories/{repo}"
     repositories = "/2.0/repositories/{username}"
-    repository_commit = "/2.0/repositories/{repo}/commit/{sha}"
     repository_commits = "/2.0/repositories/{repo}/commits/{revision}"
     repository_diff = "/2.0/repositories/{repo}/diff/{spec}"
     repository_hook = "/2.0/repositories/{repo}/hooks/{uid}"
@@ -47,7 +46,7 @@ class BitbucketAPIPath:
     source = "/2.0/repositories/{repo}/src/{sha}/{path}"
 
 
-class BitbucketApiClient(IntegrationProxyClient):
+class BitbucketApiClient(ApiClient, RepositoryClient):
     """
     The API Client for the Bitbucket Integration
 
@@ -56,25 +55,19 @@ class BitbucketApiClient(IntegrationProxyClient):
 
     integration_name = "bitbucket"
 
-    def __init__(self, integration: RpcIntegration, org_integration_id: int | None = None):
+    def __init__(self, integration: RpcIntegration):
         self.base_url = integration.metadata["base_url"]
         self.shared_secret = integration.metadata["shared_secret"]
         # subject is probably the clientKey
         self.subject = integration.external_id
 
-        if not org_integration_id:
-            org_integration_id = infer_org_integration(
-                integration_id=integration.id, ctx_logger=logger
-            )
         super().__init__(
             integration_id=integration.id,
-            org_integration_id=org_integration_id,
             verify_ssl=True,
             logging_context=None,
         )
 
-    @control_silo_function
-    def authorize_request(self, prepared_request: PreparedRequest) -> PreparedRequest:
+    def finalize_request(self, prepared_request: PreparedRequest) -> PreparedRequest:
         path = prepared_request.url[len(self.base_url) :]
         url_params = dict(parse_qs(urlsplit(path).query))
         path = path.split("?")[0]
@@ -93,9 +86,6 @@ class BitbucketApiClient(IntegrationProxyClient):
 
     def get_issue(self, repo, issue_id):
         return self.get(BitbucketAPIPath.issue.format(repo=repo, issue_id=issue_id))
-
-    def get_issues(self, repo):
-        return self.get(BitbucketAPIPath.issues.format(repo=repo))
 
     def create_issue(self, repo, data):
         return self.post(path=BitbucketAPIPath.issues.format(repo=repo), data=data)
@@ -155,7 +145,7 @@ class BitbucketApiClient(IntegrationProxyClient):
         # where start_sha is oldest and end_sha is most recent
         # see
         # https://developer.atlassian.com/bitbucket/api/2/reference/resource/repositories/%7Busername%7D/%7Brepo_slug%7D/commits/%7Brevision%7D
-        commits = []
+        commits: list[dict[str, Any]] = []
         done = False
 
         url = BitbucketAPIPath.repository_commits.format(repo=repo, revision=end_sha)
@@ -177,7 +167,7 @@ class BitbucketApiClient(IntegrationProxyClient):
 
         return self.zip_commit_data(repo, commits)
 
-    def check_file(self, repo: Repository, path: str, version: str) -> BaseApiResponseX:
+    def check_file(self, repo: Repository, path: str, version: str | None) -> object | None:
         return self.head_cached(
             path=BitbucketAPIPath.source.format(
                 repo=repo.name,
@@ -185,3 +175,8 @@ class BitbucketApiClient(IntegrationProxyClient):
                 path=path,
             ),
         )
+
+    def get_file(
+        self, repo: Repository, path: str, ref: str | None, codeowners: bool = False
+    ) -> str:
+        raise IntegrationFeatureNotImplementedError

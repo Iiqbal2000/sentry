@@ -1,11 +1,10 @@
 import styled from '@emotion/styled';
 
-import Alert from 'sentry/components/alert';
-import {Button} from 'sentry/components/button';
 import {CodeSnippet} from 'sentry/components/codeSnippet';
+import {Alert} from 'sentry/components/core/alert';
 import ExternalLink from 'sentry/components/links/externalLink';
+import {useReplayContext} from 'sentry/components/replays/replayContext';
 import TextCopyInput from 'sentry/components/textCopyInput';
-import {IconClose, IconInfo} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import type {SpanFrame} from 'sentry/utils/replays/types';
@@ -21,68 +20,6 @@ export const useDismissReqRespBodiesAlert = () => {
     key: `${organization.id}:replay-network-bodies-alert-dismissed`,
   });
 };
-
-export function ReqRespBodiesAlert({
-  isNetworkDetailsSetup,
-}: {
-  isNetworkDetailsSetup: boolean;
-}) {
-  const {dismiss, isDismissed} = useDismissReqRespBodiesAlert();
-
-  if (isDismissed) {
-    return null;
-  }
-
-  const message = isNetworkDetailsSetup
-    ? tct(
-        'Click on a [fetch] or [xhr] request to see request and response bodies. [link].',
-        {
-          fetch: <code>fetch</code>,
-          xhr: <code>xhr</code>,
-          link: (
-            <ExternalLink
-              href="https://docs.sentry.io/platforms/javascript/session-replay/configuration/#network-details"
-              onClick={dismiss}
-            >
-              {t('Learn More')}
-            </ExternalLink>
-          ),
-        }
-      )
-    : tct('Start collecting the body of requests and responses. [link].', {
-        link: (
-          <ExternalLink
-            href="https://docs.sentry.io/platforms/javascript/session-replay/configuration/#network-details"
-            onClick={dismiss}
-          >
-            {t('Learn More')}
-          </ExternalLink>
-        ),
-      });
-  return (
-    <StyledAlert
-      icon={<IconInfo />}
-      opaque={false}
-      showIcon
-      type="info"
-      trailingItems={
-        <StyledButton priority="link" size="sm" onClick={dismiss}>
-          <IconClose color="gray500" size="sm" />
-        </StyledButton>
-      }
-    >
-      {message}
-    </StyledAlert>
-  );
-}
-
-const StyledAlert = styled(Alert)`
-  margin-bottom: ${space(1)};
-`;
-
-const StyledButton = styled(Button)`
-  color: inherit;
-`;
 
 export function UnsupportedOp({type}: {type: 'headers' | 'bodies'}) {
   const title =
@@ -132,10 +69,25 @@ export function Setup({
     projectId: [projectId],
   });
   const sdkNeedsUpdate = !isFetching && Boolean(needsUpdate);
+  const {replay} = useReplayContext();
+  const isVideoReplay = replay?.isVideoReplay();
 
   const url = item.description || 'http://example.com';
 
-  return (
+  return isVideoReplay ? (
+    visibleTab === 'request' || visibleTab === 'response' ? (
+      <StyledAlert type="info" showIcon>
+        {tct(
+          'Request and response headers or bodies are currently not available for mobile platforms. Track this [link:GitHub issue] to get progress on support for this feature.',
+          {
+            link: (
+              <ExternalLink href="https://github.com/getsentry/sentry-react-native/issues/4106" />
+            ),
+          }
+        )}
+      </StyledAlert>
+    ) : null
+  ) : (
     <SetupInstructions
       minVersion="7.53.1"
       sdkNeedsUpdate={sdkNeedsUpdate}
@@ -174,7 +126,8 @@ function SetupInstructions({
   }
 
   function trimUrl(oldUrl: string): string {
-    return oldUrl.substring(0, oldUrl.indexOf('?'));
+    const end = oldUrl.indexOf('?') > 0 ? oldUrl.indexOf('?') : oldUrl.length;
+    return oldUrl.substring(0, end);
   }
 
   const urlSnippet = `
@@ -189,7 +142,7 @@ function SetupInstructions({
 
   const code = `Sentry.init({
   integrations: [
-    new Replay({${urlSnippet + (includeHeadersSnippet ? headersSnippet : '')}
+    Sentry.replayIntegration({${urlSnippet + (includeHeadersSnippet ? headersSnippet : '')}
     }),
   ],
 })`;
@@ -198,8 +151,8 @@ function SetupInstructions({
     showSnippet === Output.SETUP
       ? t('Capture Request and Response Headers and Bodies')
       : visibleTab === 'details'
-      ? t('Capture Request and Response Headers')
-      : t('Capture Request and Response Bodies');
+        ? t('Capture Request and Response Headers')
+        : t('Capture Request and Response Bodies');
 
   return (
     <StyledInstructions data-test-id="network-setup-steps">
@@ -228,11 +181,13 @@ function SetupInstructions({
           )}
       </NetworkUrlWrapper>
       {showSnippet === Output.BODY_SKIPPED && (
-        <Alert type="warning">
-          {tct('Enable [field] to capture both Request and Response bodies.', {
-            field: <code>networkCaptureBodies: true</code>,
-          })}
-        </Alert>
+        <Alert.Container>
+          <Alert type="warning">
+            {tct('Enable [field] to capture both Request and Response bodies.', {
+              field: <code>networkCaptureBodies: true</code>,
+            })}
+          </Alert>
+        </Alert.Container>
       )}
       <h1>{t('Prerequisites')}</h1>
       <ol>
@@ -260,11 +215,10 @@ const StyledTextCopyInput = styled(TextCopyInput)`
 `;
 
 const NetworkUrlWrapper = styled('div')`
-  margin: ${space(1)} ${space(0)} ${space(1.5)} ${space(0)};
+  margin: ${space(1)} 0 ${space(1.5)} 0;
 `;
 
 const NoMarginAlert = styled(Alert)`
-  margin: 0;
   border-width: 1px 0 0 0;
 `;
 
@@ -290,4 +244,8 @@ const StyledInstructions = styled('div')`
   p:last-child {
     margin-bottom: 0;
   }
+`;
+
+const StyledAlert = styled(Alert)`
+  margin: ${space(1)};
 `;

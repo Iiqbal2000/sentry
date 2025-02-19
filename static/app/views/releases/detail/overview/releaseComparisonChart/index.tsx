@@ -1,10 +1,9 @@
 import {Fragment, useCallback, useEffect, useMemo, useState} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import {Button} from 'sentry/components/button';
 import ErrorPanel from 'sentry/components/charts/errorPanel';
 import {ChartContainer} from 'sentry/components/charts/styles';
@@ -13,29 +12,33 @@ import ErrorBoundary from 'sentry/components/errorBoundary';
 import GlobalSelectionLink from 'sentry/components/globalSelectionLink';
 import NotAvailable from 'sentry/components/notAvailable';
 import Panel from 'sentry/components/panels/panel';
-import PanelTable from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconArrow, IconChevron, IconList, IconWarning} from 'sentry/icons';
 import {t, tct, tn} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {PlatformKey} from 'sentry/types';
 import {
-  Organization,
-  ReleaseComparisonChartType,
-  ReleaseProject,
-  ReleaseWithHealth,
-  SessionApiResponse,
+  type Organization,
+  type SessionApiResponse,
   SessionFieldWithOperation,
   SessionStatus,
-} from 'sentry/types';
+} from 'sentry/types/organization';
+import type {PlatformKey} from 'sentry/types/project';
+import {
+  ReleaseComparisonChartType,
+  type ReleaseProject,
+  type ReleaseWithHealth,
+} from 'sentry/types/release';
 import {defined} from 'sentry/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import {formatPercentage} from 'sentry/utils/formatters';
+import {DiscoverDatasets} from 'sentry/utils/discover/types';
 import getDynamicText from 'sentry/utils/getDynamicText';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
 import {decodeList, decodeScalar} from 'sentry/utils/queryString';
 import {getCount, getCrashFreeRate, getSessionStatusRate} from 'sentry/utils/sessions';
-import {Color} from 'sentry/utils/theme';
+import type {Color} from 'sentry/utils/theme';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import {
   displaySessionStatusPercent,
   getReleaseBounds,
@@ -102,6 +105,7 @@ function ReleaseComparisonChart({
   organization,
   hasHealthData,
 }: Props) {
+  const navigate = useNavigate();
   const [issuesTotals, setIssuesTotals] = useState<IssuesTotals>(null);
   const [eventsTotals, setEventsTotals] = useState<EventsTotals>(null);
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -190,6 +194,7 @@ function ReleaseComparisonChart({
               'event.type:transaction',
               `release:${release.version}`,
             ]).formatString(),
+            dataset: DiscoverDatasets.METRICS_ENHANCED,
             ...commonQuery,
           },
         }),
@@ -197,6 +202,7 @@ function ReleaseComparisonChart({
           query: {
             field: ['failure_rate()', 'count()'],
             query: new MutableSearch(['event.type:transaction']).formatString(),
+            dataset: DiscoverDatasets.METRICS_ENHANCED,
             ...commonQuery,
           },
         }),
@@ -786,10 +792,10 @@ function ReleaseComparisonChart({
       role: 'default',
       drilldown: null,
       thisRelease: defined(eventsTotals?.releaseErrorCount) ? (
-        <Count value={eventsTotals?.releaseErrorCount!} />
+        <Count value={eventsTotals?.releaseErrorCount} />
       ) : null,
       allReleases: defined(eventsTotals?.allErrorCount) ? (
-        <Count value={eventsTotals?.allErrorCount!} />
+        <Count value={eventsTotals?.allErrorCount} />
       ) : null,
       diff: null,
       diffDirection: null,
@@ -803,10 +809,10 @@ function ReleaseComparisonChart({
       role: 'default',
       drilldown: null,
       thisRelease: defined(eventsTotals?.releaseTransactionCount) ? (
-        <Count value={eventsTotals?.releaseTransactionCount!} />
+        <Count value={eventsTotals?.releaseTransactionCount} />
       ) : null,
       allReleases: defined(eventsTotals?.allTransactionCount) ? (
-        <Count value={eventsTotals?.allTransactionCount!} />
+        <Count value={eventsTotals?.allTransactionCount} />
       ) : null,
       diff: null,
       diffDirection: null,
@@ -819,7 +825,7 @@ function ReleaseComparisonChart({
       organization,
       chartType,
     });
-    browserHistory.push({
+    navigate({
       ...location,
       query: {
         ...location.query,
@@ -878,15 +884,15 @@ function ReleaseComparisonChart({
     hasHealthData
       ? ReleaseComparisonChartType.CRASH_FREE_SESSIONS
       : hasPerformance
-      ? ReleaseComparisonChartType.FAILURE_RATE
-      : ReleaseComparisonChartType.ERROR_COUNT
+        ? ReleaseComparisonChartType.FAILURE_RATE
+        : ReleaseComparisonChartType.ERROR_COUNT
   ) as ReleaseComparisonChartType;
 
   let chart = [...charts, ...additionalCharts].find(ch => ch.type === activeChart);
 
   if (!chart) {
-    chart = charts[0];
-    activeChart = charts[0].type;
+    chart = charts[0]!;
+    activeChart = charts[0]!.type;
   }
 
   const showPlaceholders = loading || eventsLoading;
@@ -1026,7 +1032,7 @@ const DescriptionCell = styled(Cell)`
   overflow: visible;
 `;
 
-const Change = styled('div')<{color?: Color}>`
+export const Change = styled('div')<{color?: Color}>`
   font-size: ${p => p.theme.fontSizeMedium};
   ${p => p.color && `color: ${p.theme[p.color]}`}
 `;

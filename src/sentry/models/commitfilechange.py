@@ -1,27 +1,28 @@
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any, ClassVar
 
 from django.db import models, router, transaction
 from django.db.models.signals import post_save
 
 from sentry.backup.scopes import RelocationScope
 from sentry.db.models import (
-    BaseManager,
     BoundedBigIntegerField,
     FlexibleForeignKey,
     Model,
-    region_silo_only_model,
+    region_silo_model,
     sane_repr,
 )
+from sentry.db.models.manager.base import BaseManager
 
 COMMIT_FILE_CHANGE_TYPES = frozenset(("A", "D", "M"))
 
 
-class CommitFileChangeManager(BaseManager):
+class CommitFileChangeManager(BaseManager["CommitFileChange"]):
     def get_count_for_commits(self, commits: Iterable[Any]) -> int:
         return int(self.filter(commit__in=commits).values("filename").distinct().count())
 
 
-@region_silo_only_model
+@region_silo_model
 class CommitFileChange(Model):
     __relocation_scope__ = RelocationScope.Excluded
 
@@ -32,7 +33,7 @@ class CommitFileChange(Model):
         max_length=1, choices=(("A", "Added"), ("D", "Deleted"), ("M", "Modified"))
     )
 
-    objects = CommitFileChangeManager()
+    objects: ClassVar[CommitFileChangeManager] = CommitFileChangeManager()
 
     class Meta:
         app_label = "sentry"

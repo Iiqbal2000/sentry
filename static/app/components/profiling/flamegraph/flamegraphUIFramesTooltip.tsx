@@ -1,15 +1,15 @@
 import {useMemo} from 'react';
 import * as React from 'react';
-import {vec2} from 'gl-matrix';
+import type {vec2} from 'gl-matrix';
 
 import {BoundTooltip} from 'sentry/components/profiling/boundTooltip';
 import {t} from 'sentry/locale';
-import {CanvasView} from 'sentry/utils/profiling/canvasView';
+import type {CanvasView} from 'sentry/utils/profiling/canvasView';
 import {toRGBAString} from 'sentry/utils/profiling/colors/utils';
-import {FlamegraphCanvas} from 'sentry/utils/profiling/flamegraphCanvas';
-import {UIFramesRenderer} from 'sentry/utils/profiling/renderers/uiFramesRenderer';
+import type {FlamegraphCanvas} from 'sentry/utils/profiling/flamegraphCanvas';
+import type {UIFramesRenderer} from 'sentry/utils/profiling/renderers/UIFramesRenderer';
 import {Rect} from 'sentry/utils/profiling/speedscope';
-import {UIFrames} from 'sentry/utils/profiling/uiFrames';
+import type {UIFrames} from 'sentry/utils/profiling/uiFrames';
 
 import {
   FlamegraphTooltipColorIndicator,
@@ -37,7 +37,7 @@ export function FlamegraphUIFramesTooltip({
   hoveredNode,
 }: FlamegraphUIFramesTooltipProps) {
   const uiFramesInConfigSpace = useMemo<
-    {rect: Rect; type: UIFrames['frames'][0]['type']}[]
+    Array<{rect: Rect; type: UIFrames['frames'][0]['type']}>
   >(() => {
     const framesInConfigSpace = hoveredNode.map(frame => {
       return {
@@ -50,9 +50,9 @@ export function FlamegraphUIFramesTooltip({
 
   return (
     <BoundTooltip
-      bounds={canvasBounds}
       cursor={configSpaceCursor}
       canvas={uiFramesCanvas}
+      canvasBounds={canvasBounds}
       canvasView={uiFramesView}
     >
       {uiFramesInConfigSpace.map((frame, i) => {

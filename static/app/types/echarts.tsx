@@ -1,18 +1,20 @@
 import type {
   AxisPointerComponentOption,
-  ECharts,
+  ECharts as EChartsType,
   LineSeriesOption,
   PatternObject,
 } from 'echarts';
 import type ReactEchartsCore from 'echarts-for-react/lib/core';
 
+import type {Confidence} from 'sentry/types/organization';
+
 export type SeriesDataUnit = {
+  // number because we sometimes use timestamps
   name: string | number;
   value: number;
   itemStyle?: {
     color?: string;
   };
-  // number because we sometimes use timestamps
   onClick?: (series: Series, instance: ECharts) => void;
 };
 
@@ -24,12 +26,15 @@ export type Series = {
     opacity: number;
   };
   color?: string;
+  confidence?: Confidence;
   id?: string;
   lineStyle?: AxisPointerComponentOption['lineStyle'];
   // https://echarts.apache.org/en/option.html#series-line.z
   markLine?: LineSeriesOption['markLine'];
   stack?: string;
   // https://echarts.apache.org/en/option.html#series-line.stack
+  symbol?: LineSeriesOption['symbol'];
+  symbolSize?: LineSeriesOption['symbolSize'];
   z?: number;
 };
 
@@ -113,6 +118,30 @@ export type DataPoint = Pick<SeriesDataUnit, 'name' | 'value'>;
 
 export type EChartRestoreHandler = EChartEventHandler<{type: 'restore'}>;
 
-export type EChartFinishedHandler = EChartEventHandler<{}>;
+export type EChartFinishedHandler = EChartEventHandler<Record<string, unknown>>;
 
-export type EChartRenderedHandler = EChartEventHandler<{}>;
+export type EChartRenderedHandler = EChartEventHandler<Record<string, unknown>>;
+
+type EchartBrushAreas = Array<{
+  coordRange: number[][];
+  range: number[][];
+}>;
+
+export type EChartBrushStartHandler = EChartEventHandler<{
+  areas: EchartBrushAreas;
+  brushId: string;
+  type: 'brush';
+}>;
+
+export type EChartBrushEndHandler = EChartEventHandler<{
+  areas: EchartBrushAreas;
+  brushId: string;
+  type: 'brushend';
+}>;
+
+export type EChartBrushSelectedHandler = EChartEventHandler<{
+  brushId: string;
+  type: 'brushselected';
+}>;
+
+export type ECharts = EChartsType;

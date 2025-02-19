@@ -1,4 +1,4 @@
-import {FlamegraphFrame} from '../flamegraphFrame';
+import type {FlamegraphFrame} from '../flamegraphFrame';
 
 export type DirectionX = 'left' | 'right';
 export type DirectionY = 'up' | 'down';
@@ -153,7 +153,7 @@ const keyDirectionMap: Record<string, Direction> = {
 export function handleFlamegraphKeyboardNavigation(
   evt: KeyboardEvent,
   currentFrame: FlamegraphFrame | undefined,
-  inverted: boolean = false
+  inverted = false
 ) {
   if (!currentFrame) {
     return null;

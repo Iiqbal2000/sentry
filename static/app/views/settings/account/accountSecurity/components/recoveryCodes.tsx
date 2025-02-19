@@ -1,6 +1,6 @@
 import styled from '@emotion/styled';
 
-import {Button} from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
 import Confirm from 'sentry/components/confirm';
 import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
 import EmptyMessage from 'sentry/components/emptyMessage';
@@ -22,6 +22,7 @@ type Props = {
 
 function RecoveryCodes({className, isEnrolled, codes, onRegenerateBackupCodes}: Props) {
   const printCodes = () => {
+    // @ts-expect-error TS(7015): Element implicitly has an 'any' type because index... Remove this comment to see the full error message
     // eslint-disable-next-line dot-notation
     const iframe = window.frames['printable'];
     iframe.document.write(codes.join('<br>'));
@@ -45,14 +46,13 @@ function RecoveryCodes({className, isEnrolled, codes, onRegenerateBackupCodes}: 
           <Button size="sm" onClick={printCodes} aria-label={t('print')}>
             <IconPrint />
           </Button>
-          <Button
+          <LinkButton
             size="sm"
             download="sentry-recovery-codes.txt"
             href={`data:text/plain;charset=utf-8,${formattedCodes}`}
             aria-label={t('download')}
-          >
-            <IconDownload />
-          </Button>
+            icon={<IconDownload />}
+          />
           <Confirm
             onConfirm={onRegenerateBackupCodes}
             message={t(

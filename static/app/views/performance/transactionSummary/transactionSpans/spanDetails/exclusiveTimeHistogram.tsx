@@ -12,18 +12,18 @@ import Placeholder from 'sentry/components/placeholder';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import {aggregateOutputType} from 'sentry/utils/discover/fields';
 import getDynamicText from 'sentry/utils/getDynamicText';
 import SpanHistogramQuery from 'sentry/utils/performance/histogram/spanHistogramQuery';
-import {HistogramData} from 'sentry/utils/performance/histogram/types';
+import type {HistogramData} from 'sentry/utils/performance/histogram/types';
 import {
   computeBuckets,
   formatHistogramData,
 } from 'sentry/utils/performance/histogram/utils';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {useLocation} from 'sentry/utils/useLocation';
 
@@ -137,7 +137,7 @@ export function Chart(props: ChartProps) {
     tooltip: {
       trigger: 'axis' as const,
       // TODO (udameli) pull series name from the meta
-      valueFormatter: (value, _seriesName) =>
+      valueFormatter: (value: any, _seriesName: any) =>
         tooltipFormatter(value, aggregateOutputType(_seriesName)),
     },
     yAxis: {

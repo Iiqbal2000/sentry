@@ -1,4 +1,5 @@
-import {Organization} from 'sentry-fixture/organization';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {
   MEPState,
@@ -10,28 +11,28 @@ import {
 } from 'sentry/views/performance/data';
 
 describe('generatePerformanceEventView()', function () {
-  const organization = Organization();
+  const organization = OrganizationFixture();
 
   it('generates default values', function () {
     const result = generatePerformanceEventView(
-      TestStubs.location({query: {}}),
+      LocationFixture({query: {}}),
       [],
       {},
       organization
     );
 
     expect(result.id).toBeUndefined();
-    expect(result.name).toEqual('Performance');
+    expect(result.name).toBe('Performance');
     expect(result.fields.length).toBeGreaterThanOrEqual(7);
-    expect(result.query).toEqual('');
-    expect(result.getQueryWithAdditionalConditions()).toEqual('event.type:transaction');
+    expect(result.query).toBe('');
+    expect(result.getQueryWithAdditionalConditions()).toBe('event.type:transaction');
     expect(result.sorts).toEqual([{kind: 'desc', field: 'tpm'}]);
     expect(result.statsPeriod).toEqual(DEFAULT_STATS_PERIOD);
   });
 
   it('applies sort from location', function () {
     const result = generatePerformanceEventView(
-      TestStubs.location({query: {sort: ['-p50', '-count']}}),
+      LocationFixture({query: {sort: ['-p50', '-count']}}),
       [],
       {},
       organization
@@ -43,33 +44,33 @@ describe('generatePerformanceEventView()', function () {
 
   it('does not override statsPeriod from location', function () {
     const result = generatePerformanceEventView(
-      TestStubs.location({query: {statsPeriod: ['90d', '45d']}}),
+      LocationFixture({query: {statsPeriod: ['90d', '45d']}}),
       [],
       {},
       organization
     );
     expect(result.start).toBeUndefined();
     expect(result.end).toBeUndefined();
-    expect(result.statsPeriod).toEqual('90d');
+    expect(result.statsPeriod).toBe('90d');
   });
 
   it('does not apply range when start and end are present', function () {
     const result = generatePerformanceEventView(
-      TestStubs.location({
+      LocationFixture({
         query: {start: '2020-04-25T12:00:00', end: '2020-05-25T12:00:00'},
       }),
       [],
       {},
       organization
     );
-    expect(result.start).toEqual('2020-04-25T12:00:00.000');
-    expect(result.end).toEqual('2020-05-25T12:00:00.000');
+    expect(result.start).toBe('2020-04-25T12:00:00.000');
+    expect(result.end).toBe('2020-05-25T12:00:00.000');
     expect(result.statsPeriod).toBeUndefined();
   });
 
   it('converts bare query into transaction name wildcard', function () {
     const result = generatePerformanceEventView(
-      TestStubs.location({query: {query: 'things.update'}}),
+      LocationFixture({query: {query: 'things.update'}}),
       [],
       {},
       organization
@@ -82,7 +83,7 @@ describe('generatePerformanceEventView()', function () {
 
   it('bare query overwrites transaction condition', function () {
     const result = generatePerformanceEventView(
-      TestStubs.location({query: {query: 'things.update transaction:thing.gone'}}),
+      LocationFixture({query: {query: 'things.update transaction:thing.gone'}}),
       [],
       {},
       organization
@@ -96,7 +97,7 @@ describe('generatePerformanceEventView()', function () {
 
   it('retains tag filter conditions', function () {
     const result = generatePerformanceEventView(
-      TestStubs.location({query: {query: 'key:value tag:value'}}),
+      LocationFixture({query: {query: 'key:value tag:value'}}),
       [],
       {},
       organization
@@ -110,7 +111,7 @@ describe('generatePerformanceEventView()', function () {
 
   it('gets the right column', function () {
     const result = generatePerformanceEventView(
-      TestStubs.location({query: {query: 'key:value tag:value'}}),
+      LocationFixture({query: {query: 'key:value tag:value'}}),
       [],
       {},
       organization
@@ -128,7 +129,7 @@ describe('generatePerformanceEventView()', function () {
 
   it('removes unsupported tokens for limited search', function () {
     const result = generatePerformanceEventView(
-      TestStubs.location({
+      LocationFixture({
         query: {
           query: 'tag:value transaction:*auth*',
           [METRIC_SEARCH_SETTING_PARAM]: MEPState.METRICS_ONLY,
@@ -138,6 +139,6 @@ describe('generatePerformanceEventView()', function () {
       {withStaticFilters: true},
       organization
     );
-    expect(result.query).toEqual('transaction:*auth*');
+    expect(result.query).toBe('transaction:*auth*');
   });
 });

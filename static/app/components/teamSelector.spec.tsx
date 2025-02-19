@@ -1,7 +1,9 @@
-import selectEvent from 'react-select-event';
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {TeamFixture} from 'sentry-fixture/team';
 
 import {act, render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
 import {openCreateTeamModal} from 'sentry/actionCreators/modal';
 import {addTeamToProject} from 'sentry/actionCreators/projects';
@@ -21,21 +23,24 @@ const teamData = [
     id: '1',
     slug: 'team1',
     name: 'Team 1',
+    isMember: true,
   },
   {
     id: '2',
     slug: 'team2',
     name: 'Team 2',
+    isMember: false,
   },
   {
     id: '3',
     slug: 'team3',
     name: 'Team 3',
+    isMember: false,
   },
 ];
-const teams = teamData.map(data => TestStubs.Team(data));
-const project = TestStubs.Project({teams: [teams[0]]});
-const organization = Organization({access: ['project:write']});
+const teams = teamData.map(data => TeamFixture(data));
+const project = ProjectFixture({teams: [teams[0]!]});
+const organization = OrganizationFixture({access: ['project:write']});
 act(() => OrganizationStore.onUpdate(organization, {replace: true}));
 
 function createWrapper(props: Partial<React.ComponentProps<typeof TeamSelector>> = {}) {
@@ -75,8 +80,7 @@ describe('Team Selector', function () {
   });
 
   it('respects the team filter', async function () {
-    const teamFilter = team => team.slug === 'team1';
-    createWrapper({teamFilter});
+    createWrapper({teamFilter: team => team.slug === 'team1'});
 
     await userEvent.type(screen.getByText('Select...'), '{keyDown}');
 
@@ -94,12 +98,14 @@ describe('Team Selector', function () {
     expect(screen.getByText('#team1')).toBeInTheDocument();
 
     // team2 and team3 should have add to project buttons
-    expect(screen.getAllByRole('button').length).toBe(2);
+    expect(screen.getAllByRole('button')).toHaveLength(2);
   });
 
   it('respects the team and project filter', async function () {
-    const teamFilter = team => team.slug === 'team1' || team.slug === 'team2';
-    createWrapper({teamFilter, project});
+    createWrapper({
+      teamFilter: team => team.slug === 'team1' || team.slug === 'team2',
+      project,
+    });
     await userEvent.type(screen.getByText('Select...'), '{keyDown}');
 
     expect(screen.getByText('#team1')).toBeInTheDocument();
@@ -108,7 +114,7 @@ describe('Team Selector', function () {
     expect(screen.queryByText('#team3')).not.toBeInTheDocument();
 
     // team2 should have add to project buttons
-    expect(screen.getAllByRole('button').length).toBe(1);
+    expect(screen.getAllByRole('button')).toHaveLength(1);
   });
 
   it('allows you to add teams outside of project', async function () {
@@ -120,7 +126,7 @@ describe('Team Selector', function () {
     // team2 and team3 should have add to project buttons
     const addToProjectButtons = screen.getAllByRole('button');
 
-    await userEvent.click(addToProjectButtons[0]);
+    await userEvent.click(addToProjectButtons[0]!);
 
     expect(addTeamToProject).toHaveBeenCalled();
   });
@@ -149,7 +155,7 @@ describe('Team Selector', function () {
       url: `/organizations/${organization.slug}/teams/`,
     });
     const onChangeMock = jest.fn();
-    const orgWithAccess = Organization({access: ['project:admin']});
+    const orgWithAccess = OrganizationFixture({access: ['project:admin']});
 
     createWrapper({
       allowCreate: true,
@@ -168,7 +174,7 @@ describe('Team Selector', function () {
       url: `/organizations/${organization.slug}/teams/`,
     });
     const onChangeMock = jest.fn();
-    const orgWithAccess = Organization({access: ['project:admin']});
+    const orgWithAccess = OrganizationFixture({access: ['project:admin']});
 
     createWrapper({
       allowCreate: true,
@@ -190,7 +196,7 @@ describe('Team Selector', function () {
       url: `/organizations/${organization.slug}/teams/`,
     });
     const onChangeMock = jest.fn();
-    const orgWithoutAccess = Organization({access: ['project:write']});
+    const orgWithoutAccess = OrganizationFixture({access: ['project:write']});
 
     createWrapper({
       allowCreate: true,
@@ -202,5 +208,25 @@ describe('Team Selector', function () {
     await userEvent.click(screen.getByText('Create team'));
     // it does no open the create team modal
     expect(openCreateTeamModal).not.toHaveBeenCalled();
+  });
+
+  it('shows all teams to members if filterByUserMembership is false', async function () {
+    createWrapper({filterByUserMembership: false});
+    await userEvent.type(screen.getByText('Select...'), '{keyDown}');
+
+    expect(screen.getByText('#team1')).toBeInTheDocument();
+    expect(screen.getByText('#team2')).toBeInTheDocument();
+    expect(screen.getByText('#team3')).toBeInTheDocument();
+  });
+
+  it('only shows member teams if filterByUserMembership is true', async function () {
+    createWrapper({filterByUserMembership: true});
+    await userEvent.type(screen.getByText('Select...'), '{keyDown}');
+
+    expect(screen.getByText('#team1')).toBeInTheDocument();
+
+    // member can not invite to teams they are not in if the Open Membership setting is off
+    expect(screen.queryByText('#team2')).not.toBeInTheDocument();
+    expect(screen.queryByText('#team3')).not.toBeInTheDocument();
   });
 });

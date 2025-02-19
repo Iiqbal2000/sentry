@@ -1,104 +1,62 @@
-import {Fragment, ReactElement} from 'react';
-import {Link as RouterLink} from 'react-router';
+import type {ReactElement} from 'react';
+import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import Badge from 'sentry/components/badge';
-import FeatureBadge from 'sentry/components/featureBadge';
+import Badge from 'sentry/components/badge/badge';
+import FeatureBadge from 'sentry/components/badge/featureBadge';
 import HookOrDefault from 'sentry/components/hookOrDefault';
+import {SecondaryNav} from 'sentry/components/nav/secondary';
 import {Tooltip} from 'sentry/components/tooltip';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 
 type Props = {
   label: React.ReactNode;
-  to: React.ComponentProps<RouterLink>['to'];
+  to: string;
   badge?: string | number | null | ReactElement;
   id?: string;
   index?: boolean;
   onClick?: (e: React.MouseEvent) => void;
 };
 
-function SettingsNavItem({badge, label, index, id, ...props}: Props) {
-  const LabelHook = HookOrDefault({
-    hookName: 'sidebar:item-label',
-    defaultComponent: ({children}) => <Fragment>{children}</Fragment>,
-  });
+const LabelHook = HookOrDefault({
+  hookName: 'sidebar:item-label',
+  defaultComponent: ({children}) => <Fragment>{children}</Fragment>,
+});
 
-  let renderedBadge: React.ReactNode;
-
-  if (badge === 'new') {
-    renderedBadge = <FeatureBadge type="new" />;
-  } else if (badge === 'beta') {
-    renderedBadge = <FeatureBadge type="beta" />;
-  } else if (badge === 'warning') {
-    renderedBadge = (
+function SettingsNavBadge({badge}: {badge: string | number | null | ReactElement}) {
+  if (badge === 'new' || badge === 'beta' || badge === 'alpha') {
+    return <FeatureBadge type={badge} variant="short" />;
+  }
+  if (badge === 'warning') {
+    return (
       <Tooltip title={t('This setting needs review')} position="right">
         <StyledBadge text={badge} type="warning" />
       </Tooltip>
     );
-  } else if (typeof badge === 'string' || typeof badge === 'number') {
-    renderedBadge = <StyledBadge text={badge} />;
-  } else {
-    renderedBadge = badge;
+  }
+  if (typeof badge === 'string' || typeof badge === 'number') {
+    return <StyledBadge text={badge} />;
   }
 
+  return badge;
+}
+
+function SettingsNavItem({badge, label, id, to, index, ...props}: Props) {
   return (
-    <StyledNavItem onlyActiveOnIndex={index} activeClassName="active" {...props}>
+    <SecondaryNav.Item
+      to={to}
+      end={index}
+      trailingItems={badge ? <SettingsNavBadge badge={badge} /> : null}
+      {...props}
+    >
       <LabelHook id={id}>{label}</LabelHook>
-      {badge ? renderedBadge : null}
-    </StyledNavItem>
+    </SecondaryNav.Item>
   );
 }
 
-const StyledNavItem = styled(RouterLink)`
-  display: block;
-  color: ${p => p.theme.gray300};
-  font-size: 14px;
-  line-height: 30px;
-  position: relative;
-
-  &.active {
-    color: ${p => p.theme.textColor};
-
-    &:before {
-      background: ${p => p.theme.active};
-    }
-  }
-
-  &:hover,
-  &:focus,
-  &:active {
-    color: ${p => p.theme.textColor};
-    outline: none;
-  }
-
-  &.focus-visible {
-    outline: none;
-    background: ${p => p.theme.backgroundSecondary};
-    padding-left: 15px;
-    margin-left: -15px;
-    border-radius: 3px;
-
-    &:before {
-      left: -15px;
-    }
-  }
-
-  &:before {
-    position: absolute;
-    content: '';
-    display: block;
-    top: 4px;
-    left: -30px;
-    height: 20px;
-    width: 4px;
-    background: transparent;
-    border-radius: 0 2px 2px 0;
-  }
-`;
-
 const StyledBadge = styled(Badge)`
-  font-weight: 400;
+  font-weight: ${p => p.theme.fontWeightNormal};
   height: auto;
   line-height: 1;
   font-size: ${p => p.theme.fontSizeExtraSmall};

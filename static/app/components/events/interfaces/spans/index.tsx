@@ -1,20 +1,19 @@
 import {Fragment, useMemo} from 'react';
-// eslint-disable-next-line no-restricted-imports
 import styled from '@emotion/styled';
 import {Observer} from 'mobx-react';
 
-import {Alert} from 'sentry/components/alert';
 import GuideAnchor from 'sentry/components/assistant/guideAnchor';
+import {Alert} from 'sentry/components/core/alert';
 import Panel from 'sentry/components/panels/panel';
 import SearchBar from 'sentry/components/searchBar';
 import {t, tn} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import {EventTransaction} from 'sentry/types/event';
-import {objectIsEmpty} from 'sentry/utils';
+import type {EventTransaction} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
 import {trackAnalytics} from 'sentry/utils/analytics';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
 import {QuickTraceContext} from 'sentry/utils/performance/quickTrace/quickTraceContext';
-import {
+import type {
   TraceError,
   TracePerformanceIssue,
 } from 'sentry/utils/performance/quickTrace/types';
@@ -24,7 +23,7 @@ import withOrganization from 'sentry/utils/withOrganization';
 import Filter from './filter';
 import TraceErrorList from './traceErrorList';
 import TraceView from './traceView';
-import {ParsedTraceType} from './types';
+import type {ParsedTraceType} from './types';
 import {getCumulativeAlertLevelFromErrors, parseTrace} from './utils';
 import WaterfallModel from './waterfallModel';
 
@@ -49,7 +48,7 @@ function TraceErrorAlerts({
     return null;
   }
 
-  const traceErrors: (TraceError | TracePerformanceIssue)[] = [];
+  const traceErrors: Array<TraceError | TracePerformanceIssue> = [];
   if (errors && errors.length > 0) {
     traceErrors.push(...errors);
   }
@@ -72,10 +71,14 @@ function TraceErrorAlerts({
 
   return (
     <AlertContainer>
-      <Alert type={getCumulativeAlertLevelFromErrors(errors)}>
+      <Alert type={getCumulativeAlertLevelFromErrors(traceErrors) ?? 'info'}>
         <ErrorLabel>{label}</ErrorLabel>
 
-        <TraceErrorList trace={parsedTrace} errors={traceErrors} />
+        <TraceErrorList
+          trace={parsedTrace}
+          errors={errors ?? []}
+          performanceIssues={performanceIssues}
+        />
       </Alert>
     </AlertContainer>
   );
@@ -83,7 +86,6 @@ function TraceErrorAlerts({
 
 function SpansInterface({event, affectedSpanIds, organization}: Props) {
   const parsedTrace = useMemo(() => parseTrace(event), [event]);
-
   const waterfallModel = useMemo(
     () => new WaterfallModel(event, affectedSpanIds),
     [event, affectedSpanIds]
@@ -98,7 +100,7 @@ function SpansInterface({event, affectedSpanIds, organization}: Props) {
   };
 
   return (
-    <Container hasErrors={!objectIsEmpty(event.errors)}>
+    <Container hasErrors={!isEmptyObject(event.errors)}>
       <QuickTraceContext.Consumer>
         {quickTrace => {
           const errors: TraceError[] | undefined =

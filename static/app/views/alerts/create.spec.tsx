@@ -1,11 +1,15 @@
-import selectEvent from 'react-select-event';
-import {Groups} from 'sentry-fixture/groups';
-import {Organization} from 'sentry-fixture/organization';
-import {ProjectAlertRule} from 'sentry-fixture/projectAlertRule';
-import {ProjectAlertRuleConfiguration} from 'sentry-fixture/projectAlertRuleConfiguration';
+import {EnvironmentsFixture} from 'sentry-fixture/environments';
+import {GitHubIntegrationProviderFixture} from 'sentry-fixture/githubIntegrationProvider';
+import {GroupsFixture} from 'sentry-fixture/groups';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectAlertRuleFixture} from 'sentry-fixture/projectAlertRule';
+import {ProjectAlertRuleConfigurationFixture} from 'sentry-fixture/projectAlertRuleConfiguration';
+import {RouteComponentPropsFixture} from 'sentry-fixture/routeComponentPropsFixture';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
 import ProjectsStore from 'sentry/stores/projectsStore';
 import TeamStore from 'sentry/stores/teamStore';
@@ -23,14 +27,13 @@ jest.mock('sentry/actionCreators/members', () => ({
     return {};
   }),
 }));
-jest.mock('react-router');
 jest.mock('sentry/utils/analytics', () => ({
   metric: {
-    startTransaction: jest.fn(() => ({
+    startSpan: jest.fn(() => ({
       setTag: jest.fn(),
       setData: jest.fn(),
     })),
-    endTransaction: jest.fn(),
+    endSpan: jest.fn(),
     mark: jest.fn(),
     measure: jest.fn(),
   },
@@ -43,15 +46,15 @@ describe('ProjectAlertsCreate', function () {
     TeamStore.loadInitialData([], false, null);
     MockApiClient.addMockResponse({
       url: '/projects/org-slug/project-slug/rules/configuration/',
-      body: ProjectAlertRuleConfiguration(),
+      body: ProjectAlertRuleConfigurationFixture(),
     });
     MockApiClient.addMockResponse({
       url: '/projects/org-slug/project-slug/rules/1/',
-      body: ProjectAlertRule(),
+      body: ProjectAlertRuleFixture(),
     });
     MockApiClient.addMockResponse({
       url: '/projects/org-slug/project-slug/environments/',
-      body: TestStubs.Environments(),
+      body: EnvironmentsFixture(),
     });
     MockApiClient.addMockResponse({
       url: `/projects/org-slug/project-slug/?expand=hasAlertIntegration`,
@@ -70,6 +73,17 @@ describe('ProjectAlertsCreate', function () {
       method: 'POST',
       body: [],
     });
+    MockApiClient.addMockResponse({
+      url: `/organizations/org-slug/integrations/?integrationType=messaging`,
+      body: [],
+    });
+    const providerKeys = ['slack', 'discord', 'msteams'];
+    providerKeys.forEach(providerKey => {
+      MockApiClient.addMockResponse({
+        url: `/organizations/org-slug/config/integrations/?provider_key=${providerKey}`,
+        body: {providers: [GitHubIntegrationProviderFixture({key: providerKey})]},
+      });
+    });
   });
 
   afterEach(function () {
@@ -78,25 +92,25 @@ describe('ProjectAlertsCreate', function () {
   });
 
   const createWrapper = (props = {}, location = {}) => {
-    const {organization, project, router, routerContext} = initializeOrg(props);
+    const {organization, project, router} = initializeOrg(props);
     ProjectsStore.loadInitialData([project]);
     const params = {orgId: organization.slug, projectId: project.slug};
     const wrapper = render(
       <AlertsContainer>
         <AlertBuilderProjectProvider
-          {...TestStubs.routeComponentProps()}
+          {...RouteComponentPropsFixture()}
           params={params}
           organization={organization}
           hasMetricAlerts={false}
         >
           <ProjectAlertsCreate
-            {...TestStubs.routeComponentProps()}
+            {...RouteComponentPropsFixture()}
             hasMetricAlerts={false}
             members={[]}
             params={params}
             organization={organization}
             project={project}
-            location={TestStubs.location({
+            location={LocationFixture({
               pathname: `/organizations/org-slug/alerts/rules/${project.slug}/new/`,
               query: {createFromWizard: 'true'},
               ...location,
@@ -105,7 +119,7 @@ describe('ProjectAlertsCreate', function () {
           />
         </AlertBuilderProjectProvider>
       </AlertsContainer>,
-      {organization, context: routerContext}
+      {organization, router}
     );
 
     return {
@@ -122,7 +136,7 @@ describe('ProjectAlertsCreate', function () {
     await waitFor(() => {
       expect(wrapper.router.replace).toHaveBeenCalledWith(
         expect.objectContaining({
-          pathname: '/organizations/org-slug/alerts/new/metric',
+          pathname: '/organizations/org-slug/alerts/new/metric/',
           query: {
             aggregate: 'count()',
             dataset: 'events',
@@ -148,7 +162,7 @@ describe('ProjectAlertsCreate', function () {
       const mock = MockApiClient.addMockResponse({
         url: '/projects/org-slug/project-slug/rules/',
         method: 'POST',
-        body: ProjectAlertRule(),
+        body: ProjectAlertRuleFixture(),
       });
 
       // Change name of alert rule
@@ -159,7 +173,7 @@ describe('ProjectAlertsCreate', function () {
         'The issue is older or newer than...',
       ]);
 
-      await userEvent.click(screen.getAllByLabelText('Delete Node')[1]);
+      await userEvent.click(screen.getAllByLabelText('Delete Node')[1]!);
 
       await userEvent.click(screen.getByText('Save Rule'));
 
@@ -191,10 +205,10 @@ describe('ProjectAlertsCreate', function () {
       const mock = MockApiClient.addMockResponse({
         url: '/projects/org-slug/project-slug/rules/',
         method: 'POST',
-        body: ProjectAlertRule(),
+        body: ProjectAlertRuleFixture(),
       });
       // delete node
-      await userEvent.click(screen.getByLabelText('Delete Node'));
+      await userEvent.click(screen.getAllByLabelText('Delete Node')[0]!);
 
       // Change name of alert rule
       await userEvent.type(screen.getByPlaceholderText('Enter Alert Name'), 'myname');
@@ -208,6 +222,15 @@ describe('ProjectAlertsCreate', function () {
 
       await waitFor(() => {
         expect(trackAnalytics).toHaveBeenCalledWith('edit_alert_rule.add_row', {
+          name: 'sentry.rules.conditions.first_seen_event.FirstSeenEventCondition',
+          organization,
+          project_id: '2',
+          type: 'conditions',
+        });
+      });
+
+      await waitFor(() => {
+        expect(trackAnalytics).toHaveBeenCalledWith('edit_alert_rule.delete_row', {
           name: 'sentry.rules.conditions.first_seen_event.FirstSeenEventCondition',
           organization,
           project_id: '2',
@@ -241,7 +264,7 @@ describe('ProjectAlertsCreate', function () {
       const mock = MockApiClient.addMockResponse({
         url: '/projects/org-slug/project-slug/rules/',
         method: 'POST',
-        body: ProjectAlertRule(),
+        body: ProjectAlertRuleFixture(),
       });
 
       // Change name of alert rule
@@ -252,7 +275,7 @@ describe('ProjectAlertsCreate', function () {
         'Send a notification to all legacy integrations',
       ]);
 
-      await userEvent.click(screen.getAllByLabelText('Delete Node')[1]);
+      await userEvent.click(screen.getAllByLabelText('Delete Node')[1]!);
 
       await userEvent.click(screen.getByText('Save Rule'));
 
@@ -280,13 +303,13 @@ describe('ProjectAlertsCreate', function () {
     });
 
     describe('updates and saves', function () {
-      let mock;
+      let mock: any;
 
       beforeEach(function () {
         mock = MockApiClient.addMockResponse({
           url: '/projects/org-slug/project-slug/rules/',
           method: 'POST',
-          body: ProjectAlertRule(),
+          body: ProjectAlertRuleFixture(),
         });
       });
 
@@ -334,12 +357,12 @@ describe('ProjectAlertsCreate', function () {
             },
           })
         );
-        expect(metric.startTransaction).toHaveBeenCalledWith({name: 'saveAlertRule'});
+        expect(metric.startSpan).toHaveBeenCalledWith({name: 'saveAlertRule'});
 
         await waitFor(() => {
-          expect(wrapper.router.push).toHaveBeenCalledWith({
-            pathname: '/organizations/org-slug/alerts/rules/project-slug/1/details/',
-          });
+          expect(wrapper.router.push).toHaveBeenCalledWith(
+            '/organizations/org-slug/alerts/rules/project-slug/1/details/'
+          );
         });
       });
 
@@ -389,12 +412,12 @@ describe('ProjectAlertsCreate', function () {
             },
           })
         );
-        expect(metric.startTransaction).toHaveBeenCalledWith({name: 'saveAlertRule'});
+        expect(metric.startSpan).toHaveBeenCalledWith({name: 'saveAlertRule'});
 
         await waitFor(() => {
-          expect(wrapper.router.push).toHaveBeenCalledWith({
-            pathname: '/organizations/org-slug/alerts/rules/project-slug/1/details/',
-          });
+          expect(wrapper.router.push).toHaveBeenCalledWith(
+            '/organizations/org-slug/alerts/rules/project-slug/1/details/'
+          );
         });
       });
 
@@ -405,7 +428,7 @@ describe('ProjectAlertsCreate', function () {
         await userEvent.click(screen.getByPlaceholderText('Enter Alert Name'));
         await userEvent.paste('myname');
         // delete one condition
-        await userEvent.click(screen.getAllByLabelText('Delete Node')[0]);
+        await userEvent.click(screen.getAllByLabelText('Delete Node')[0]!);
 
         // Add a new filter
         await selectEvent.select(screen.getByText('Add optional filter...'), [
@@ -438,12 +461,12 @@ describe('ProjectAlertsCreate', function () {
             },
           })
         );
-        expect(metric.startTransaction).toHaveBeenCalledWith({name: 'saveAlertRule'});
+        expect(metric.startSpan).toHaveBeenCalledWith({name: 'saveAlertRule'});
 
         await waitFor(() => {
-          expect(wrapper.router.push).toHaveBeenCalledWith({
-            pathname: '/organizations/org-slug/alerts/rules/project-slug/1/details/',
-          });
+          expect(wrapper.router.push).toHaveBeenCalledWith(
+            '/organizations/org-slug/alerts/rules/project-slug/1/details/'
+          );
         });
       });
 
@@ -455,7 +478,7 @@ describe('ProjectAlertsCreate', function () {
 
         // Add a new action
         await selectEvent.select(screen.getByText('Add action...'), [
-          'Issue Owners, Team, or Member',
+          'Suggested Assignees, Team, or Member',
         ]);
 
         // Update action interval
@@ -484,12 +507,12 @@ describe('ProjectAlertsCreate', function () {
             },
           })
         );
-        expect(metric.startTransaction).toHaveBeenCalledWith({name: 'saveAlertRule'});
+        expect(metric.startSpan).toHaveBeenCalledWith({name: 'saveAlertRule'});
 
         await waitFor(() => {
-          expect(wrapper.router.push).toHaveBeenCalledWith({
-            pathname: '/organizations/org-slug/alerts/rules/project-slug/1/details/',
-          });
+          expect(wrapper.router.push).toHaveBeenCalledWith(
+            '/organizations/org-slug/alerts/rules/project-slug/1/details/'
+          );
         });
       });
     });
@@ -497,10 +520,10 @@ describe('ProjectAlertsCreate', function () {
 
   describe('test preview chart', () => {
     it('valid preview table', async () => {
-      const groups = Groups();
+      const groups = GroupsFixture();
       const date = new Date();
-      for (let i = 0; i < groups.length; i++) {
-        groups[i].lastTriggered = String(date);
+      for (const group of groups) {
+        group.lastTriggered = String(date);
       }
       const mock = MockApiClient.addMockResponse({
         url: '/projects/org-slug/project-slug/rules/preview/',
@@ -549,8 +572,8 @@ describe('ProjectAlertsCreate', function () {
         statusCode: 400,
       });
       createWrapper();
-      // delete existion condition
-      await userEvent.click(screen.getAllByLabelText('Delete Node')[0]);
+      // delete existion conditions
+      await userEvent.click(screen.getAllByLabelText('Delete Node')[0]!);
 
       await waitFor(() => {
         expect(mock).toHaveBeenCalled();
@@ -563,7 +586,7 @@ describe('ProjectAlertsCreate', function () {
         'A new issue is created',
       ]);
       expect(
-        screen.getByText('Preview is not supported for these conditions')
+        await screen.findByText('Preview is not supported for these conditions')
       ).toBeInTheDocument();
     });
 
@@ -593,6 +616,12 @@ describe('ProjectAlertsCreate', function () {
 
     it('shows error for incompatible conditions', async () => {
       createWrapper();
+      await userEvent.click(screen.getAllByLabelText('Delete Node')[0]!);
+
+      await selectEvent.select(screen.getByText('Add optional trigger...'), [
+        'A new issue is created',
+      ]);
+
       const anyDropdown = screen.getByText('any');
       expect(anyDropdown).toBeInTheDocument();
       await selectEvent.select(anyDropdown, ['all']);
@@ -607,12 +636,18 @@ describe('ProjectAlertsCreate', function () {
         'true'
       );
 
-      await userEvent.click(screen.getAllByLabelText('Delete Node')[0]);
+      await userEvent.click(screen.getAllByLabelText('Delete Node')[0]!);
       expect(screen.queryByText(errorText)).not.toBeInTheDocument();
     });
 
     it('test any filterMatch', async () => {
       createWrapper();
+      await userEvent.click(screen.getAllByLabelText('Delete Node')[0]!);
+
+      await selectEvent.select(screen.getByText('Add optional trigger...'), [
+        'A new issue is created',
+      ]);
+
       const allDropdown = screen.getByText('all');
       await selectEvent.select(allDropdown, ['any']);
       await selectEvent.select(screen.getByText('Add optional filter...'), [
@@ -628,7 +663,7 @@ describe('ProjectAlertsCreate', function () {
 
       expect(screen.getByText(errorText)).toBeInTheDocument();
 
-      await userEvent.click(screen.getAllByLabelText('Delete Node')[1]);
+      await userEvent.click(screen.getAllByLabelText('Delete Node')[1]!);
       await userEvent.clear(screen.getByDisplayValue('10'));
       await userEvent.click(document.body);
 
@@ -638,7 +673,7 @@ describe('ProjectAlertsCreate', function () {
 
   it('shows archived to escalating instead of ignored to unresolved', async () => {
     createWrapper({
-      organization: Organization({features: ['escalating-issues']}),
+      organization: OrganizationFixture(),
     });
     await selectEvent.select(screen.getByText('Add optional trigger...'), [
       'The issue changes state from archived to escalating',
@@ -653,14 +688,13 @@ describe('ProjectAlertsCreate', function () {
     const mock = MockApiClient.addMockResponse({
       url: '/projects/org-slug/project-slug/rules/',
       method: 'POST',
-      body: ProjectAlertRule(),
+      body: ProjectAlertRuleFixture(),
     });
-
-    createWrapper({organization: {features: ['noisy-alert-warning']}});
-    await userEvent.click((await screen.findAllByLabelText('Delete Node'))[0]);
+    createWrapper();
+    await userEvent.click((await screen.findAllByLabelText('Delete Node'))[0]!);
 
     await selectEvent.select(screen.getByText('Add action...'), [
-      'Issue Owners, Team, or Member',
+      'Suggested Assignees, Team, or Member',
     ]);
 
     expect(
@@ -688,8 +722,8 @@ describe('ProjectAlertsCreate', function () {
   });
 
   it('does not display noisy alert banner for legacy integrations', async function () {
-    createWrapper({organization: {features: ['noisy-alert-warning']}});
-    await userEvent.click((await screen.findAllByLabelText('Delete Node'))[0]);
+    createWrapper();
+    await userEvent.click((await screen.findAllByLabelText('Delete Node'))[0]!);
 
     await selectEvent.select(screen.getByText('Add action...'), [
       'Send a notification to all legacy integrations',
@@ -700,7 +734,7 @@ describe('ProjectAlertsCreate', function () {
     ).not.toBeInTheDocument();
 
     await selectEvent.select(screen.getByText('Add action...'), [
-      'Issue Owners, Team, or Member',
+      'Suggested Assignees, Team, or Member',
     ]);
 
     expect(

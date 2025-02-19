@@ -1,5 +1,5 @@
 import {t} from 'sentry/locale';
-import RequestError from 'sentry/utils/requestError/requestError';
+import type RequestError from 'sentry/utils/requestError/requestError';
 
 type TrustedRelaysResponseError = {
   message: string;
@@ -15,7 +15,7 @@ type TrustedRelaysResponseError = {
 
 interface TrustedRelaysRequestError extends RequestError {
   responseJSON?: {
-    trustedRelays: Array<string>;
+    trustedRelays: string[];
   };
 }
 

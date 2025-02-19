@@ -1,20 +1,26 @@
-import {ReactNode} from 'react';
+import {Fragment, type ReactNode} from 'react';
 import styled from '@emotion/styled';
 
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
+import FeedbackWidgetButton from 'sentry/components/feedback/widget/feedbackWidgetButton';
 import UserBadge from 'sentry/components/idBadge/userBadge';
 import FullViewport from 'sentry/components/layouts/fullViewport';
 import * as Layout from 'sentry/components/layouts/thirds';
-import DeleteButton from 'sentry/components/replays/header/deleteButton';
+import Placeholder from 'sentry/components/placeholder';
+import ConfigureMobileReplayCard from 'sentry/components/replays/configureMobileReplayCard';
+import ConfigureReplayCard from 'sentry/components/replays/configureReplayCard';
 import DetailsPageBreadcrumbs from 'sentry/components/replays/header/detailsPageBreadcrumbs';
 import FeedbackButton from 'sentry/components/replays/header/feedbackButton';
-import HeaderPlaceholder from 'sentry/components/replays/header/headerPlaceholder';
 import ReplayMetaData from 'sentry/components/replays/header/replayMetaData';
-import ShareButton from 'sentry/components/replays/shareButton';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import TimeSince from 'sentry/components/timeSince';
-import {IconCalendar} from 'sentry/icons';
+import {IconCalendar, IconDelete, IconEllipsis, IconUpload} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
+import {defined} from 'sentry/utils';
+import useDeleteReplay from 'sentry/utils/replays/hooks/useDeleteReplay';
+import useShareReplayAtTimestamp from 'sentry/utils/replays/hooks/useShareReplayAtTimestamp';
 import type {ReplayError, ReplayRecord} from 'sentry/views/replays/types';
 
 type Props = {
@@ -23,36 +29,103 @@ type Props = {
   projectSlug: string | null;
   replayErrors: ReplayError[];
   replayRecord: undefined | ReplayRecord;
+  isLoading?: boolean;
+  isVideoReplay?: boolean;
 };
 
-function Page({children, orgSlug, replayRecord, projectSlug, replayErrors}: Props) {
+export default function Page({
+  children,
+  orgSlug,
+  replayRecord,
+  projectSlug,
+  replayErrors,
+  isVideoReplay,
+  isLoading,
+}: Props) {
   const title = replayRecord
-    ? `${replayRecord.id} — Session Replay — ${orgSlug}`
+    ? `${replayRecord.user.display_name ?? t('Anonymous User')} — Session Replay — ${orgSlug}`
     : `Session Replay — ${orgSlug}`;
+
+  const onShareReplay = useShareReplayAtTimestamp();
+  const onDeleteReplay = useDeleteReplay({replayId: replayRecord?.id, projectSlug});
+
+  const dropdownItems: MenuItemProps[] = [
+    {
+      key: 'share',
+      label: (
+        <ItemSpacer>
+          <IconUpload size="sm" />
+          {t('Share')}
+        </ItemSpacer>
+      ),
+      onAction: onShareReplay,
+    },
+    replayRecord?.id && projectSlug
+      ? {
+          key: 'delete',
+          label: (
+            <ItemSpacer>
+              <IconDelete size="sm" />
+              {t('Delete')}
+            </ItemSpacer>
+          ),
+          onAction: onDeleteReplay,
+        }
+      : null,
+  ].filter(defined);
 
   const header = replayRecord?.is_archived ? (
     <Header>
-      <DetailsPageBreadcrumbs orgSlug={orgSlug} replayRecord={replayRecord} />
+      <DetailsPageBreadcrumbs replayRecord={replayRecord} />
     </Header>
   ) : (
     <Header>
-      <DetailsPageBreadcrumbs orgSlug={orgSlug} replayRecord={replayRecord} />
+      <DetailsPageBreadcrumbs replayRecord={replayRecord} />
 
       <ButtonActionsWrapper>
-        <ShareButton />
-        <FeedbackButton />
-        {replayRecord?.id && projectSlug && (
-          <DeleteButton replayId={replayRecord.id} projectSlug={projectSlug} />
+        {isLoading ? (
+          <Placeholder height="33px" width="203px" />
+        ) : (
+          <Fragment>
+            {isVideoReplay ? <FeedbackWidgetButton /> : <FeedbackButton />}
+            {isVideoReplay ? (
+              <ConfigureMobileReplayCard replayRecord={replayRecord} />
+            ) : (
+              <ConfigureReplayCard />
+            )}
+          </Fragment>
         )}
+
+        <DropdownMenu
+          position="bottom-end"
+          triggerProps={{
+            showChevron: false,
+            icon: <IconEllipsis color="subText" />,
+          }}
+          size="sm"
+          items={dropdownItems}
+        />
       </ButtonActionsWrapper>
 
       {replayRecord ? (
         <UserBadge
-          avatarSize={32}
+          avatarSize={24}
           displayName={
-            <Layout.Title>
-              {replayRecord.user.display_name || t('Anonymous User')}
-            </Layout.Title>
+            <DisplayHeader>
+              <Layout.Title>
+                {replayRecord.user.display_name || t('Anonymous User')}
+              </Layout.Title>
+              {replayRecord && (
+                <TimeContainer>
+                  <IconCalendar color="gray300" size="xs" />
+                  <TimeSince
+                    date={replayRecord.started_at}
+                    isTooltipHoverable
+                    unitStyle="regular"
+                  />
+                </TimeContainer>
+              )}
+            </DisplayHeader>
           }
           user={{
             name: replayRecord.user.display_name || '',
@@ -61,25 +134,18 @@ function Page({children, orgSlug, replayRecord, projectSlug, replayErrors}: Prop
             ip_address: replayRecord.user.ip || '',
             id: replayRecord.user.id || '',
           }}
-          // this is the subheading for the avatar, so displayEmail in this case is a misnomer
-          displayEmail={
-            <div>
-              {replayRecord ? (
-                <TimeContainer>
-                  <IconCalendar color="gray300" size="xs" />
-                  <StyledTimeSince date={replayRecord.started_at} unitStyle="regular" />
-                </TimeContainer>
-              ) : (
-                <HeaderPlaceholder width="80px" height="16px" />
-              )}
-            </div>
-          }
+          hideEmail
         />
       ) : (
-        <HeaderPlaceholder width="100%" height="58px" />
+        <Placeholder width="30%" height="45px" />
       )}
 
-      <ReplayMetaData replayRecord={replayRecord} replayErrors={replayErrors} />
+      <ReplayMetaData
+        replayRecord={replayRecord}
+        replayErrors={replayErrors}
+        showDeadRageClicks={!isVideoReplay}
+        isLoading={isLoading}
+      />
     </Header>
   );
 
@@ -112,14 +178,22 @@ const ButtonActionsWrapper = styled(Layout.HeaderActions)`
   }
 `;
 
-const TimeContainer = styled('div')`
+const ItemSpacer = styled('div')`
   display: flex;
-  gap: ${space(0.5)};
+  gap: ${space(1)};
   align-items: center;
 `;
 
-const StyledTimeSince = styled(TimeSince)`
+const TimeContainer = styled('div')`
+  display: flex;
+  gap: ${space(1)};
+  align-items: center;
+  color: ${p => p.theme.gray300};
   font-size: ${p => p.theme.fontSizeMedium};
+  line-height: 1.4;
 `;
 
-export default Page;
+const DisplayHeader = styled('div')`
+  display: flex;
+  flex-direction: column;
+`;

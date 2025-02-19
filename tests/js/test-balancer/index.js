@@ -1,7 +1,7 @@
-/* eslint-env node */
-/* eslint import/no-nodejs-modules:0 */
-const fs = require('fs');
-const path = require('path');
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
 
 module.exports = results => {
   if (!results.success) {

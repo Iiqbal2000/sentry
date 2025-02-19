@@ -1,11 +1,12 @@
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
+import {mobile} from 'sentry/data/platformCategories';
 import {t} from 'sentry/locale';
-import {PageFilters} from 'sentry/types';
+import type {PageFilters} from 'sentry/types/core';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
 import {useApiQuery} from 'sentry/utils/queryClient';
 import useOrganization from 'sentry/utils/useOrganization';
 import usePageFilters from 'sentry/utils/usePageFilters';
-import {ProfilingFieldType} from 'sentry/views/profiling/profileSummary/content';
 
 import type {EventsResults, Sort} from './types';
 
@@ -17,7 +18,7 @@ export interface UseProfileEventsOptions<F extends string = ProfilingFieldType> 
   datetime?: PageFilters['datetime'];
   enabled?: boolean;
   limit?: number;
-  projects?: (number | string)[];
+  projects?: Array<number | string>;
   query?: string;
   refetchOnMount?: boolean;
 }
@@ -37,16 +38,12 @@ export function useProfileEvents<F extends string>({
   const organization = useOrganization();
   const {selection} = usePageFilters();
 
-  let dataset: 'profiles' | 'discover' = 'profiles';
-  if (organization.features.includes('profiling-using-transactions')) {
-    dataset = 'discover';
-    query = `has:profile.id ${query ?? ''}`;
-  }
+  query = `(has:profile.id OR (has:profiler.id has:thread.id)) ${query ? `(${query})` : ''}`;
 
   const path = `/organizations/${organization.slug}/events/`;
   const endpointOptions = {
     query: {
-      dataset,
+      dataset: 'discover',
       referrer,
       project: projects || selection.projects,
       environment: selection.environments,
@@ -85,3 +82,50 @@ export function formatError(error: any): string | null {
 
   return t('An unknown error occurred.');
 }
+
+export type ProfilingFieldType =
+  | 'id'
+  | 'trace'
+  | 'profile.id'
+  | 'profiler.id'
+  | 'thread.id'
+  | 'precise.start_ts'
+  | 'precise.finish_ts'
+  | 'project.name'
+  | 'timestamp'
+  | 'release'
+  | 'device.model'
+  | 'device.classification'
+  | 'device.arch'
+  | 'transaction.duration'
+  | 'p50()'
+  | 'p75()'
+  | 'p95()'
+  | 'p99()'
+  | 'count()'
+  | 'last_seen()';
+
+export function getProfilesTableFields(platform: Project['platform']) {
+  if (mobile.includes(platform as any)) {
+    return MOBILE_FIELDS;
+  }
+
+  return DEFAULT_FIELDS;
+}
+
+const MOBILE_FIELDS: ProfilingFieldType[] = [
+  'profile.id',
+  'timestamp',
+  'release',
+  'device.model',
+  'device.classification',
+  'device.arch',
+  'transaction.duration',
+];
+
+const DEFAULT_FIELDS: ProfilingFieldType[] = [
+  'profile.id',
+  'timestamp',
+  'release',
+  'transaction.duration',
+];

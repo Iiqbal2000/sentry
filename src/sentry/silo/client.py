@@ -1,37 +1,97 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+import ipaddress
+import socket
+from collections.abc import Mapping
+from hashlib import sha256
+from typing import Any
 
-from django.conf import settings
+import sentry_sdk
+import urllib3
+from django.core.cache import cache
 from django.http import HttpResponse
 from django.http.request import HttpRequest
+from django.utils.encoding import force_str
 from requests import Request
+from requests.adapters import Retry
 
-from sentry.shared_integrations.client.base import BaseApiClient, BaseApiResponseX
+from sentry import options
+from sentry.http import build_session
+from sentry.net.http import SafeSession
+from sentry.shared_integrations.client.base import BaseApiClient
 from sentry.silo.base import SiloMode
 from sentry.silo.util import (
     PROXY_DIRECT_LOCATION_HEADER,
     clean_outbound_headers,
     clean_proxy_headers,
 )
-from sentry.types.region import Region, get_region_by_name
+from sentry.types.region import (
+    Region,
+    RegionResolutionError,
+    find_all_region_addresses,
+    get_region_by_name,
+)
+
+REQUEST_ATTEMPTS_LIMIT = 10
+CACHE_TIMEOUT = 43200  # 12 hours = 60 * 60 * 12 seconds
 
 
 class SiloClientError(Exception):
     """Indicates an error in processing a cross-silo HTTP request"""
 
 
-class BaseSiloClient(BaseApiClient):
+def get_region_ip_addresses() -> frozenset[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """
+    Infers the Region Silo IP addresses from the SENTRY_REGION_CONFIG setting.
+    """
+    region_ip_addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+
+    for address in find_all_region_addresses():
+        url = urllib3.util.parse_url(address)
+        if url.host:
+            # This is an IPv4 address.
+            # In the future we can consider adding IPv4/v6 dual stack support if and when we start using IPv6 addresses.
+            ip = socket.gethostbyname(url.host)
+            region_ip_addresses.add(ipaddress.ip_address(force_str(ip, strings_only=True)))
+        else:
+            sentry_sdk.capture_exception(
+                RegionResolutionError(f"Unable to parse url to host for: {address}")
+            )
+
+    return frozenset(region_ip_addresses)
+
+
+def validate_region_ip_address(ip: str) -> bool:
+    """
+    Checks if the provided IP address is a Region Silo IP address.
+    """
+    allowed_region_ip_addresses = get_region_ip_addresses()
+    if not allowed_region_ip_addresses:
+        sentry_sdk.capture_exception(
+            RegionResolutionError(f"allowed_region_ip_addresses is empty for: {ip}")
+        )
+        return False
+
+    ip_address = ipaddress.ip_address(force_str(ip, strings_only=True))
+    result = ip_address in allowed_region_ip_addresses
+
+    if not result:
+        sentry_sdk.capture_exception(
+            RegionResolutionError(f"Disallowed Region Silo IP address: {ip}")
+        )
+    return result
+
+
+class RegionSiloClient(BaseApiClient):
     integration_type = "silo_client"
 
-    @property
-    def access_modes(self) -> Iterable[SiloMode]:
-        """
-        Limit access to the client to only the SiloModes set here.
-        """
-        raise NotImplementedError
+    access_modes = [SiloMode.CONTROL]
 
-    def __init__(self) -> None:
+    metrics_prefix = "silo_client.region"
+    log_path = "sentry.silo.client.region"
+    silo_client_name = "region"
+
+    def __init__(self, region: Region, retry: bool = False) -> None:
         super().__init__()
         if SiloMode.get_current_mode() not in self.access_modes:
             access_mode_str = ", ".join(str(m) for m in self.access_modes)
@@ -39,6 +99,14 @@ class BaseSiloClient(BaseApiClient):
                 f"Cannot invoke {self.__class__.__name__} from {SiloMode.get_current_mode()}. "
                 f"Only available in: {access_mode_str}"
             )
+
+        if not isinstance(region, Region):
+            raise SiloClientError(f"Invalid region provided. Received {type(region)} type instead.")
+
+        # Ensure the region is registered
+        self.region = get_region_by_name(region.name)
+        self.base_url = self.region.address
+        self.retry = retry
 
     def proxy_request(self, incoming_request: HttpRequest) -> HttpResponse:
         """
@@ -85,16 +153,18 @@ class BaseSiloClient(BaseApiClient):
         params: Mapping[str, Any] | None = None,
         json: bool = True,
         raw_response: bool = False,
-    ) -> BaseApiResponseX:
+        prefix_hash: str | None = None,
+    ) -> Any:
         """
-        Use the BaseApiClient interface to send a cross-region request.
-        If the API is protected, auth may have to be provided manually.
+        Sends a request to the region silo.
+        If prefix_hash is provided, the request will be retries up to REQUEST_ATTEMPTS_LIMIT times.
         """
-        # TODO: Establish a scheme to authorize requests across silos
-        # (e.g. signing secrets, JWTs)
-        client_response = super()._request(
-            method,
-            path,
+        if prefix_hash is not None:
+            hash = sha256(f"{prefix_hash}{self.region.name}{method}{path}".encode()).hexdigest()
+            self.check_request_attempts(hash=hash, method=method, path=path)
+        return self._request(
+            method=method,
+            path=path,
             headers=clean_proxy_headers(headers),
             data=data,
             params=params,
@@ -102,40 +172,49 @@ class BaseSiloClient(BaseApiClient):
             allow_text=True,
             raw_response=raw_response,
         )
-        # TODO: Establish a scheme to check/log the Sentry Version of the requestor and server
-        # optionally raising an error to alert developers of version drift
-        return client_response
 
-
-class RegionSiloClient(BaseSiloClient):
-    access_modes = [SiloMode.CONTROL]
-
-    metrics_prefix = "silo_client.region"
-    log_path = "sentry.silo.client.region"
-    silo_client_name = "region"
-
-    def __init__(self, region: Region) -> None:
-        super().__init__()
-        if not isinstance(region, Region):
-            raise SiloClientError(f"Invalid region provided. Received {type(region)} type instead.")
-
-        # Ensure the region is registered
-        self.region = get_region_by_name(region.name)
-        self.base_url = self.region.address
-
-
-class ControlSiloClient(BaseSiloClient):
-    access_modes = [SiloMode.REGION]
-
-    metrics_prefix = "silo_client.control"
-    log_path = "sentry.silo.client.control"
-    silo_client_name = "control"
-
-    def __init__(self) -> None:
-        super().__init__()
-
-        self.base_url = getattr(settings, "SENTRY_CONTROL_ADDRESS")
-        if not self.base_url:
-            raise AttributeError(
-                "Configure 'SENTRY_CONTROL_ADDRESS' in sentry configuration settings to use the ControlSiloClient"
+    def build_session(self) -> SafeSession:
+        """
+        Generates a safe Requests session for the API client to use.
+        This injects a custom is_ipaddress_permitted function to allow only connections to Region Silo IP addresses.
+        """
+        if not self.retry:
+            return build_session(
+                is_ipaddress_permitted=validate_region_ip_address,
             )
+
+        return build_session(
+            is_ipaddress_permitted=validate_region_ip_address,
+            max_retries=Retry(
+                total=options.get("hybridcloud.regionsiloclient.retries"),
+                backoff_factor=0.1,
+                status_forcelist=[503],
+                allowed_methods=["PATCH", "HEAD", "PUT", "GET", "DELETE", "POST"],
+            ),
+        )
+
+    def _get_hash_cache_key(self, hash: str) -> str:
+        return f"region_silo_client:request_attempts:{hash}"
+
+    def check_request_attempts(self, hash: str, method: str, path: str) -> None:
+        cache_key = self._get_hash_cache_key(hash=hash)
+        request_attempts: int | None = cache.get(cache_key)
+
+        if not isinstance(request_attempts, int):
+            request_attempts = 0
+
+        self.logger.info(
+            "silo_client.check_request_attempts",
+            extra={
+                "path": path,
+                "method": method,
+                "request_hash": hash,
+                "request_attempts": request_attempts,
+                "configured_attempt_limit": REQUEST_ATTEMPTS_LIMIT,
+            },
+        )
+        request_attempts += 1
+        cache.set(cache_key, request_attempts, timeout=CACHE_TIMEOUT)
+
+        if request_attempts > REQUEST_ATTEMPTS_LIMIT:
+            raise SiloClientError(f"Request attempts limit reached for: {method} {path}")

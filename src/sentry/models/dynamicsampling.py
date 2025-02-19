@@ -1,22 +1,28 @@
+from __future__ import annotations
+
 import hashlib
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any
 
 from django.db import connections, models, router, transaction
 from django.db.models import Q
 from django.utils import timezone
 
 from sentry.backup.scopes import RelocationScope
-from sentry.db.models import FlexibleForeignKey, Model, region_silo_only_model
-from sentry.utils import json
+from sentry.constants import ObjectStatus
+from sentry.db.models import FlexibleForeignKey, Model, region_silo_model
+from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignKey
+from sentry.utils import json, metrics
 
 if TYPE_CHECKING:
+    from sentry.models.organization import Organization
     from sentry.models.project import Project
-
 
 # max number of custom rules that can be created per organization
 MAX_CUSTOM_RULES = 2000
 CUSTOM_RULE_START = 3000
+MAX_CUSTOM_RULES_PER_PROJECT = 50
 CUSTOM_RULE_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 
@@ -24,8 +30,6 @@ class TooManyRules(ValueError):
     """
     Raised when a there is already the max number of rules active for an organization
     """
-
-    pass
 
 
 def get_rule_hash(condition: Any, project_ids: Sequence[int]) -> str:
@@ -59,7 +63,7 @@ def to_order_independent_string(val: Any) -> str:
     return ret_val
 
 
-@region_silo_only_model
+@region_silo_model
 class CustomDynamicSamplingRuleProject(Model):
     """
     Many-to-many relationship between a custom dynamic sampling rule and a project.
@@ -78,7 +82,7 @@ class CustomDynamicSamplingRuleProject(Model):
         unique_together = (("custom_dynamic_sampling_rule", "project"),)
 
 
-@region_silo_only_model
+@region_silo_model
 class CustomDynamicSamplingRule(Model):
     """
     This represents a custom dynamic sampling rule that is created by the user based
@@ -104,6 +108,10 @@ class CustomDynamicSamplingRule(Model):
     end_date = models.DateTimeField()
     num_samples = models.IntegerField()
     condition_hash = models.CharField(max_length=40)
+    # the raw query field from the request
+    query = models.TextField(null=True)
+    created_by_id = HybridCloudForeignKey("sentry.User", on_delete="CASCADE", null=True, blank=True)
+    notification_sent = models.BooleanField(null=True, blank=True)
 
     @property
     def external_rule_id(self) -> int:
@@ -134,7 +142,7 @@ class CustomDynamicSamplingRule(Model):
         condition: Any,
         organization_id: int,
         project_ids: Sequence[int],
-    ) -> Optional["CustomDynamicSamplingRule"]:
+    ) -> CustomDynamicSamplingRule | None:
         """
         Returns an active rule for the given condition and organization if it exists otherwise None
 
@@ -160,8 +168,10 @@ class CustomDynamicSamplingRule(Model):
         organization_id: int,
         num_samples: int,
         sample_rate: float,
-    ) -> "CustomDynamicSamplingRule":
-
+        query: str,
+        created_by_id: int | None = None,
+    ) -> CustomDynamicSamplingRule:
+        from sentry.models.organization import Organization
         from sentry.models.project import Project
 
         with transaction.atomic(router.db_for_write(CustomDynamicSamplingRule)):
@@ -181,6 +191,13 @@ class CustomDynamicSamplingRule(Model):
                 existing_rule.save()
                 return existing_rule
             else:
+                projects = Project.objects.get_many_from_cache(project_ids)
+                projects = list(projects)
+                organization = Organization.objects.get_from_cache(id=organization_id)
+
+                if CustomDynamicSamplingRule.per_project_limit_reached(projects, organization):
+                    raise TooManyRules()
+
                 # create a new rule
                 rule_hash = get_rule_hash(condition, project_ids)
                 is_org_level = len(project_ids) == 0
@@ -195,6 +212,9 @@ class CustomDynamicSamplingRule(Model):
                     condition_hash=rule_hash,
                     is_active=True,
                     is_org_level=is_org_level,
+                    query=query,
+                    notification_sent=False,
+                    created_by_id=created_by_id,
                 )
 
                 rule.save()
@@ -206,9 +226,10 @@ class CustomDynamicSamplingRule(Model):
                     raise TooManyRules()
 
                 # set the projects if not org level
-                for project_id in project_ids:
-                    project = Project.objects.get_from_cache(id=project_id)
-                    rule.projects.add(project)
+                for project in projects:
+                    CustomDynamicSamplingRuleProject.objects.create(
+                        custom_dynamic_sampling_rule=rule, project=project
+                    )
                 return rule
 
     def assign_rule_id(self) -> int:
@@ -252,8 +273,8 @@ class CustomDynamicSamplingRule(Model):
 
     @staticmethod
     def get_project_rules(
-        project: "Project",
-    ) -> Sequence["CustomDynamicSamplingRule"]:
+        project: Project,
+    ) -> Sequence[CustomDynamicSamplingRule]:
         """
         Returns all active project rules
         """
@@ -265,7 +286,7 @@ class CustomDynamicSamplingRule(Model):
             organization=project.organization,
             end_date__gt=now,
             start_date__lt=now,
-        )
+        )[: MAX_CUSTOM_RULES_PER_PROJECT + 1]
 
         # project rules
         project_rules = CustomDynamicSamplingRule.objects.filter(
@@ -273,6 +294,62 @@ class CustomDynamicSamplingRule(Model):
             projects__in=[project],
             end_date__gt=now,
             start_date__lt=now,
-        )
+        )[: MAX_CUSTOM_RULES_PER_PROJECT + 1]
 
-        return project_rules.union(org_rules)
+        rules = list(project_rules.union(org_rules)[: MAX_CUSTOM_RULES_PER_PROJECT + 1])
+
+        if len(rules) > MAX_CUSTOM_RULES_PER_PROJECT:
+            metrics.incr("dynamic_sampling.custom_rules.overflow")
+
+        return rules[:MAX_CUSTOM_RULES_PER_PROJECT]
+
+    @staticmethod
+    def deactivate_expired_rules():
+        """
+        Deactivates all rules that have expired
+        """
+        CustomDynamicSamplingRule.objects.filter(
+            end_date__lt=timezone.now(), is_active=True
+        ).update(is_active=False)
+
+    @staticmethod
+    def num_active_rules_for_project(project: Project) -> int:
+        """
+        Returns the number of active rules for the given project
+        """
+        now = timezone.now()
+
+        num_org_rules = CustomDynamicSamplingRule.objects.filter(
+            is_active=True,
+            is_org_level=True,
+            organization=project.organization,
+            end_date__gt=now,
+            start_date__lte=now,
+        ).count()
+
+        num_proj_rules = CustomDynamicSamplingRule.objects.filter(
+            is_active=True,
+            is_org_level=False,
+            projects__in=[project],
+            end_date__gt=now,
+            start_date__lte=now,
+        ).count()
+
+        return num_proj_rules + num_org_rules
+
+    @staticmethod
+    def per_project_limit_reached(projects: Sequence[Project], organization: Organization) -> bool:
+        """
+        Returns True if the rule limit is reached for any of the given projects (or all
+        the projects in the organization if org level rule)
+        """
+        projects = list(projects)
+        if len(projects) == 0:
+            # an org rule check all the org projects
+            org_projects = organization.project_set.filter(status=ObjectStatus.ACTIVE)
+            projects = list(org_projects)
+        for project in projects:
+            num_rules = CustomDynamicSamplingRule.num_active_rules_for_project(project)
+            if num_rules >= MAX_CUSTOM_RULES_PER_PROJECT:
+                return True
+        return False

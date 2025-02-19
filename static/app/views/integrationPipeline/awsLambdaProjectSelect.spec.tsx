@@ -1,19 +1,21 @@
-import selectEvent from 'react-select-event';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
+import type {Project} from 'sentry/types/project';
 import AwsLambdaProjectSelect from 'sentry/views/integrationPipeline/awsLambdaProjectSelect';
 
 describe('AwsLambdaProjectSelect', () => {
-  let projects;
-  let windowAssignMock;
+  let projects: Project[];
+  let windowAssignMock: jest.Mock;
 
   beforeEach(() => {
     windowAssignMock = jest.fn();
     window.location.assign = windowAssignMock;
     projects = [
-      TestStubs.Project(),
-      TestStubs.Project({id: '53', name: 'My Proj', slug: 'my-proj'}),
+      ProjectFixture(),
+      ProjectFixture({id: '53', name: 'My Proj', slug: 'my-proj'}),
     ];
   });
 

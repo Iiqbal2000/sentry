@@ -1,9 +1,12 @@
-import {IntegrationType, SentryAppStatus} from 'sentry/types';
+import type {IntegrationType, SentryAppStatus} from 'sentry/types/integrations';
+import type {MessagingIntegrationAnalyticsView} from 'sentry/views/alerts/rules/issue/setupMessagingIntegrationButton';
 
-import {platformEventMap, PlatformEventParameters} from './platformAnalyticsEvents';
+import type {PlatformEventParameters} from './platformAnalyticsEvents';
+import {platformEventMap} from './platformAnalyticsEvents';
 
 export type IntegrationView = {
   view?:
+    | MessagingIntegrationAnalyticsView
     | 'external_install'
     | 'legacy_integrations'
     | 'plugin_details'

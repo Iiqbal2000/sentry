@@ -2,14 +2,14 @@ import {useCallback, useEffect, useMemo, useState} from 'react';
 import uniqBy from 'lodash/uniqBy';
 
 import {fetchUserTeams} from 'sentry/actionCreators/teams';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import OrganizationStore from 'sentry/stores/organizationStore';
 import TeamStore from 'sentry/stores/teamStore';
 import {useLegacyStore} from 'sentry/stores/useLegacyStore';
-import {Team} from 'sentry/types';
+import type {Team} from 'sentry/types/organization';
 import {isActiveSuperuser} from 'sentry/utils/isActiveSuperuser';
 import parseLinkHeader from 'sentry/utils/parseLinkHeader';
-import RequestError from 'sentry/utils/requestError/requestError';
+import type RequestError from 'sentry/utils/requestError/requestError';
 import useApi from 'sentry/utils/useApi';
 
 type State = {
@@ -138,8 +138,8 @@ async function fetchTeams(
   const pageLinks = resp?.getResponseHeader('Link');
   if (pageLinks) {
     const paginationObject = parseLinkHeader(pageLinks);
-    hasMore = paginationObject?.next?.results;
-    nextCursor = paginationObject?.next?.cursor;
+    hasMore = paginationObject?.next?.results ?? null;
+    nextCursor = paginationObject?.next?.cursor ?? null;
   }
 
   return {results: data, hasMore, nextCursor};
@@ -267,7 +267,9 @@ export function useTeams({limit, slugs, provideUserTeams}: Options = {}) {
 
       if (orgId === undefined) {
         // eslint-disable-next-line no-console
-        console.error('Cannot fetch teams without an organization in context');
+        console.error(
+          'Cannot fetch teams without an organization in context and in the Store'
+        );
         return;
       }
 
@@ -365,8 +367,8 @@ export function useTeams({limit, slugs, provideUserTeams}: Options = {}) {
     return slugs
       ? store.teams.filter(t => slugs.includes(t.slug))
       : provideUserTeams && !isSuperuser
-      ? store.teams.filter(t => t.isMember)
-      : store.teams;
+        ? store.teams.filter(t => t.isMember)
+        : store.teams;
   }, [store.teams, slugs, provideUserTeams, isSuperuser]);
 
   const result: Result = {

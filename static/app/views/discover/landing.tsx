@@ -1,13 +1,12 @@
-import {browserHistory, RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 import isEqual from 'lodash/isEqual';
 import pick from 'lodash/pick';
 
 import Feature from 'sentry/components/acl/feature';
-import {Alert} from 'sentry/components/alert';
-import Breadcrumbs from 'sentry/components/breadcrumbs';
-import {Button} from 'sentry/components/button';
+import {Breadcrumbs} from 'sentry/components/breadcrumbs';
+import {LinkButton} from 'sentry/components/button';
 import {CompactSelect} from 'sentry/components/compactSelect';
+import {Alert} from 'sentry/components/core/alert';
 import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import * as Layout from 'sentry/components/layouts/thirds';
 import SearchBar from 'sentry/components/searchBar';
@@ -15,17 +14,22 @@ import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import Switch from 'sentry/components/switchButton';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, SavedQuery, SelectValue} from 'sentry/types';
+import type {SelectValue} from 'sentry/types/core';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {NewQuery, Organization, SavedQuery} from 'sentry/types/organization';
 import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import EventView from 'sentry/utils/discover/eventView';
 import {getDiscoverLandingUrl} from 'sentry/utils/discover/urls';
 import {decodeScalar} from 'sentry/utils/queryString';
 import withOrganization from 'sentry/utils/withOrganization';
+import {makeDiscoverPathname} from 'sentry/views/discover/pathnames';
+import {getSavedQueryWithDataset} from 'sentry/views/discover/savedQuery/utils';
 
 import QueryList from './queryList';
 import {getPrebuiltQueries, setRenderPrebuilt, shouldRenderPrebuilt} from './utils';
 
-const SORT_OPTIONS: SelectValue<string>[] = [
+const SORT_OPTIONS: Array<SelectValue<string>> = [
   {label: t('My Queries'), value: 'myqueries'},
   {label: t('Recently Edited'), value: '-dateUpdated'},
   {label: t('Query Name (A-Z)'), value: 'name'},
@@ -38,7 +42,7 @@ const SORT_OPTIONS: SelectValue<string>[] = [
 
 type Props = {
   organization: Organization;
-} & RouteComponentProps<{}, {}> &
+} & RouteComponentProps &
   DeprecatedAsyncComponent['props'];
 
 type State = {
@@ -95,11 +99,16 @@ class DiscoverLanding extends DeprecatedAsyncComponent<Props, State> {
         const needleSearch = searchQuery.toLowerCase();
 
         const numOfPrebuiltQueries = views.reduce((sum, view) => {
-          const eventView = EventView.fromNewQueryWithLocation(view, location);
+          const newQuery = organization.features.includes(
+            'performance-discover-dataset-selector'
+          )
+            ? (getSavedQueryWithDataset(view) as NewQuery)
+            : view;
+          const eventView = EventView.fromNewQueryWithLocation(newQuery, location);
 
           // if a search is performed on the list of queries, we filter
           // on the pre-built queries
-          if (eventView.name && eventView.name.toLowerCase().includes(needleSearch)) {
+          if (eventView.name?.toLowerCase().includes(needleSearch)) {
             return sum + 1;
           }
 
@@ -116,7 +125,7 @@ class DiscoverLanding extends DeprecatedAsyncComponent<Props, State> {
       cursor,
       query: `version:2 name:"${searchQuery}"`,
       per_page: perPage.toString(),
-      sortBy: this.getActiveSort().value,
+      sortBy: this.getActiveSort()!.value,
     };
     if (!cursor) {
       delete queryParams.cursor;
@@ -200,7 +209,7 @@ class DiscoverLanding extends DeprecatedAsyncComponent<Props, State> {
         </PrebuiltSwitch>
         <CompactSelect
           triggerProps={{prefix: t('Sort By')}}
-          value={activeSort.value}
+          value={activeSort!.value}
           options={SORT_OPTIONS}
           onChange={opt => this.handleSortChange(opt.value)}
           position="bottom-end"
@@ -221,7 +230,9 @@ class DiscoverLanding extends DeprecatedAsyncComponent<Props, State> {
   renderNoAccess() {
     return (
       <Layout.Page withPadding>
-        <Alert type="warning">{t("You don't have access to this feature")}</Alert>
+        <Alert.Container>
+          <Alert type="warning">{t("You don't have access to this feature")}</Alert>
+        </Alert.Container>
       </Layout.Page>
     );
   }
@@ -264,12 +275,15 @@ class DiscoverLanding extends DeprecatedAsyncComponent<Props, State> {
 
   render() {
     const {organization} = this.props;
-    const to = `/organizations/${organization.slug}/discover/homepage/`;
+    const to = makeDiscoverPathname({
+      path: `/homepage/`,
+      organization,
+    });
 
     return (
       <Feature
         organization={organization}
-        features={['discover-query']}
+        features="discover-query"
         renderDisabled={this.renderNoAccess}
       >
         <SentryDocumentTitle title={t('Discover')} orgSlug={organization.slug}>
@@ -277,7 +291,7 @@ class DiscoverLanding extends DeprecatedAsyncComponent<Props, State> {
             <Layout.Header>
               <Layout.HeaderContent>{this.renderBreadcrumbs()}</Layout.HeaderContent>
               <Layout.HeaderActions>
-                <Button
+                <LinkButton
                   data-test-id="build-new-query"
                   to={to}
                   size="sm"
@@ -289,7 +303,7 @@ class DiscoverLanding extends DeprecatedAsyncComponent<Props, State> {
                   }}
                 >
                   {t('Build a new query')}
-                </Button>
+                </LinkButton>
               </Layout.HeaderActions>
             </Layout.Header>
             <Layout.Body>
@@ -309,7 +323,7 @@ const PrebuiltSwitch = styled('label')`
   display: flex;
   align-items: center;
   gap: ${space(1.5)};
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
   margin: 0;
 `;
 

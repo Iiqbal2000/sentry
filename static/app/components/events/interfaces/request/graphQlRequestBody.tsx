@@ -1,18 +1,17 @@
 import {useEffect, useRef} from 'react';
 import styled from '@emotion/styled';
-import isEmpty from 'lodash/isEmpty';
 import omit from 'lodash/omit';
-import uniq from 'lodash/uniq';
 import Prism from 'prismjs';
 
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/core/alert';
 import KeyValueList from 'sentry/components/events/interfaces/keyValueList';
 import List from 'sentry/components/list';
 import {t, tn} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {EntryRequestDataGraphQl, Event} from 'sentry/types';
+import type {EntryRequestDataGraphQl, Event} from 'sentry/types/event';
 import {defined} from 'sentry/utils';
-import {loadPrismLanguage} from 'sentry/utils/loadPrismLanguage';
+import {uniq} from 'sentry/utils/array/uniq';
+import {loadPrismLanguage} from 'sentry/utils/prism';
 
 type GraphQlBodyProps = {data: EntryRequestDataGraphQl['data']; event: Event};
 
@@ -30,7 +29,7 @@ function getGraphQlErrorsFromResponseContext(event: Event): GraphQlError[] {
     typeof responseData === 'object' &&
     'errors' in responseData &&
     Array.isArray(responseData.errors) &&
-    responseData.errors.every(error => typeof error === 'object')
+    responseData.errors.every((error: any) => typeof error === 'object')
   ) {
     return responseData.errors;
   }
@@ -51,7 +50,7 @@ function getErrorLineNumbers(errors: GraphQlError[]): number[] {
 function formatErrorAlertMessage(error: GraphQlError) {
   const {locations, message} = error;
 
-  if (!locations || isEmpty(locations)) {
+  if (!locations || locations.length === 0) {
     return message;
   }
 
@@ -64,30 +63,34 @@ function formatErrorAlertMessage(error: GraphQlError) {
 }
 
 function ErrorsAlert({errors}: {errors: GraphQlError[]}) {
-  const errorsWithMessage = errors.filter(error => !isEmpty(error.message));
+  const errorsWithMessage = errors.filter(
+    error => error.message && error.message.length > 0
+  );
 
-  if (isEmpty(errorsWithMessage)) {
+  if (errorsWithMessage.length === 0) {
     return null;
   }
 
   return (
-    <StyledAlert
-      type="error"
-      showIcon
-      expand={
-        <List symbol="bullet">
-          {errorsWithMessage.map((error, i) => (
-            <li key={i}>{formatErrorAlertMessage(error)}</li>
-          ))}
-        </List>
-      }
-    >
-      {tn(
-        'There was %s GraphQL error raised during this request.',
-        'There were %s errors raised during this request.',
-        errorsWithMessage.length
-      )}
-    </StyledAlert>
+    <Alert.Container>
+      <StyledAlert
+        type="error"
+        showIcon
+        expand={
+          <List symbol="bullet">
+            {errorsWithMessage.map((error, i) => (
+              <li key={i}>{formatErrorAlertMessage(error)}</li>
+            ))}
+          </List>
+        }
+      >
+        {tn(
+          'There was %s GraphQL error raised during this request.',
+          'There were %s errors raised during this request.',
+          errorsWithMessage.length
+        )}
+      </StyledAlert>
+    </Alert.Container>
   );
 }
 
@@ -96,6 +99,7 @@ export function GraphQlRequestBody({data, event}: GraphQlBodyProps) {
 
   // https://prismjs.com/plugins/line-highlight/
   useEffect(() => {
+    // @ts-expect-error TS(7016): Could not find a declaration file for module 'pris... Remove this comment to see the full error message
     import('prismjs/plugins/line-highlight/prism-line-highlight');
   }, []);
 
@@ -128,7 +132,7 @@ export function GraphQlRequestBody({data, event}: GraphQlBodyProps) {
         data={Object.entries(omit(data, 'query')).map(([key, value]) => ({
           key,
           subject: key,
-          value,
+          value: value as React.ReactNode,
         }))}
         isContextData
       />

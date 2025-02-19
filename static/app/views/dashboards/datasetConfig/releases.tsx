@@ -1,30 +1,37 @@
 import omit from 'lodash/omit';
 import trimStart from 'lodash/trimStart';
 
-import {doMetricsRequest} from 'sentry/actionCreators/metrics';
+import {doReleaseHealthRequest} from 'sentry/actionCreators/metrics';
 import {doSessionsRequest} from 'sentry/actionCreators/sessions';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import {t} from 'sentry/locale';
-import {
-  MetricsApiResponse,
-  Organization,
-  PageFilters,
-  SelectValue,
-  SessionApiResponse,
-  SessionField,
-  SessionsMeta,
-} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {PageFilters, SelectValue} from 'sentry/types/core';
+import type {Series} from 'sentry/types/echarts';
+import type {Organization, SessionApiResponse} from 'sentry/types/organization';
+import type {SessionsMeta} from 'sentry/types/sessions';
+import {SessionField} from 'sentry/types/sessions';
 import {defined} from 'sentry/utils';
-import {statsPeriodToDays} from 'sentry/utils/dates';
-import {TableData} from 'sentry/utils/discover/discoverQuery';
+import type {TableData} from 'sentry/utils/discover/discoverQuery';
 import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
-import {QueryFieldValue} from 'sentry/utils/discover/fields';
-import {FieldValueOption} from 'sentry/views/discover/table/queryField';
-import {FieldValue, FieldValueKind} from 'sentry/views/discover/table/types';
+import type {
+  AggregationKeyWithAlias,
+  QueryFieldValue,
+} from 'sentry/utils/discover/fields';
+import {statsPeriodToDays} from 'sentry/utils/duration/statsPeriodToDays';
+import type {OnDemandControlContext} from 'sentry/utils/performance/contexts/onDemandControl';
+import type {FieldValueOption} from 'sentry/views/discover/table/queryField';
+import type {FieldValue} from 'sentry/views/discover/table/types';
+import {FieldValueKind} from 'sentry/views/discover/table/types';
 
-import {DisplayType, Widget, WidgetQuery} from '../types';
+import type {Widget, WidgetQuery} from '../types';
+import {DisplayType} from '../types';
 import {getWidgetInterval} from '../utils';
+import {getSeriesName} from '../utils/transformSessionsResponseToSeries';
+import {
+  changeObjectValuesToTypes,
+  getDerivedMetrics,
+  mapDerivedMetricsToFields,
+} from '../utils/transformSessionsResponseToTable';
 import {ReleaseSearchBar} from '../widgetBuilder/buildSteps/filterResultsStep/releaseSearchBar';
 import {
   DERIVED_STATUS_METRICS_PATTERN,
@@ -41,14 +48,9 @@ import {
   requiresCustomReleaseSorting,
   resolveDerivedStatusFields,
 } from '../widgetCard/releaseWidgetQueries';
-import {getSeriesName} from '../widgetCard/transformSessionsResponseToSeries';
-import {
-  changeObjectValuesToTypes,
-  getDerivedMetrics,
-  mapDerivedMetricsToFields,
-} from '../widgetCard/transformSessionsResponseToTable';
 
-import {DatasetConfig, handleOrderByReset} from './base';
+import type {DatasetConfig} from './base';
+import {handleOrderByReset} from './base';
 
 const DEFAULT_WIDGET_QUERY: WidgetQuery = {
   name: '',
@@ -60,20 +62,30 @@ const DEFAULT_WIDGET_QUERY: WidgetQuery = {
   orderby: `-crash_free_rate(${SessionField.SESSION})`,
 };
 
+const DEFAULT_FIELD: QueryFieldValue = {
+  function: [
+    'crash_free_rate' as AggregationKeyWithAlias,
+    SessionField.SESSION,
+    undefined,
+    undefined,
+  ],
+  kind: FieldValueKind.FUNCTION,
+};
+
 const METRICS_BACKED_SESSIONS_START_DATE = new Date('2022-07-12');
 
-export const ReleasesConfig: DatasetConfig<
-  SessionApiResponse | MetricsApiResponse,
-  SessionApiResponse | MetricsApiResponse
-> = {
+export const ReleasesConfig: DatasetConfig<SessionApiResponse, SessionApiResponse> = {
+  defaultField: DEFAULT_FIELD,
   defaultWidgetQuery: DEFAULT_WIDGET_QUERY,
   enableEquations: false,
   disableSortOptions,
   getTableRequest: (
     api: Client,
+    _: Widget,
     query: WidgetQuery,
     organization: Organization,
     pageFilters: PageFilters,
+    __?: OnDemandControlContext,
     limit?: number,
     cursor?: string
   ) =>
@@ -133,7 +145,7 @@ function disableSortOptions(widgetQuery: WidgetQuery) {
 
 function getTableSortOptions(_organization: Organization, widgetQuery: WidgetQuery) {
   const {columns, aggregates} = widgetQuery;
-  const options: SelectValue<string>[] = [];
+  const options: Array<SelectValue<string>> = [];
   [...aggregates, ...columns]
     .filter(field => !!field)
     .filter(field => !DISABLED_SORT.includes(field))
@@ -188,7 +200,7 @@ function getReleasesSeriesRequest(
   organization: Organization,
   pageFilters: PageFilters
 ) {
-  const query = widget.queries[queryIndex];
+  const query = widget.queries[queryIndex]!;
   const {displayType, limit} = widget;
 
   const {datetime} = pageFilters;
@@ -201,8 +213,8 @@ function getReleasesSeriesRequest(
     displayType,
     {start, end, period},
     '5m',
-    // requesting low fidelity for release sort because metrics api can't return 100 rows of high fidelity series data
-    isCustomReleaseSorting ? 'low' : undefined
+    // requesting medium fidelity for release sort because metrics api can't return 100 rows of high fidelity series data
+    isCustomReleaseSorting ? 'medium' : undefined
   );
 
   return getReleasesRequest(
@@ -262,7 +274,7 @@ function getReleasesTableFieldOptions(_organization: Organization) {
 }
 
 export function transformSessionsResponseToTable(
-  data: SessionApiResponse | MetricsApiResponse,
+  data: SessionApiResponse,
   widgetQuery: WidgetQuery
 ): TableData {
   const useSessionAPI = widgetQuery.columns.includes('session.status');
@@ -273,6 +285,7 @@ export function transformSessionsResponseToTable(
   );
   const rows = data.groups.map((group, index) => ({
     id: String(index),
+    // @ts-expect-error TS(2345): Argument of type 'Record<string, string | number> ... Remove this comment to see the full error message
     ...mapDerivedMetricsToFields(group.by),
     // if `sum(session)` or `count_unique(user)` are not
     // requested as a part of the payload for
@@ -289,12 +302,13 @@ export function transformSessionsResponseToTable(
   const singleRow = rows[0];
   const meta = {
     ...changeObjectValuesToTypes(omit(singleRow, 'id')),
+    fields: changeObjectValuesToTypes(omit(singleRow, 'id')),
   };
   return {meta, data: rows};
 }
 
 export function transformSessionsResponseToSeries(
-  data: SessionApiResponse | MetricsApiResponse,
+  data: SessionApiResponse,
   widgetQuery: WidgetQuery
 ) {
   if (data === null) {
@@ -337,7 +351,7 @@ export function transformSessionsResponseToSeries(
           seriesName: getSeriesName(field, group, queryAlias),
           data: data.intervals.map((interval, index) => ({
             name: interval,
-            value: group.series[field][index] ?? 0,
+            value: group.series[field]?.[index] ?? 0,
           })),
         });
       }
@@ -361,7 +375,7 @@ export function transformSessionsResponseToSeries(
             seriesName: getSeriesName(status, group, queryAlias),
             data: data.intervals.map((interval, index) => ({
               name: interval,
-              value: metricField ? group.series[metricField][index] ?? 0 : 0,
+              value: metricField ? group.series[metricField]?.[index] ?? 0 : 0,
             })),
           });
         }
@@ -373,6 +387,7 @@ export function transformSessionsResponseToSeries(
 }
 
 function fieldsToDerivedMetrics(field: string): string {
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   return FIELD_TO_METRICS_EXPRESSION[field] ?? field;
 }
 
@@ -390,7 +405,7 @@ function getReleasesRequest(
   const {environments, projects, datetime} = pageFilters;
   const {start, end, period} = datetime;
 
-  let showIncompleteDataAlert: boolean = false;
+  let showIncompleteDataAlert = false;
 
   if (start) {
     let startDate: Date | undefined = undefined;
@@ -460,8 +475,8 @@ function getReleasesRequest(
     query.orderby,
     useSessionAPI
   );
-  let requestData;
-  let requester;
+  let requestData: any;
+  let requester: any;
   if (useSessionAPI) {
     const sessionAggregates = aggregates.filter(
       agg => !Object.values(DerivedStatusFields).includes(agg as DerivedStatusFields)
@@ -494,8 +509,8 @@ function getReleasesRequest(
       orderBy: unsupportedOrderby
         ? ''
         : isDescending
-        ? `-${fieldsToDerivedMetrics(rawOrderby)}`
-        : fieldsToDerivedMetrics(rawOrderby),
+          ? `-${fieldsToDerivedMetrics(rawOrderby)}`
+          : fieldsToDerivedMetrics(rawOrderby),
       interval,
       project: projects,
       query: query.conditions,
@@ -506,7 +521,7 @@ function getReleasesRequest(
       includeSeries,
       includeTotals,
     };
-    requester = doMetricsRequest;
+    requester = doReleaseHealthRequest;
 
     if (
       rawOrderby &&

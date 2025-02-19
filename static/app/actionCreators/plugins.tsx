@@ -3,12 +3,13 @@ import {
   addLoadingMessage,
   addSuccessMessage,
 } from 'sentry/actionCreators/indicator';
-import {Client, RequestOptions} from 'sentry/api';
+import type {RequestOptions} from 'sentry/api';
+import {Client} from 'sentry/api';
 import {t} from 'sentry/locale';
 import PluginsStore from 'sentry/stores/pluginsStore';
-import {Plugin} from 'sentry/types';
+import type {Plugin} from 'sentry/types/integrations';
 
-const activeFetch = {};
+const activeFetch: Record<string, Promise<any> | null> = {};
 // PluginsStore always exists, so api client should be independent of component lifecycle
 const api = new Client();
 
@@ -49,7 +50,7 @@ function doUpdate({orgId, projectId, pluginId, update, ...params}: DoUpdateParam
     })
     .catch(resp => {
       const err =
-        resp && resp.responseJSON && typeof resp.responseJSON.detail === 'string'
+        typeof resp?.responseJSON?.detail === 'string'
           ? new Error(resp.responseJSON.detail)
           : new Error('Unable to update plugin');
       PluginsStore.onUpdateError(pluginId, err);

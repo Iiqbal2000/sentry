@@ -1,43 +1,39 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
 
 import {CommitRow} from 'sentry/components/commitRow';
 import {EventEvidence} from 'sentry/components/events/eventEvidence';
+import EventHydrationDiff from 'sentry/components/events/eventHydrationDiff';
 import EventReplay from 'sentry/components/events/eventReplay';
+import {EventGroupingInfoSection} from 'sentry/components/events/groupingInfo/groupingInfoSection';
+import {ActionableItems} from 'sentry/components/events/interfaces/crashContent/exception/actionableItems';
+import {actionableItemsEnabled} from 'sentry/components/events/interfaces/crashContent/exception/useActionableItems';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {
-  Entry,
-  EntryType,
-  Event,
-  Group,
-  Organization,
-  Project,
-  SharedViewOrganization,
-} from 'sentry/types';
+import type {Entry, Event} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
+import type {Group} from 'sentry/types/group';
+import type {Organization, SharedViewOrganization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {isNotSharedOrganization} from 'sentry/types/utils';
-import {objectIsEmpty} from 'sentry/utils';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
 
 import {EventContexts} from './contexts';
 import {EventDevice} from './device';
 import {EventAttachments} from './eventAttachments';
-import {EventCause} from './eventCause';
 import {EventDataSection} from './eventDataSection';
 import {EventEntry} from './eventEntry';
-import {EventErrors} from './eventErrors';
 import {EventExtraData} from './eventExtraData';
 import {EventSdk} from './eventSdk';
 import {EventTagsAndScreenshot} from './eventTagsAndScreenshot';
 import {EventViewHierarchy} from './eventViewHierarchy';
-import {EventGroupingInfo} from './groupingInfo';
 import {EventPackageData} from './packageData';
 import {EventRRWebIntegration} from './rrwebIntegration';
 import {DataSection} from './styles';
+import {SuspectCommits} from './suspectCommits';
 import {EventUserFeedback} from './userFeedback';
 
 type Props = {
-  location: Location;
   /**
    * The organization can be the shared view on a public issue view.
    */
@@ -53,7 +49,6 @@ type Props = {
 function EventEntries({
   organization,
   project,
-  location,
   event,
   group,
   className,
@@ -72,14 +67,21 @@ function EventEntries({
     );
   }
 
-  const hasContext = !objectIsEmpty(event.user ?? {}) || !objectIsEmpty(event.contexts);
+  const hasContext = !isEmptyObject(event.user ?? {}) || !isEmptyObject(event.contexts);
+  const hasActionableItems = actionableItemsEnabled({
+    eventId: event.id,
+    organization,
+    projectSlug,
+  });
 
   return (
     <div className={className}>
-      <EventErrors event={event} project={project} isShare={isShare} />
+      {!isShare && hasActionableItems && (
+        <ActionableItems event={event} project={project} />
+      )}
       {!isShare && isNotSharedOrganization(organization) && (
-        <EventCause
-          project={project}
+        <SuspectCommits
+          projectSlug={project.slug}
           eventId={event.id}
           group={group}
           commitRow={CommitRow}
@@ -97,13 +99,11 @@ function EventEntries({
       {showTagSummary && (
         <EventTagsAndScreenshot
           event={event}
-          organization={organization as Organization}
           projectSlug={projectSlug}
-          location={location}
           isShare={isShare}
         />
       )}
-      <EventEvidence event={event} projectSlug={project.slug} />
+      <EventEvidence event={event} project={project} />
       <Entries
         definedEvent={event}
         projectSlug={projectSlug}
@@ -116,10 +116,10 @@ function EventEntries({
       <EventPackageData event={event} />
       <EventDevice event={event} />
       {!isShare && <EventViewHierarchy event={event} project={project} />}
-      {!isShare && <EventAttachments event={event} projectSlug={projectSlug} />}
+      {!isShare && <EventAttachments event={event} project={project} group={group} />}
       <EventSdk sdk={event.sdk} meta={event._meta?.sdk} />
       {!isShare && event.groupID && (
-        <EventGroupingInfo
+        <EventGroupingInfoSection
           projectSlug={projectSlug}
           event={event}
           showGroupingConfig={
@@ -139,7 +139,7 @@ function EventEntries({
 // Because replays are not an interface, we need to manually insert the replay section
 // into the array of entries. The long-term solution here is to move the ordering
 // logic to this component, similar to how GroupEventDetailsContent works.
-function partitionEntriesForReplay(entries: Entry[]) {
+export function partitionEntriesForReplay(entries: Entry[]) {
   let replayIndex = 0;
 
   for (const [i, entry] of entries.entries()) {
@@ -161,15 +161,19 @@ function partitionEntriesForReplay(entries: Entry[]) {
   return [entries.slice(0, replayIndex), entries.slice(replayIndex)];
 }
 
-function Entries({
+export function Entries({
   definedEvent,
   projectSlug,
   isShare,
   group,
   organization,
+  hideBeforeReplayEntries = false,
+  hideBreadCrumbs = false,
 }: {
   definedEvent: Event;
   projectSlug: string;
+  hideBeforeReplayEntries?: boolean;
+  hideBreadCrumbs?: boolean;
   isShare?: boolean;
 } & Pick<Props, 'group' | 'organization'>) {
   if (!Array.isArray(definedEvent.entries)) {
@@ -190,13 +194,19 @@ function Entries({
 
   return (
     <Fragment>
-      {beforeReplayEntries.map((entry, entryIdx) => (
-        <EventEntry key={entryIdx} entry={entry} {...eventEntryProps} />
-      ))}
+      {!hideBeforeReplayEntries &&
+        beforeReplayEntries!.map((entry, entryIdx) => (
+          <EventEntry key={entryIdx} entry={entry} {...eventEntryProps} />
+        ))}
+      {!isShare && <EventHydrationDiff {...eventEntryProps} />}
       {!isShare && <EventReplay {...eventEntryProps} />}
-      {afterReplayEntries.map((entry, entryIdx) => (
-        <EventEntry key={entryIdx} entry={entry} {...eventEntryProps} />
-      ))}
+      {afterReplayEntries!.map((entry, entryIdx) => {
+        if (hideBreadCrumbs && entry.type === EntryType.BREADCRUMBS) {
+          return null;
+        }
+
+        return <EventEntry key={entryIdx} entry={entry} {...eventEntryProps} />;
+      })}
     </Fragment>
   );
 }

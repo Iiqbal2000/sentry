@@ -1,12 +1,7 @@
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
-import {
-  FilterType,
-  ParseResult,
-  TermOperator,
-  Token,
-  TokenResult,
-} from 'sentry/components/searchSyntax/parser';
+import type {ParseResult, TokenResult} from 'sentry/components/searchSyntax/parser';
+import {FilterType, TermOperator, Token} from 'sentry/components/searchSyntax/parser';
 
 import HighlightQuery from './renderer';
 
@@ -23,6 +18,7 @@ const query: ParseResult = [
       location: {
         start: {offset: 0, line: 1, column: 1},
         end: {offset: 10, line: 1, column: 11},
+        source: {},
       },
     },
     operator: TermOperator.DEFAULT,
@@ -34,6 +30,7 @@ const query: ParseResult = [
       location: {
         start: {offset: 11, line: 1, column: 12},
         end: {offset: 27, line: 1, column: 28},
+        source: {},
       },
     },
     invalid: null,
@@ -42,6 +39,7 @@ const query: ParseResult = [
     location: {
       start: {offset: 0, line: 1, column: 1},
       end: {offset: 27, line: 1, column: 28},
+      source: {},
     },
   } satisfies TokenResult<Token.FILTER>,
 ];

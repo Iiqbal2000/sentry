@@ -1,12 +1,13 @@
 import {cloneElement, Fragment, useState} from 'react';
 import styled from '@emotion/styled';
 
+import StacktracePlatformIcon from 'sentry/components/events/interfaces/crashContent/stackTrace/platformIcon';
 import Panel from 'sentry/components/panels/panel';
 import {t} from 'sentry/locale';
-import {space} from 'sentry/styles/space';
-import {Frame, Group, PlatformKey} from 'sentry/types';
-import {Event} from 'sentry/types/event';
-import {StacktraceType} from 'sentry/types/stacktrace';
+import type {Event, Frame} from 'sentry/types/event';
+import type {Group} from 'sentry/types/group';
+import type {PlatformKey} from 'sentry/types/project';
+import type {StacktraceType} from 'sentry/types/stacktrace';
 import {defined} from 'sentry/utils';
 
 import NativeFrame from '../../nativeFrame';
@@ -16,15 +17,17 @@ import {
   getLastFrameIndex,
   isRepeatedFrame,
   parseAddress,
+  stackTracePlatformIcon,
 } from '../../utils';
 
 type Props = {
   data: StacktraceType;
   event: Event;
   platform: PlatformKey;
-  expandFirstFrame?: boolean;
+  className?: string;
   groupingCurrentLevel?: Group['metadata']['current_level'];
   hiddenFrameCount?: number;
+  hideIcon?: boolean;
   includeSystemFrames?: boolean;
   inlined?: boolean;
   isHoverPreviewed?: boolean;
@@ -36,15 +39,16 @@ type Props = {
 };
 
 export function NativeContent({
+  className,
   data,
   platform,
   event,
   newestFirst,
   isHoverPreviewed,
   inlined,
+  hideIcon,
   groupingCurrentLevel,
   includeSystemFrames = true,
-  expandFirstFrame = true,
   maxDepth,
   meta,
 }: Props) {
@@ -58,7 +62,7 @@ export function NativeContent({
     return (
       includeSystemFrames ||
       frame.inApp ||
-      (nextFrame && nextFrame.inApp) ||
+      nextFrame?.inApp ||
       // the last non-app frame
       (!frame.inApp && !nextFrame) ||
       isFrameUsedForGrouping(frame)
@@ -68,9 +72,10 @@ export function NativeContent({
   function setInitialFrameMap(): {[frameIndex: number]: boolean} {
     const indexMap = {};
     (data.frames ?? []).forEach((frame, frameIdx) => {
-      const nextFrame = (data.frames ?? [])[frameIdx + 1];
+      const nextFrame = (data.frames ?? [])[frameIdx + 1]!;
       const repeatedFrame = isRepeatedFrame(frame, nextFrame);
       if (frameIsVisible(frame, nextFrame) && !repeatedFrame && !frame.inApp) {
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         indexMap[frameIdx] = false;
       }
     });
@@ -81,9 +86,10 @@ export function NativeContent({
     let count = 0;
     const countMap = {};
     (data.frames ?? []).forEach((frame, frameIdx) => {
-      const nextFrame = (data.frames ?? [])[frameIdx + 1];
+      const nextFrame = (data.frames ?? [])[frameIdx + 1]!;
       const repeatedFrame = isRepeatedFrame(frame, nextFrame);
       if (frameIsVisible(frame, nextFrame) && !repeatedFrame && !frame.inApp) {
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         countMap[frameIdx] = count;
         count = 0;
       } else {
@@ -171,10 +177,13 @@ export function NativeContent({
     0
   );
 
+  const firstInAppFrameIndex = frames[newestFirst ? 'findLastIndex' : 'findIndex'](
+    frame => frame.inApp
+  );
   let convertedFrames = frames
     .map((frame, frameIndex) => {
       const prevFrame = frames[frameIndex - 1];
-      const nextFrame = frames[frameIndex + 1];
+      const nextFrame = frames[frameIndex + 1]!;
       const repeatedFrame = isRepeatedFrame(frame, nextFrame);
 
       if (repeatedFrame) {
@@ -192,7 +201,6 @@ export function NativeContent({
           frame,
           prevFrame,
           nextFrame,
-          isExpanded: expandFirstFrame && lastFrameIndex === frameIndex,
           emptySourceNotation: inlined
             ? false
             : lastFrameIndex === frameIndex && frameIndex === 0,
@@ -217,6 +225,7 @@ export function NativeContent({
           isHoverPreviewed,
           isShowFramesToggleExpanded: toggleFrameMap[frameIndex],
           isSubFrame: hiddenFrameIndices.includes(frameIndex),
+          isFirstInAppFrame: firstInAppFrameIndex === frameIndex,
           isUsedForGrouping,
           frameMeta: meta?.frames?.[frameIndex],
           registersMeta: meta?.registers,
@@ -248,13 +257,13 @@ export function NativeContent({
     })
     .filter(frame => !!frame) as React.ReactElement[];
 
-  const className = `traceback ${
+  const wrapperClassName = `traceback ${
     includeSystemFrames ? 'full-traceback' : 'in-app-traceback'
-  }`;
+  } ${className}`;
 
   if (convertedFrames.length > 0 && registers) {
     const lastFrame = convertedFrames.length - 1;
-    convertedFrames[lastFrame] = cloneElement(convertedFrames[lastFrame], {
+    convertedFrames[lastFrame] = cloneElement(convertedFrames[lastFrame]!, {
       registers,
     });
   }
@@ -264,52 +273,35 @@ export function NativeContent({
   }
 
   return (
-    <Wrapper className={className}>
-      <Frames
-        isHoverPreviewed={isHoverPreviewed}
-        inlined={inlined}
-        data-test-id="stack-trace"
+    <Wrapper>
+      {hideIcon ? null : (
+        <StacktracePlatformIcon
+          platform={stackTracePlatformIcon(platform, data.frames ?? [])}
+        />
+      )}
+      <ContentPanel
+        className={wrapperClassName}
+        data-test-id="native-stack-trace-content"
+        hideIcon={hideIcon}
       >
-        {!newestFirst ? convertedFrames : [...convertedFrames].reverse()}
-      </Frames>
+        <Frames data-test-id="stack-trace">
+          {!newestFirst ? convertedFrames : [...convertedFrames].reverse()}
+        </Frames>
+      </ContentPanel>
     </Wrapper>
   );
 }
 
-const Wrapper = styled(Panel)`
-  && {
-    border-top-left-radius: 0;
-    position: relative;
-    border: 0;
-  }
+const Wrapper = styled('div')`
+  position: relative;
 `;
 
-export const Frames = styled('ul')<{inlined?: boolean; isHoverPreviewed?: boolean}>`
-  background: ${p => p.theme.background};
-  border-radius: ${p => p.theme.borderRadius};
-  border: 1px ${p => 'solid ' + p.theme.border};
-  box-shadow: ${p => p.theme.dropShadowMedium};
-  margin-bottom: ${space(2)};
+const ContentPanel = styled(Panel)<{hideIcon?: boolean}>`
   position: relative;
-  display: grid;
+  border-top-left-radius: ${p => (p.hideIcon ? p.theme.borderRadius : 0)};
   overflow: hidden;
-  font-size: ${p => p.theme.fontSizeSmall};
-  line-height: 16px;
-  color: ${p => p.theme.gray500};
-  ${p =>
-    p.isHoverPreviewed &&
-    `
-      border: 0;
-      border-radius: 0;
-      box-shadow: none;
-      margin-bottom: 0;
-    `}
+`;
 
-  ${p =>
-    p.inlined &&
-    `
-      border-radius: 0;
-      border-left: 0;
-      border-right: 0;
-    `}
+export const Frames = styled('ul')`
+  list-style: none;
 `;

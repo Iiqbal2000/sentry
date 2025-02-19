@@ -1,18 +1,18 @@
-import {mat3, vec2} from 'gl-matrix';
+import type {mat3, vec2} from 'gl-matrix';
 
-import {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
-import {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
+import type {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
+import type {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
 import {getContext, resizeCanvasToDisplaySize} from 'sentry/utils/profiling/gl/utils';
-import {SpanChart, SpanChartNode} from 'sentry/utils/profiling/spanChart';
+import type {SpanChart, SpanChartNode} from 'sentry/utils/profiling/spanChart';
 import {Rect} from 'sentry/utils/profiling/speedscope';
 
 import {makeSpansColorMapByOpAndDescription} from '../colors/utils';
 
 // Convert color component from 0-1 to 0-255 range
-function colorComponentsToRgba(color: number[]): string {
-  return `rgba(${Math.floor(color[0] * 255)}, ${Math.floor(color[1] * 255)}, ${Math.floor(
-    color[2] * 255
-  )}, ${color[3] ?? 1})`;
+function colorComponentsToRgba(color: number[] | undefined): string {
+  return `rgba(${Math.floor(color?.[0]! * 255)}, ${Math.floor(color?.[1]! * 255)}, ${Math.floor(
+    color?.[2]! * 255
+  )}, ${color?.[3] ?? 1})`;
 }
 
 /**
@@ -99,7 +99,7 @@ export class SpanChartRenderer2D {
       return this.pattern;
     }
     return (
-      this.colors.get(span.node.span.span_id) ?? this.theme.COLORS.FRAME_GRAYSCALE_COLOR
+      this.colors.get(span.node.span.span_id) ?? this.theme.COLORS.FRAME_FALLBACK_COLOR
     );
   }
 
@@ -142,8 +142,8 @@ export class SpanChartRenderer2D {
       }
 
       // Descend into the rest of the children
-      for (let i = 0; i < span.children.length; i++) {
-        queue.push(span.children[i]);
+      for (const child of span.children) {
+        queue.push(child);
       }
     }
     return hoveredNode;
@@ -162,9 +162,7 @@ export class SpanChartRenderer2D {
 
     const spans: SpanChartNode[] = [...this.spanChart.root.children];
 
-    for (let i = 0; i < spans.length; i++) {
-      const span = spans[i];
-
+    for (const span of spans) {
       if (span.end < configView.left || span.start > configView.right) {
         continue;
       }
@@ -173,8 +171,8 @@ export class SpanChartRenderer2D {
         continue;
       }
 
-      for (let j = 0; j < span.children.length; j++) {
-        spans.push(span.children[j]);
+      for (const child of span.children) {
+        spans.push(child);
       }
 
       if (span.depth < TOP_BOUNDARY) {
@@ -208,7 +206,7 @@ export class SpanChartRenderer2D {
 
         this.context.fillStyle =
           this.isSearching && !this.searchResults.has(span.node.span.span_id)
-            ? colorComponentsToRgba(this.theme.COLORS.FRAME_GRAYSCALE_COLOR)
+            ? colorComponentsToRgba(this.theme.COLORS.FRAME_FALLBACK_COLOR)
             : colorComponentsToRgba(color);
 
         this.context.fillRect(

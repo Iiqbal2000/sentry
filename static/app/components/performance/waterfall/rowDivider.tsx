@@ -2,7 +2,7 @@ import styled from '@emotion/styled';
 
 import {IconAdd, IconFire, IconProfiling, IconSubtract} from 'sentry/icons';
 import {space} from 'sentry/styles/space';
-import {Aliases, Color} from 'sentry/utils/theme';
+import type {Aliases, Color} from 'sentry/utils/theme';
 
 export const DividerContainer = styled('div')`
   position: relative;
@@ -49,7 +49,7 @@ export const DividerLineGhostContainer = styled('div')`
   height: 100%;
 `;
 
-const BadgeBorder = styled('div')<{
+export const BadgeBorder = styled('div')<{
   color: Color | keyof Aliases;
   fillBackground?: boolean;
 }>`
@@ -76,14 +76,17 @@ export function ErrorBadge() {
 }
 
 export function EmbeddedTransactionBadge({
+  inTraceView = false,
   expanded,
   onClick,
 }: {
   expanded: boolean;
+  inTraceView: boolean;
   onClick: () => void;
 }) {
   return (
-    <BadgeBorder
+    <StyledBadgeBorder
+      inTraceView={inTraceView}
       data-test-id="embedded-transaction-badge"
       color="border"
       onClick={event => {
@@ -97,7 +100,7 @@ export function EmbeddedTransactionBadge({
       ) : (
         <IconAdd color="textColor" size="xs" />
       )}
-    </BadgeBorder>
+    </StyledBadgeBorder>
   );
 }
 
@@ -108,3 +111,7 @@ export function ProfileBadge() {
     </BadgeBorder>
   );
 }
+
+const StyledBadgeBorder = styled(BadgeBorder)<{inTraceView: boolean}>`
+  ${p => p.inTraceView && 'left: 0;'}
+`;

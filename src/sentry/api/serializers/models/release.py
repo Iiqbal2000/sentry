@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import datetime
 from collections import defaultdict
-from typing import Any, Mapping, Sequence, TypedDict, Union
+from collections.abc import Mapping, Sequence
+from typing import Any, NotRequired, TypedDict, Union
 
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
@@ -10,20 +11,27 @@ from django.db.models import Sum
 
 from sentry import release_health, tagstore
 from sentry.api.serializers import Serializer, register, serialize
-from sentry.api.serializers.models.user import UserSerializerResponse
+from sentry.api.serializers.release_details_types import VersionInfo
+from sentry.api.serializers.types import (
+    GroupEventReleaseSerializerResponse,
+    ReleaseSerializerResponse,
+)
 from sentry.models.commit import Commit
 from sentry.models.commitauthor import CommitAuthor
 from sentry.models.deploy import Deploy
 from sentry.models.projectplatform import ProjectPlatform
-from sentry.models.release import Release, ReleaseProject, ReleaseStatus
+from sentry.models.release import Release, ReleaseStatus
 from sentry.models.releaseprojectenvironment import ReleaseProjectEnvironment
-from sentry.services.hybrid_cloud.user.serial import serialize_generic_user
-from sentry.services.hybrid_cloud.user.service import user_service
+from sentry.models.releases.release_project import ReleaseProject
+from sentry.release_health.base import ReleaseHealthOverview
+from sentry.users.api.serializers.user import UserSerializerResponse
+from sentry.users.services.user.serial import serialize_generic_user
+from sentry.users.services.user.service import user_service
 from sentry.utils import metrics
 from sentry.utils.hashlib import md5_text
 
 
-def expose_version_info(info):
+def expose_version_info(info) -> VersionInfo | None:
     if info is None:
         return None
     version = {"raw": info["version_raw"]}
@@ -204,20 +212,22 @@ def _get_last_deploy_metadata(item_list, user):
     return result
 
 
-def _user_to_author_cache_key(organization_id, author):
+def _user_to_author_cache_key(organization_id: int, author: CommitAuthor) -> str:
     author_hash = md5_text(author.email.lower()).hexdigest()
     return f"get_users_for_authors:{organization_id}:{author_hash}"
 
 
 class NonMappableUser(TypedDict):
-    name: str
+    name: str | None
     email: str
 
 
 Author = Union[UserSerializerResponse, NonMappableUser]
 
 
-def get_users_for_authors(organization_id, authors, user=None) -> Mapping[str, Author]:
+def get_users_for_authors(
+    organization_id: int, authors: list[CommitAuthor], user=None
+) -> Mapping[str, Author]:
     """
     Returns a dictionary of author_id => user, if a Sentry
     user object exists for that email. If there is no matching
@@ -288,9 +298,20 @@ def get_users_for_authors(organization_id, authors, user=None) -> Mapping[str, A
     return results
 
 
+class _ProjectDict(TypedDict):
+    id: int
+    slug: str | None
+    name: str
+    new_groups: int | None
+    platform: str | None
+    platforms: list[str]
+    health_data: NotRequired[ReleaseHealthOverview | None]
+    has_health_data: NotRequired[bool]
+
+
 @register(Release)
 class ReleaseSerializer(Serializer):
-    def __get_project_id_list(self, item_list):
+    def __get_project_id_list(self, item_list) -> list[int]:
         project_ids = set()
         need_fallback = False
 
@@ -301,34 +322,34 @@ class ReleaseSerializer(Serializer):
                 need_fallback = True
 
         if not need_fallback:
-            return sorted(project_ids), True
+            return sorted(project_ids)
 
-        return (
-            list(
-                ReleaseProject.objects.filter(release__in=item_list)
-                .values_list("project_id", flat=True)
-                .distinct()
-            ),
-            False,
+        return list(
+            ReleaseProject.objects.filter(release__in=item_list)
+            .values_list("project_id", flat=True)
+            .distinct()
         )
 
-    def __get_release_data_no_environment(self, project, item_list):
+    def __get_release_data_no_environment(self, project, item_list, no_snuba_for_release_creation):
         if project is not None:
             project_ids = [project.id]
-            specialized = True
             organization_id = project.organization_id
         else:
-            project_ids, specialized = self.__get_project_id_list(item_list)
+            project_ids = self.__get_project_id_list(item_list)
             organization_id = item_list[0].organization_id
 
         first_seen: dict[str, datetime.datetime] = {}
         last_seen: dict[str, datetime.datetime] = {}
-        tag_values = tagstore.backend.get_release_tags(
-            organization_id,
-            project_ids,
-            environment_id=None,
-            versions=[o.version for o in item_list],
-        )
+        if no_snuba_for_release_creation:
+            tag_values = []
+        else:
+            tag_values = tagstore.backend.get_release_tags(
+                organization_id,
+                project_ids,
+                environment_id=None,
+                versions=[o.version for o in item_list],
+            )
+
         for tv in tag_values:
             first_val = first_seen.get(tv.value)
             last_val = last_seen.get(tv.value)
@@ -414,8 +435,8 @@ class ReleaseSerializer(Serializer):
         health_stat = kwargs.get("health_stat", None)
         health_stats_period = kwargs.get("health_stats_period")
         summary_stats_period = kwargs.get("summary_stats_period")
-        no_snuba = kwargs.get("no_snuba")
-        if with_health_data and no_snuba:
+        no_snuba_for_release_creation = kwargs.get("no_snuba_for_release_creation")
+        if with_health_data and no_snuba_for_release_creation:
             raise TypeError("health data requires snuba")
 
         adoption_stages = {}
@@ -426,7 +447,7 @@ class ReleaseSerializer(Serializer):
 
         if environments is None:
             first_seen, last_seen, issue_counts_by_release = self.__get_release_data_no_environment(
-                project, item_list
+                project, item_list, no_snuba_for_release_creation
             )
         else:
             if release_project_envs is None:
@@ -439,13 +460,16 @@ class ReleaseSerializer(Serializer):
                 issue_counts_by_release,
             ) = self.__get_release_data_with_environments(release_project_envs)
 
-        owners = {
-            d["id"]: d
-            for d in user_service.serialize_many(
-                filter={"user_ids": [i.owner_id for i in item_list if i.owner_id]},
-                as_user=serialize_generic_user(user),
-            )
-        }
+        owners = {}
+        owner_ids = [i.owner_id for i in item_list if i.owner_id]
+        if owner_ids:
+            owners = {
+                d["id"]: d
+                for d in user_service.serialize_many(
+                    filter={"user_ids": owner_ids},
+                    as_user=serialize_generic_user(user),
+                )
+            }
 
         authors_metadata_attrs = _get_authors_metadata(item_list, user)
         release_metadata_attrs = _get_last_commit_metadata(item_list, user)
@@ -484,7 +508,7 @@ class ReleaseSerializer(Serializer):
             has_health_data = {}
 
         for pr in project_releases:
-            pr_rv = {
+            pr_rv: _ProjectDict = {
                 "id": pr["project__id"],
                 "slug": pr["project__slug"],
                 "name": pr["project__name"],
@@ -540,8 +564,8 @@ class ReleaseSerializer(Serializer):
             result[item] = p
         return result
 
-    def serialize(self, obj, attrs, user, **kwargs):
-        d = {
+    def serialize(self, obj, attrs, user, **kwargs) -> ReleaseSerializerResponse:
+        d: ReleaseSerializerResponse = {
             "id": obj.id,
             "version": obj.version,
             "status": ReleaseStatus.to_string(obj.status),
@@ -594,7 +618,7 @@ class GroupEventReleaseSerializer(Serializer):
             result[item] = p
         return result
 
-    def serialize(self, obj, attrs, user, **kwargs):
+    def serialize(self, obj, attrs, user, **kwargs) -> GroupEventReleaseSerializerResponse:
         return {
             "id": obj.id,
             "commitCount": obj.commit_count,

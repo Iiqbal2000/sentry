@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta
-from typing import Dict, Match, Optional, TypedDict
+from datetime import timedelta
+from re import Match
+from typing import TypedDict
 
 import sentry_sdk
 from rest_framework.exceptions import ParseError
@@ -15,8 +16,9 @@ from sentry.api.base import region_silo_endpoint
 from sentry.api.bases import NoProjects, OrganizationEventsV2EndpointBase
 from sentry.api.event_search import AggregateFilter
 from sentry.api.paginator import GenericOffsetPaginator
+from sentry.api.utils import handle_query_errors
 from sentry.exceptions import InvalidSearchQuery
-from sentry.search.events.builder import QueryBuilder
+from sentry.search.events.builder.discover import DiscoverQueryBuilder
 from sentry.search.events.datasets import function_aliases
 from sentry.search.events.fields import DateArg, parse_function
 from sentry.search.events.types import Alias, QueryBuilderConfig, SelectType, WhereType
@@ -52,14 +54,14 @@ REGRESSION = "regression"
 TREND_TYPES = [IMPROVED, REGRESSION]
 
 
-# TODO move this to the builder file and introduce a top-events version instead
-class TrendQueryBuilder(QueryBuilder):
+# TODO: move this to the builder file and introduce a top-events version instead
+class TrendQueryBuilder(DiscoverQueryBuilder):
     def convert_aggregate_filter_to_condition(
         self, aggregate_filter: AggregateFilter
-    ) -> Optional[WhereType]:
+    ) -> WhereType | None:
         name = aggregate_filter.key.name
 
-        if name in self.params.aliases:
+        if self.params.aliases is not None and name in self.params.aliases:
             return self.params.aliases[name].converter(aggregate_filter)
         else:
             return super().convert_aggregate_filter_to_condition(aggregate_filter)
@@ -67,11 +69,11 @@ class TrendQueryBuilder(QueryBuilder):
     def resolve_function(
         self,
         function: str,
-        match: Optional[Match[str]] = None,
+        match: Match[str] | None = None,
         resolve_only=False,
-        overwrite_alias: Optional[str] = None,
+        overwrite_alias: str | None = None,
     ) -> SelectType:
-        if function in self.params.aliases:
+        if self.params.aliases is not None and function in self.params.aliases:
             return self.params.aliases[function].resolved_function
         else:
             return super().resolve_function(function, match, resolve_only, overwrite_alias)
@@ -79,7 +81,7 @@ class TrendQueryBuilder(QueryBuilder):
 
 class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
     publish_status = {
-        "GET": ApiPublishStatus.UNKNOWN,
+        "GET": ApiPublishStatus.PRIVATE,
     }
     trend_columns = {
         "p50": "percentile_range({column}, 0.5, {condition}, {boundary}) as {query_alias}",
@@ -231,7 +233,7 @@ class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
         }
 
     @staticmethod
-    def get_snql_function_aliases(trend_columns: TrendColumns, trend_type: str) -> Dict[str, Alias]:
+    def get_snql_function_aliases(trend_columns: TrendColumns, trend_type: str) -> dict[str, Alias]:
         """Construct a dict of aliases
 
         this is because certain conditions behave differently depending on the trend type
@@ -259,9 +261,11 @@ class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
                         if trend_type == IMPROVED
                         else aggregate_filter.operator
                     ),
-                    -1 * aggregate_filter.value.value
-                    if trend_type == IMPROVED
-                    else aggregate_filter.value.value,
+                    (
+                        -1 * aggregate_filter.value.value
+                        if trend_type == IMPROVED
+                        else aggregate_filter.value.value
+                    ),
                 ),
                 ["minus", "transaction.duration"],
                 trend_columns["trend_difference"],
@@ -274,9 +278,11 @@ class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
                         if trend_type == REGRESSION
                         else aggregate_filter.operator
                     ),
-                    -1 * aggregate_filter.value.value
-                    if trend_type == REGRESSION
-                    else aggregate_filter.value.value,
+                    (
+                        -1 * aggregate_filter.value.value
+                        if trend_type == REGRESSION
+                        else aggregate_filter.value.value
+                    ),
                 ),
                 None,
                 trend_columns["t_test"],
@@ -292,131 +298,6 @@ class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
             ),
         }
 
-    @staticmethod
-    def get_function_aliases(trend_type):
-        """Construct the dict of aliases
-
-        trend_percentage and trend_difference behave differently depending on the trend type
-        """
-        return {
-            "trend_percentage()": Alias(
-                lambda aggregate_filter: [
-                    "trend_percentage",
-                    CORRESPONDENCE_MAP[aggregate_filter.operator]
-                    if trend_type == IMPROVED
-                    else aggregate_filter.operator,
-                    1 + (aggregate_filter.value.value * (-1 if trend_type == IMPROVED else 1)),
-                ],
-                ["percentage", "transaction.duration"],
-                None,
-            ),
-            "trend_difference()": Alias(
-                lambda aggregate_filter: [
-                    "trend_difference",
-                    CORRESPONDENCE_MAP[aggregate_filter.operator]
-                    if trend_type == IMPROVED
-                    else aggregate_filter.operator,
-                    -1 * aggregate_filter.value.value
-                    if trend_type == IMPROVED
-                    else aggregate_filter.value.value,
-                ],
-                ["minus", "transaction.duration"],
-                None,
-            ),
-            "confidence()": Alias(
-                lambda aggregate_filter: [
-                    "t_test",
-                    CORRESPONDENCE_MAP[aggregate_filter.operator]
-                    if trend_type == REGRESSION
-                    else aggregate_filter.operator,
-                    -1 * aggregate_filter.value.value
-                    if trend_type == REGRESSION
-                    else aggregate_filter.value.value,
-                ],
-                None,
-                None,
-            ),
-            "count_percentage()": Alias(
-                lambda aggregate_filter: [
-                    "count_percentage",
-                    aggregate_filter.operator,
-                    aggregate_filter.value.value,
-                ],
-                ["percentage", "count"],
-                None,
-            ),
-        }
-
-    def get_trend_columns(self, baseline_function, column, middle):
-        """Construct the columns needed to calculate high confidence trends"""
-        trend_column = self.trend_columns.get(baseline_function)
-        if trend_column is None:
-            raise ParseError(detail=f"{baseline_function} is not a supported trend function")
-
-        count_column = self.trend_columns["count_range"]
-        percentage_column = self.trend_columns["percentage"]
-        variance_column = self.trend_columns["variance"]
-
-        # t_test, and the columns required to calculate it
-        t_test_columns = [
-            variance_column.format(
-                condition="greater", boundary=middle, query_alias="variance_range_1"
-            ),
-            variance_column.format(
-                condition="lessOrEquals", boundary=middle, query_alias="variance_range_2"
-            ),
-        ]
-        # Only add average when its not the baseline
-        if baseline_function != "avg":
-            avg_column = self.trend_columns["avg"]
-            t_test_columns.extend(
-                [
-                    avg_column.format(
-                        column=column,
-                        condition="greater",
-                        boundary=middle,
-                        query_alias="avg_range_1",
-                    ),
-                    avg_column.format(
-                        column=column,
-                        condition="lessOrEquals",
-                        boundary=middle,
-                        query_alias="avg_range_2",
-                    ),
-                ]
-            )
-            avg_alias = "avg_range"
-        # avg will be added as the baseline
-        else:
-            avg_alias = "aggregate_range"
-
-        t_test_columns.append(
-            self.trend_columns["t_test"].format(
-                avg=avg_alias,
-            )
-        )
-
-        return t_test_columns + [
-            trend_column.format(
-                column=column, condition="greater", boundary=middle, query_alias="aggregate_range_1"
-            ),
-            trend_column.format(
-                column=column,
-                condition="lessOrEquals",
-                boundary=middle,
-                query_alias="aggregate_range_2",
-            ),
-            percentage_column.format(alias="aggregate_range", query_alias="trend_percentage"),
-            self.trend_columns["difference"].format(
-                alias="aggregate_range", query_alias="trend_difference"
-            ),
-            count_column.format(condition="greater", boundary=middle, query_alias="count_range_1"),
-            count_column.format(
-                condition="lessOrEquals", boundary=middle, query_alias="count_range_2"
-            ),
-            percentage_column.format(alias="count_range", query_alias="count_percentage"),
-        ]
-
     def has_feature(self, organization, request):
         return features.has("organizations:performance-view", organization, actor=request.user)
 
@@ -425,26 +306,26 @@ class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
             return Response(status=404)
 
         try:
-            params = self.get_snuba_params(request, organization)
+            snuba_params = self.get_snuba_params(request, organization)
         except NoProjects:
             return Response([])
 
-        with sentry_sdk.start_span(op="discover.endpoint", description="trend_dates"):
+        with sentry_sdk.start_span(op="discover.endpoint", name="trend_dates"):
             middle_date = request.GET.get("middle")
             if middle_date:
                 try:
-                    middle = parse_datetime_string(middle_date)
+                    middle_dt = parse_datetime_string(middle_date)
                 except InvalidQuery:
                     raise ParseError(detail=f"{middle_date} is not a valid date format")
-                if middle <= params["start"] or middle >= params["end"]:
+                if middle_dt <= snuba_params.start_date or middle_dt >= snuba_params.end_date:
                     raise ParseError(
                         detail="The middle date should be within the duration of the query"
                     )
             else:
-                middle = params["start"] + timedelta(
-                    seconds=(params["end"] - params["start"]).total_seconds() * 0.5
+                middle_dt = snuba_params.start_date + timedelta(
+                    seconds=(snuba_params.date_range).total_seconds() * 0.5
                 )
-            middle = datetime.strftime(middle, DateArg.date_format)
+            middle = middle_dt.strftime(DateArg.date_format)
 
         trend_type = request.GET.get("trendType", REGRESSION)
         if trend_type not in TREND_TYPES:
@@ -454,7 +335,7 @@ class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
         try:
             function, columns, _ = parse_function(trend_function)
         except InvalidSearchQuery as error:
-            raise ParseError(detail=error)
+            raise ParseError(detail=str(error))
         if len(columns) == 0:
             # Default to duration
             column = "transaction.duration"
@@ -465,10 +346,11 @@ class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
         orderby = self.get_orderby(request)
         query = request.GET.get("query")
 
-        with self.handle_query_errors():
+        with handle_query_errors():
             trend_query = TrendQueryBuilder(
                 dataset=Dataset.Discover,
-                params=params,
+                params={},
+                snuba_params=snuba_params,
                 selected_columns=selected_columns,
                 config=QueryBuilderConfig(
                     auto_fields=False,
@@ -499,14 +381,14 @@ class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
             result = trend_query.process_results(result)
             return result
 
-        with self.handle_query_errors():
+        with handle_query_errors():
             return self.paginate(
                 request=request,
                 paginator=GenericOffsetPaginator(data_fn=data_fn),
                 on_results=self.build_result_handler(
                     request,
                     organization,
-                    params,
+                    snuba_params,
                     trend_function,
                     selected_columns,
                     orderby,
@@ -516,30 +398,44 @@ class OrganizationEventsTrendsEndpointBase(OrganizationEventsV2EndpointBase):
                 max_per_page=5,
             )
 
+    def build_result_handler(
+        self,
+        request,
+        organization,
+        snuba_params,
+        trend_function,
+        selected_columns,
+        orderby,
+        query,
+    ):
+        raise NotImplementedError
+
 
 @region_silo_endpoint
 class OrganizationEventsTrendsStatsEndpoint(OrganizationEventsTrendsEndpointBase):
     publish_status = {
-        "GET": ApiPublishStatus.UNKNOWN,
+        "GET": ApiPublishStatus.PRIVATE,
     }
 
     def build_result_handler(
         self,
         request,
         organization,
-        params,
+        snuba_params,
         trend_function,
         selected_columns,
         orderby,
         query,
     ):
         def on_results(events_results):
-            def get_event_stats(query_columns, query, params, rollup, zerofill_results, _=None):
+            def get_event_stats(
+                query_columns, query, snuba_params, rollup, zerofill_results, _=None
+            ):
                 return discover.top_events_timeseries(
                     query_columns,
                     selected_columns,
                     query,
-                    params,
+                    snuba_params,
                     orderby,
                     rollup,
                     min(5, len(events_results["data"])),
@@ -556,7 +452,7 @@ class OrganizationEventsTrendsStatsEndpoint(OrganizationEventsTrendsEndpointBase
                     get_event_stats,
                     top_events=True,
                     query_column=trend_function,
-                    params=params,
+                    snuba_params=snuba_params,
                     query=query,
                 )
                 if len(events_results["data"]) > 0
@@ -565,7 +461,7 @@ class OrganizationEventsTrendsStatsEndpoint(OrganizationEventsTrendsEndpointBase
 
             return {
                 "events": self.handle_results_with_meta(
-                    request, organization, params["project_id"], events_results
+                    request, organization, snuba_params.project_ids, events_results
                 ),
                 "stats": stats_results,
             }
@@ -579,12 +475,12 @@ class OrganizationEventsTrendsEndpoint(OrganizationEventsTrendsEndpointBase):
         self,
         request,
         organization,
-        params,
+        snuba_params,
         trend_function,
         selected_columns,
         orderby,
         query,
     ):
         return lambda events_results: self.handle_results_with_meta(
-            request, organization, params["project_id"], events_results
+            request, organization, snuba_params.project_ids, events_results
         )

@@ -4,7 +4,7 @@ import {Observer} from 'mobx-react';
 import * as qs from 'query-string';
 
 import {addLoadingMessage} from 'sentry/actionCreators/indicator';
-import {Alert} from 'sentry/components/alert';
+import {Alert} from 'sentry/components/core/alert';
 import SentryProjectSelectorField from 'sentry/components/forms/fields/sentryProjectSelectorField';
 import Form from 'sentry/components/forms/form';
 import FormModel from 'sentry/components/forms/model';
@@ -12,7 +12,7 @@ import List from 'sentry/components/list';
 import ListItem from 'sentry/components/list/listItem';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Project} from 'sentry/types';
+import type {Project} from 'sentry/types/project';
 
 import FooterWithButtons from './components/footerWithButtons';
 import HeaderWithHelp from './components/headerWithHelp';
@@ -57,9 +57,11 @@ export default class AwsLambdaProjectSelect extends Component<Props> {
                 flexibleControlStateSize
                 stacked
               />
-              <Alert type="info">
-                {t('Currently only supports Node and Python Lambda functions')}
-              </Alert>
+              <Alert.Container>
+                <Alert type="info">
+                  {t('Currently only supports Node and Python Lambda functions')}
+                </Alert>
+              </Alert.Container>
             </Form>
           </ListItem>
         </StyledList>

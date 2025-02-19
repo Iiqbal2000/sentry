@@ -1,20 +1,29 @@
-import {browserHistory} from 'react-router';
+import {ReleaseFixture} from 'sentry-fixture/release';
 import {
-  SessionUserCountByStatus,
-  SessionUserCountByStatus2,
+  SessionUserCountByStatus2Fixture,
+  SessionUserCountByStatusFixture,
 } from 'sentry-fixture/sessions';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {act, render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
+import type {ReleaseProject} from 'sentry/types/release';
 import ReleaseComparisonChart from 'sentry/views/releases/detail/overview/releaseComparisonChart';
 
 describe('Releases > Detail > Overview > ReleaseComparison', () => {
-  const {routerContext, organization, project} = initializeOrg();
+  const {router, organization, project: rawProject} = initializeOrg();
   const api = new MockApiClient();
-  const release = TestStubs.Release();
-  const releaseSessions = SessionUserCountByStatus();
-  const allSessions = SessionUserCountByStatus2();
+  const release = ReleaseFixture();
+  const releaseSessions = SessionUserCountByStatusFixture();
+  const allSessions = SessionUserCountByStatus2Fixture();
+
+  const project: ReleaseProject = {
+    ...rawProject,
+    id: parseInt(rawProject.id, 10),
+    newGroups: 0,
+    platform: 'java',
+    platforms: ['java'],
+  };
 
   it('displays correct all/release/change data', () => {
     render(
@@ -23,7 +32,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
         releaseSessions={releaseSessions}
         allSessions={allSessions}
         platform="javascript"
-        location={{...routerContext.location, query: {}}}
+        location={{...router.location, query: {}}}
         loading={false}
         reloading={false}
         errored={false}
@@ -32,7 +41,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
         api={api}
         hasHealthData
       />,
-      {context: routerContext}
+      {router}
     );
 
     expect(screen.getByLabelText('Chart Title')).toHaveTextContent(
@@ -40,7 +49,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
     );
     expect(screen.getByLabelText('Chart Value')).toHaveTextContent(/95\.006% 4\.51%/);
 
-    expect(screen.getAllByRole('radio').length).toBe(2);
+    expect(screen.getAllByRole('radio')).toHaveLength(2);
 
     // lazy way to make sure that all percentages are calculated correctly
     expect(
@@ -57,7 +66,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
         releaseSessions={releaseSessions}
         allSessions={allSessions}
         platform="javascript"
-        location={{...routerContext.location, query: {}}}
+        location={{...router.location, query: {}}}
         loading={false}
         reloading={false}
         errored={false}
@@ -66,12 +75,14 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
         api={api}
         hasHealthData
       />,
-      {context: routerContext}
+      {router}
     );
 
     await userEvent.click(screen.getByLabelText(/crash free user rate/i));
 
-    expect(browserHistory.push).toHaveBeenCalledWith({query: {chart: 'crashFreeUsers'}});
+    expect(router.push).toHaveBeenCalledWith(
+      expect.objectContaining({query: {chart: 'crashFreeUsers'}})
+    );
 
     rerender(
       <ReleaseComparisonChart
@@ -79,7 +90,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
         releaseSessions={releaseSessions}
         allSessions={allSessions}
         platform="javascript"
-        location={{...routerContext.location, query: {chart: 'crashFreeUsers'}}}
+        location={{...router.location, query: {chart: 'crashFreeUsers'}}}
         loading={false}
         reloading={false}
         errored={false}
@@ -103,7 +114,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
         releaseSessions={releaseSessions}
         allSessions={allSessions}
         platform="javascript"
-        location={{...routerContext.location, query: {}}}
+        location={{...router.location, query: {}}}
         loading={false}
         reloading={false}
         errored={false}
@@ -112,7 +123,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
         api={api}
         hasHealthData
       />,
-      {context: routerContext}
+      {router}
     );
 
     for (const toggle of screen.getAllByLabelText(/toggle chart/i)) {
@@ -121,7 +132,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
 
     await userEvent.click(screen.getByLabelText(/toggle additional/i));
 
-    expect(screen.getAllByRole('radio').length).toBe(12);
+    expect(screen.getAllByRole('radio')).toHaveLength(12);
     // lazy way to make sure that all percentages are calculated correctly
     expect(
       screen.getByTestId('release-comparison-table').textContent
@@ -135,7 +146,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
     }
     await userEvent.click(screen.getByLabelText(/toggle additional/i));
 
-    expect(screen.getAllByRole('radio').length).toBe(2);
+    expect(screen.getAllByRole('radio')).toHaveLength(2);
   });
 
   it('does not show expanders if there is no health data', async () => {
@@ -158,7 +169,7 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
         releaseSessions={null}
         allSessions={null}
         platform="javascript"
-        location={{...routerContext.location, query: {}}}
+        location={{...router.location, query: {}}}
         loading={false}
         reloading={false}
         errored={false}
@@ -170,10 +181,10 @@ describe('Releases > Detail > Overview > ReleaseComparison', () => {
         api={api}
         hasHealthData={false}
       />,
-      {context: routerContext}
+      {router}
     );
 
-    expect(screen.getAllByRole('radio').length).toBe(1);
+    expect(screen.getAllByRole('radio')).toHaveLength(1);
     expect(screen.queryByLabelText(/toggle chart/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/toggle additional/i)).not.toBeInTheDocument();
 

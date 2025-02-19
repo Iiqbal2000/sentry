@@ -2,6 +2,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry import tagstore
+from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import EnvironmentMixin, region_silo_endpoint
 from sentry.api.bases.project import ProjectEndpoint
@@ -13,6 +14,7 @@ from sentry.models.environment import Environment
 
 @region_silo_endpoint
 class ProjectTagKeyValuesEndpoint(ProjectEndpoint, EnvironmentMixin):
+    owner = ApiOwner.UNOWNED
     publish_status = {
         "GET": ApiPublishStatus.UNKNOWN,
     }
@@ -27,12 +29,12 @@ class ProjectTagKeyValuesEndpoint(ProjectEndpoint, EnvironmentMixin):
         values.
         When paginated can return at most 1000 values.
 
-        :pparam string organization_slug: the slug of the organization.
-        :pparam string project_slug: the slug of the project.
+        :pparam string organization_id_or_slug: the id or slug of the organization.
+        :pparam string project_id_or_slug: the id or slug of the project.
         :pparam string key: the tag key to look up.
         :auth: required
         """
-        lookup_key = tagstore.prefix_reserved_key(key)
+        lookup_key = tagstore.backend.prefix_reserved_key(key)
         tenant_ids = {"organization_id": project.organization_id}
         try:
             environment_id = self._get_environment_id_from_request(request, project.organization_id)
@@ -40,8 +42,16 @@ class ProjectTagKeyValuesEndpoint(ProjectEndpoint, EnvironmentMixin):
             # if the environment doesn't exist then the tag can't possibly exist
             raise ResourceDoesNotExist
 
+        # Flags are stored on the same table as tags but on a different column. Ideally both
+        # could be queried in a single request. But at present we're not sure if we want to
+        # treat tags and flags as the same or different and in which context.
+        if request.GET.get("useFlagsBackend") == "1":
+            backend = tagstore.flag_backend
+        else:
+            backend = tagstore.backend
+
         try:
-            tagkey = tagstore.get_tag_key(
+            tagkey = backend.get_tag_key(
                 project.id,
                 environment_id,
                 lookup_key,
@@ -52,7 +62,7 @@ class ProjectTagKeyValuesEndpoint(ProjectEndpoint, EnvironmentMixin):
 
         start, end = get_date_range_from_params(request.GET)
 
-        paginator = tagstore.get_tag_value_paginator(
+        paginator = backend.get_tag_value_paginator(
             project.id,
             environment_id,
             tagkey.key,

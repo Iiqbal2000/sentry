@@ -1,9 +1,10 @@
 import dompurify from 'dompurify';
-import marked from 'marked'; // eslint-disable-line no-restricted-imports
+import type {MarkedOptions} from 'marked'; // eslint-disable-line no-restricted-imports
+import {marked} from 'marked'; // eslint-disable-line no-restricted-imports
 import Prism from 'prismjs';
 
 import {NODE_ENV} from 'sentry/constants';
-import {loadPrismLanguage} from 'sentry/utils/loadPrismLanguage';
+import {loadPrismLanguage} from 'sentry/utils/prism';
 
 // Only https and mailto, (e.g. no javascript, vbscript, data protocols)
 const safeLinkPattern = /^(https?:|mailto:)/i;
@@ -28,7 +29,7 @@ class SafeRenderer extends marked.Renderer {
       return href;
     }
 
-    const out = `<a href="${href}"${title ? ` title="${title}"` : ''}>${text}</a>`;
+    const out = super.link(href, title, text);
     return dompurify.sanitize(out);
   }
 
@@ -38,7 +39,17 @@ class SafeRenderer extends marked.Renderer {
       return '';
     }
 
-    return `<img src="${href}" alt="${text}"${title ? ` title="${title}"` : ''} />`;
+    return super.image(href, title, text);
+  }
+}
+
+class LimitedRenderer extends marked.Renderer {
+  link(href: string) {
+    return href;
+  }
+
+  image(href: string) {
+    return href;
   }
 }
 
@@ -58,11 +69,12 @@ marked.setOptions({
     }
 
     if (lang in Prism.languages) {
-      return Prism.highlight(code, Prism.languages[lang], lang);
+      return Prism.highlight(code, Prism.languages[lang]!, lang);
     }
 
     loadPrismLanguage(lang, {
-      onLoad: () => callback?.(null, Prism.highlight(code, Prism.languages[lang], lang)),
+      onLoad: () =>
+        callback?.(null!, Prism.highlight(code, Prism.languages[lang]!, lang)),
       onError: error => callback?.(error, code),
       suppressExistenceWarning: true,
     });
@@ -80,11 +92,15 @@ marked.setOptions({
   silent: NODE_ENV === 'test',
 });
 
-const sanitizedMarked = (...args: Parameters<typeof marked>) =>
-  dompurify.sanitize(marked(...args));
+const limitedMarked = (text: string, options: MarkedOptions = {}) =>
+  sanitizedMarked(text, {...options, renderer: new LimitedRenderer()});
 
-const singleLineRenderer = (text: string, options: marked.MarkedOptions = {}) =>
+const sanitizedMarked = (src: string, options?: MarkedOptions) => {
+  return dompurify.sanitize(marked(src, options));
+};
+
+const singleLineRenderer = (text: string, options: MarkedOptions = {}) =>
   sanitizedMarked(text, {...options, renderer: new NoParagraphRenderer()});
 
-export {singleLineRenderer};
+export {singleLineRenderer, limitedMarked};
 export default sanitizedMarked;

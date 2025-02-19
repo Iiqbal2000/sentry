@@ -1,30 +1,32 @@
-import {browserHistory} from 'react-router';
-import {Theme} from '@emotion/react';
-import {Location} from 'history';
+import type {Theme} from '@emotion/react';
+import type {Location} from 'history';
 import isNumber from 'lodash/isNumber';
-import isString from 'lodash/isString';
 import maxBy from 'lodash/maxBy';
 import set from 'lodash/set';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
 import {lightenBarColor} from 'sentry/components/performance/waterfall/utils';
-import {Organization} from 'sentry/types';
-import {
+import type {
   AggregateEntrySpans,
   AggregateEventTransaction,
   EntrySpans,
-  EntryType,
   EventTransaction,
 } from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
 import {assert} from 'sentry/types/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {MobileVital, WebVital} from 'sentry/utils/fields';
-import {TraceError, TraceFullDetailed} from 'sentry/utils/performance/quickTrace/types';
+import type {
+  TraceError,
+  TraceFullDetailed,
+} from 'sentry/utils/performance/quickTrace/types';
 import {VITAL_DETAILS} from 'sentry/utils/performance/vitals/constants';
 
 import {MERGE_LABELS_THRESHOLD_PERCENT} from './constants';
-import SpanTreeModel from './spanTreeModel';
-import {
+import type SpanTreeModel from './spanTreeModel';
+import type {
   AggregateSpanType,
   EnhancedSpan,
   GapSpanType,
@@ -39,7 +41,7 @@ import {
 } from './types';
 
 export const isValidSpanID = (maybeSpanID: any) =>
-  isString(maybeSpanID) && maybeSpanID.length > 0;
+  typeof maybeSpanID === 'string' && maybeSpanID.length > 0;
 
 export type SpanBoundsType = {endTimestamp: number; startTimestamp: number};
 export type SpanGeneratedBoundsType =
@@ -112,7 +114,8 @@ const HTTP_DATA_KEYS = [
   'http.request.response_start',
   'http.request.response_end',
 ];
-const HIDDEN_DATA_KEYS = HTTP_DATA_KEYS;
+const INTERNAL_DATA_KEYS = ['sentry_tags'];
+const HIDDEN_DATA_KEYS = [...HTTP_DATA_KEYS, ...INTERNAL_DATA_KEYS];
 
 const TIMING_DATA_KEYS = [
   SpanSubTimingMark.HTTP_REQUEST_START,
@@ -312,7 +315,7 @@ export function isOrphanSpan(span: ProcessedSpanType): span is OrphanSpanType {
   return false;
 }
 
-export function getSpanID(span: ProcessedSpanType, defaultSpanID: string = ''): string {
+export function getSpanID(span: ProcessedSpanType, defaultSpanID = ''): string {
   if (isGapSpan(span)) {
     return defaultSpanID;
   }
@@ -470,17 +473,17 @@ export function parseTrace(
   const spans: Array<RawSpanType | AggregateSpanType> = spanEntry?.data ?? [];
 
   const traceContext = getTraceContext(event);
-  const traceID = (traceContext && traceContext.trace_id) || '';
-  const rootSpanID = (traceContext && traceContext.span_id) || '';
-  const rootSpanOpName = (traceContext && traceContext.op) || 'transaction';
-  const description = traceContext && traceContext.description;
-  const parentSpanID = traceContext && traceContext.parent_span_id;
-  const rootSpanStatus = traceContext && traceContext.status;
-  const hash = traceContext && traceContext.hash;
-  const exclusiveTime = traceContext && traceContext.exclusive_time;
-  const count = traceContext && traceContext.count;
-  const frequency = traceContext && traceContext.frequency;
-  const total = traceContext && traceContext.total;
+  const traceID = traceContext?.trace_id || '';
+  const rootSpanID = traceContext?.span_id || '';
+  const rootSpanOpName = traceContext?.op || 'transaction';
+  const description = traceContext?.description;
+  const parentSpanID = traceContext?.parent_span_id;
+  const rootSpanStatus = traceContext?.status;
+  const hash = traceContext?.hash;
+  const exclusiveTime = traceContext?.exclusive_time;
+  const count = traceContext?.count;
+  const frequency = traceContext?.frequency;
+  const total = traceContext?.total;
 
   if (!spanEntry || spans.length <= 0) {
     return {
@@ -555,7 +558,7 @@ export function parseTrace(
 
     // get any span children whose parent_span_id is equal to span.parent_span_id,
     // otherwise start with an empty array
-    const spanChildren: Array<SpanType> = acc.childSpans[span.parent_span_id] ?? [];
+    const spanChildren: SpanType[] = acc.childSpans[span.parent_span_id] ?? [];
 
     spanChildren.push(span);
 
@@ -581,7 +584,7 @@ export function parseTrace(
       return acc;
     }
 
-    if (hasEndTimestamp && span.timestamp! > acc.traceEndTimestamp) {
+    if (hasEndTimestamp && span.timestamp > acc.traceEndTimestamp) {
       acc.traceEndTimestamp = span.timestamp;
       return acc;
     }
@@ -668,6 +671,7 @@ export function isEventFromBrowserJavaScriptSDK(
     'sentry.javascript.remix',
     'sentry.javascript.svelte',
     'sentry.javascript.sveltekit',
+    'sentry.javascript.astro',
   ].includes(sdkName.toLowerCase());
 }
 
@@ -696,7 +700,7 @@ function hasFailedThreshold(marks: Measurements): boolean {
   );
 
   return records.some(record => {
-    const {value} = marks[record.slug];
+    const {value} = marks[record.slug]!;
     if (typeof value === 'number' && typeof record.poorThreshold === 'number') {
       return value >= record.poorThreshold;
     }
@@ -729,7 +733,7 @@ export function getMeasurements(
   const measurements = Object.keys(event.measurements)
     .filter(name => allowedVitals.has(`measurements.${name}`))
     .map(name => {
-      const associatedMeasurement = event.measurements![name];
+      const associatedMeasurement = event.measurements![name]!;
       return {
         name,
         // Time timestamp is in seconds, but the measurement value is given in ms so convert it here
@@ -765,14 +769,15 @@ export function getMeasurements(
       if (positionDelta <= MERGE_LABELS_THRESHOLD_PERCENT) {
         const verticalMark = mergedMeasurements.get(otherPos)!;
 
-        const {poorThreshold} = VITAL_DETAILS[`measurements.${name}`];
+        const {poorThreshold} =
+          VITAL_DETAILS[`measurements.${name}` as keyof typeof VITAL_DETAILS];
 
         verticalMark.marks = {
           ...verticalMark.marks,
           [name]: {
             value,
             timestamp: measurement.timestamp,
-            failedThreshold: value ? value >= poorThreshold : false,
+            failedThreshold: value ? value >= poorThreshold! : false,
           },
         };
 
@@ -785,13 +790,14 @@ export function getMeasurements(
       }
     }
 
-    const {poorThreshold} = VITAL_DETAILS[`measurements.${name}`];
+    const {poorThreshold} =
+      VITAL_DETAILS[`measurements.${name}` as keyof typeof VITAL_DETAILS];
 
     const marks = {
       [name]: {
         value,
         timestamp: measurement.timestamp,
-        failedThreshold: value ? value >= poorThreshold : false,
+        failedThreshold: value ? value >= poorThreshold! : false,
       },
     };
 
@@ -885,6 +891,26 @@ export function scrollToSpan(
   };
 }
 
+type TraceDetailsHashIds = {
+  eventId: string | undefined;
+  spanId: string | undefined;
+};
+
+export function parseTraceDetailsURLHash(hash: string): TraceDetailsHashIds | null {
+  if (!hash) {
+    return null;
+  }
+
+  const values = hash.split('#').slice(1);
+  const eventId = values.find(value => value.includes('txn'))?.split('-')[1];
+  const spanId = values.find(value => value.includes('span'))?.split('-')[1];
+
+  return {
+    eventId,
+    spanId,
+  };
+}
+
 export function spanTargetHash(spanId: string): string {
   return `#span-${spanId}`;
 }
@@ -923,8 +949,8 @@ export function getSpanGroupTimestamps(spanGroup: EnhancedSpan[]) {
       };
     },
     {
-      startTimestamp: spanGroup[0].span.start_timestamp,
-      endTimestamp: spanGroup[0].span.timestamp,
+      startTimestamp: spanGroup[0]!.span.start_timestamp,
+      endTimestamp: spanGroup[0]!.span.timestamp,
     }
   );
 }
@@ -975,15 +1001,26 @@ export function getSpanGroupBounds(
 }
 
 export function getCumulativeAlertLevelFromErrors(
-  errors?: Pick<TraceError, 'level'>[]
+  errors?: Array<Pick<TraceError, 'level' | 'type'>>
 ): keyof Theme['alert'] | undefined {
-  const highestErrorLevel = maxBy(errors || [], error => ERROR_LEVEL_WEIGHTS[error.level])
-    ?.level;
+  const highestErrorLevel = maxBy(
+    errors || [],
+    error => ERROR_LEVEL_WEIGHTS[error.level]
+  )?.level;
+
+  if (errors?.some(isErrorPerformanceError)) {
+    return 'error';
+  }
 
   if (!highestErrorLevel) {
     return undefined;
   }
+
   return ERROR_LEVEL_TO_ALERT_TYPE[highestErrorLevel];
+}
+
+export function isErrorPerformanceError(error: {type?: number}): boolean {
+  return !!error.type && error.type >= 1000 && error.type < 2000;
 }
 
 // Maps the known error levels to an Alert component types
@@ -1030,22 +1067,22 @@ export function getFormattedTimeRangeWithLeadingAndTrailingZero(
     start: string[];
   }>(
     (acc, startString, index) => {
-      if (startString.length > endStrings[index].length) {
+      if (startString.length > endStrings[index]!.length) {
         acc.start.push(startString);
         acc.end.push(
           index === 0
-            ? endStrings[index].padStart(startString.length, '0')
-            : endStrings[index].padEnd(startString.length, '0')
+            ? endStrings[index]!.padStart(startString.length, '0')
+            : endStrings[index]!.padEnd(startString.length, '0')
         );
         return acc;
       }
 
       acc.start.push(
         index === 0
-          ? startString.padStart(endStrings[index].length, '0')
-          : startString.padEnd(endStrings[index].length, '0')
+          ? startString.padStart(endStrings[index]!.length, '0')
+          : startString.padEnd(endStrings[index]!.length, '0')
       );
-      acc.end.push(endStrings[index]);
+      acc.end.push(endStrings[index]!);
       return acc;
     },
     {start: [], end: []}

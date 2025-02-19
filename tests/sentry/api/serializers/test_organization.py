@@ -24,7 +24,6 @@ from sentry.models.organizationonboardingtask import (
 )
 from sentry.models.releaseprojectenvironment import ReleaseProjectEnvironment
 from sentry.testutils.cases import TestCase
-from sentry.testutils.silo import region_silo_test
 from sentry.testutils.skips import requires_snuba
 
 pytestmark = [requires_snuba]
@@ -54,7 +53,6 @@ mock_options_as_features = {
 }
 
 
-@region_silo_test(stable=True)
 class OrganizationSerializerTest(TestCase):
     def test_simple(self):
         user = self.create_user()
@@ -63,20 +61,20 @@ class OrganizationSerializerTest(TestCase):
         result = serialize(organization, user)
 
         assert result["id"] == str(organization.id)
-        assert result["features"] == {
+        assert result["features"] == [
             "advanced-search",
             "change-alerts",
             "crash-rate-alerts",
             "custom-symbol-sources",
-            "data-forwarding",
             "dashboards-basic",
             "dashboards-edit",
+            "data-forwarding",
             "discover-basic",
             "discover-query",
-            "derive-code-mappings",
             "event-attachments",
             "integrations-alert-rule",
             "integrations-chat-unfurl",
+            "integrations-codeowners",
             "integrations-deployment",
             "integrations-enterprise-alert-rule",
             "integrations-enterprise-incident-management",
@@ -84,33 +82,32 @@ class OrganizationSerializerTest(TestCase):
             "integrations-incident-management",
             "integrations-issue-basic",
             "integrations-issue-sync",
+            "integrations-stacktrace-link",
             "integrations-ticket-rules",
+            "integrations-vercel",
             "invite-members",
-            "invite-members-rate-limits",
             "minute-resolution-sessions",
-            "notifications-double-write",
+            "new-page-filter",
             "open-membership",
-            "project-stats",
+            "performance-tracing-without-performance",
             "relay",
-            "shared-issues",
             "session-replay-ui",
+            "shared-issues",
             "sso-basic",
             "sso-saml2",
             "symbol-sources",
             "team-insights",
             "team-roles",
-            "performance-issues-search",
-            "transaction-name-normalize",
-            "transaction-name-mark-scrubbed-as-sanitized",
-        }
+            "uptime",
+        ]
 
     @mock.patch("sentry.features.batch_has")
     def test_organization_batch_has(self, mock_batch):
         user = self.create_user()
         organization = self.create_organization(owner=user)
 
-        features.add("organizations:test-feature", OrganizationFeature)
-        features.add("organizations:disabled-feature", OrganizationFeature)
+        features.add("organizations:test-feature", OrganizationFeature, api_expose=True)
+        features.add("organizations:disabled-feature", OrganizationFeature, api_expose=True)
         mock_batch.return_value = {
             f"organization:{organization.id}": {
                 "organizations:test-feature": True,
@@ -147,7 +144,6 @@ class OrganizationSerializerTest(TestCase):
             assert feature not in features
 
 
-@region_silo_test(stable=True)
 class DetailedOrganizationSerializerTest(TestCase):
     def test_detailed(self):
         user = self.create_user()
@@ -163,9 +159,9 @@ class DetailedOrganizationSerializerTest(TestCase):
         assert result["relayPiiConfig"] is None
         assert isinstance(result["orgRoleList"], list)
         assert isinstance(result["teamRoleList"], list)
+        assert result["requiresSso"] == acc.requires_sso
 
 
-@region_silo_test(stable=True)
 class DetailedOrganizationSerializerWithProjectsAndTeamsTest(TestCase):
     def test_detailed_org_projs_teams(self):
         # access the test fixtures so they're initialized
@@ -186,7 +182,7 @@ class DetailedOrganizationSerializerWithProjectsAndTeamsTest(TestCase):
         self.team
         self.project
         self.release = self.create_release(self.project)
-        self.date = datetime.datetime(2018, 1, 12, 3, 8, 25, tzinfo=timezone.utc)
+        self.date = datetime.datetime(2018, 1, 12, 3, 8, 25, tzinfo=datetime.UTC)
         self.environment_1 = Environment.objects.create(
             organization_id=self.organization.id, name="production"
         )
@@ -222,7 +218,6 @@ class DetailedOrganizationSerializerWithProjectsAndTeamsTest(TestCase):
         options.set("api.organization.disable-last-deploys", opt_val)
 
 
-@region_silo_test(stable=True)
 class OnboardingTasksSerializerTest(TestCase):
     def test_onboarding_tasks_serializer(self):
         completion_seen = timezone.now()
@@ -242,7 +237,6 @@ class OnboardingTasksSerializerTest(TestCase):
         assert result["data"] == {}
 
 
-@region_silo_test(stable=True)
 class TrustedRelaySerializer(TestCase):
     def test_trusted_relay_serializer(self):
         completion_seen = timezone.now()

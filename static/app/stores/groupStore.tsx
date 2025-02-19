@@ -1,14 +1,14 @@
 import {createStore} from 'reflux';
 
-import {Indicator} from 'sentry/actionCreators/indicator';
+import type {Indicator} from 'sentry/actionCreators/indicator';
 import {t} from 'sentry/locale';
 import IndicatorStore from 'sentry/stores/indicatorStore';
-import {Activity, BaseGroup, Group, GroupStats} from 'sentry/types';
-import RequestError from 'sentry/utils/requestError/requestError';
-import toArray from 'sentry/utils/toArray';
+import type {Activity, BaseGroup, Group, GroupStats} from 'sentry/types/group';
+import toArray from 'sentry/utils/array/toArray';
+import type RequestError from 'sentry/utils/requestError/requestError';
 
 import SelectedGroupStore from './selectedGroupStore';
-import {CommonStoreDefinition} from './types';
+import type {StrictStoreDefinition} from './types';
 
 function showAlert(msg: string, type: Indicator['type']) {
   IndicatorStore.addMessage(msg, type, {duration: 4000});
@@ -28,6 +28,10 @@ type ItemIds = string[] | undefined;
 interface InternalDefinition {
   addActivity: (groupId: string, data: Activity, index?: number) => void;
   indexOfActivity: (groupId: string, id: string) => number;
+  /**
+   * Does not include pending changes
+   * TODO: Remove mutation and replace state with items
+   */
   items: Item[];
 
   pendingChanges: Map<ChangeId, Change>;
@@ -37,15 +41,15 @@ interface InternalDefinition {
   updateItems: (itemIds: ItemIds) => void;
 }
 
-interface GroupStoreDefinition extends CommonStoreDefinition<Item[]>, InternalDefinition {
+interface GroupStoreDefinition extends StrictStoreDefinition<Item[]>, InternalDefinition {
   add: (items: Item[]) => void;
   addStatus: (id: string, status: string) => void;
   addToFront: (items: Item[]) => void;
   clearStatus: (id: string, status: string) => void;
 
-  get: (id: string) => Item | undefined;
+  get: (id: string) => Readonly<Item> | undefined;
   getAllItemIds: () => string[];
-  getAllItems: () => Item[];
+  getAllItems: () => readonly Item[];
 
   hasStatus: (id: string, status: string) => boolean;
   init: () => void;
@@ -54,12 +58,14 @@ interface GroupStoreDefinition extends CommonStoreDefinition<Item[]>, InternalDe
 
   loadInitialData: (items: Item[]) => void;
 
+  mergeItems: (items: Item[]) => Item[];
+
   onAssignTo: (changeId: string, itemId: string, data: any) => void;
   onAssignToError: (changeId: string, itemId: string, error: RequestError) => void;
   onAssignToSuccess: (changeId: string, itemId: string, response: any) => void;
 
   onDelete: (changeId: string, itemIds: ItemIds) => void;
-  onDeleteError: (changeId: string, itemIds: ItemIds, error: Error) => void;
+  onDeleteError: (changeId: string, itemIds: ItemIds, response: RequestError) => void;
   onDeleteSuccess: (changeId: string, itemIds: ItemIds, response: any) => void;
 
   onDiscard: (changeId: string, itemId: string) => void;
@@ -81,9 +87,36 @@ interface GroupStoreDefinition extends CommonStoreDefinition<Item[]>, InternalDe
   reset: () => void;
 }
 
+function mergePendingChanges(
+  items: readonly Item[],
+  pendingChanges: Map<ChangeId, Change>
+): readonly Item[] {
+  // Merge pending changes into the existing group items. This gives the
+  // apperance of optimistic updates
+  const pendingById: Record<string, Change[]> = {};
+
+  pendingChanges.forEach(change => {
+    change.itemIds.forEach(itemId => {
+      const existing = pendingById[itemId] ?? [];
+      pendingById[itemId] = [...existing, change];
+    });
+  });
+
+  // Merge pending changes into the item if it has them
+  return items.map(item =>
+    pendingById[item.id] === undefined
+      ? item
+      : {
+          ...item,
+          ...pendingById[item.id]!.reduce((a, change) => ({...a, ...change.data}), {}),
+        }
+  );
+}
+
 const storeConfig: GroupStoreDefinition = {
   pendingChanges: new Map(),
   items: [],
+  state: [],
   statuses: {},
 
   init() {
@@ -96,24 +129,22 @@ const storeConfig: GroupStoreDefinition = {
   reset() {
     this.pendingChanges = new Map();
     this.items = [];
+    this.state = [];
     this.statuses = {};
   },
 
-  // TODO(dcramer): this should actually come from an action of some sorts
   loadInitialData(items) {
     this.reset();
 
-    const itemIds = new Set<string>();
-    items.forEach(item => {
-      itemIds.add(item.id);
-      this.items.push(item);
-    });
+    const itemIds = items.map(item => item.id);
+    this.items = [...this.items, ...items];
 
-    this.trigger(itemIds);
+    this.updateItems(itemIds);
   },
 
   updateItems(itemIds: ItemIds) {
     const idSet = new Set(itemIds);
+    this.state = mergePendingChanges(this.items, this.pendingChanges);
     this.trigger(idSet);
     SelectedGroupStore.onGroupChange(idSet);
   },
@@ -123,11 +154,14 @@ const storeConfig: GroupStoreDefinition = {
 
     // Merge these items into the store and return a mapping of any that aren't already in the store
     this.items.forEach((item, itemIndex) => {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       if (itemsById[item.id]) {
         this.items[itemIndex] = {
           ...item,
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           ...itemsById[item.id],
         };
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         delete itemsById[item.id];
       }
     });
@@ -156,6 +190,7 @@ const storeConfig: GroupStoreDefinition = {
     items = toArray(items);
     const itemMap = items.reduce((acc, item) => ({...acc, [item.id]: item}), {});
 
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     this.items = [...items, ...this.items.filter(item => !itemMap[item.id])];
 
     this.updateItems(items.map(item => item.id));
@@ -193,21 +228,21 @@ const storeConfig: GroupStoreDefinition = {
   },
 
   indexOfActivity(groupId, id) {
-    const group = this.get(groupId);
+    const group = this.items.find(item => item.id === groupId);
     if (!group) {
       return -1;
     }
 
     for (let i = 0; i < group.activity.length; i++) {
-      if (group.activity[i].id === id) {
+      if (group.activity[i]!.id === id) {
         return i;
       }
     }
     return -1;
   },
 
-  addActivity(id, data, index = -1) {
-    const group = this.get(id);
+  addActivity(groupId, data, index = -1) {
+    const group = this.items.find(item => item.id === groupId);
     if (!group) {
       return;
     }
@@ -222,11 +257,11 @@ const storeConfig: GroupStoreDefinition = {
       group.numComments++;
     }
 
-    this.updateItems([id]);
+    this.updateItems([groupId]);
   },
 
   updateActivity(groupId, id, data) {
-    const group = this.get(groupId);
+    const group = this.items.find(item => item.id === groupId);
     if (!group) {
       return;
     }
@@ -239,12 +274,12 @@ const storeConfig: GroupStoreDefinition = {
     // Here, we want to merge the new `data` being passed in
     // into the existing `data` object. This effectively
     // allows passing in an object of only changes.
-    group.activity[index].data = Object.assign(group.activity[index].data, data);
+    group.activity[index]!.data = Object.assign(group.activity[index]!.data, data);
     this.updateItems([group.id]);
   },
 
   removeActivity(groupId, id) {
-    const group = this.get(groupId);
+    const group = this.items.find(item => item.id === groupId);
     if (!group) {
       return -1;
     }
@@ -256,7 +291,7 @@ const storeConfig: GroupStoreDefinition = {
 
     const activity = group.activity.splice(index, 1);
 
-    if (activity[0].type === 'note') {
+    if (activity[0]!.type === 'note') {
       group.numComments--;
     }
 
@@ -273,30 +308,11 @@ const storeConfig: GroupStoreDefinition = {
   },
 
   getAllItems() {
-    // Merge pending changes into the existing group items. This gives the
-    // apperance of optimistic updates
-    const pendingById: Record<string, Change[]> = {};
-
-    this.pendingChanges.forEach(change => {
-      change.itemIds.forEach(itemId => {
-        const existing = pendingById[itemId] ?? [];
-        pendingById[itemId] = [...existing, change];
-      });
-    });
-
-    // Merge pending changes into the item if it has them
-    return this.items.map(item =>
-      pendingById[item.id] === undefined
-        ? item
-        : {
-            ...item,
-            ...pendingById[item.id].reduce((a, change) => ({...a, ...change.data}), {}),
-          }
-    );
+    return this.state;
   },
 
   getState() {
-    return this.getAllItems();
+    return this.state;
   },
 
   onAssignTo(_changeId, itemId, _data) {
@@ -320,7 +336,7 @@ const storeConfig: GroupStoreDefinition = {
       return;
     }
 
-    this.items[idx] = {...this.items[idx], assignedTo: response.assignedTo};
+    this.items[idx] = {...this.items[idx]!, assignedTo: response.assignedTo};
     this.clearStatus(itemId, 'assignTo');
     this.updateItems([itemId]);
   },
@@ -331,8 +347,12 @@ const storeConfig: GroupStoreDefinition = {
     this.updateItems(ids);
   },
 
-  onDeleteError(_changeId, itemIds, _response) {
-    showAlert(t('Unable to delete events. Please try again.'), 'error');
+  onDeleteError(_changeId, itemIds, response) {
+    if (response.status === 403) {
+      showAlert(t('You do not have permission to delete issues'), 'error');
+    } else {
+      showAlert(t('Unable to delete events. Please try again.'), 'error');
+    }
 
     if (!itemIds) {
       return;
@@ -410,7 +430,7 @@ const storeConfig: GroupStoreDefinition = {
     this.items = this.items.filter(
       item =>
         !mergedIdSet.has(item.id) ||
-        (response && response.merge && item.id === response.merge.parent)
+        (response?.merge && item.id === response.merge.parent)
     );
 
     if (ids.length > 0) {

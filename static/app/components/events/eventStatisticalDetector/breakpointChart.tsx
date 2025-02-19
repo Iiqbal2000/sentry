@@ -1,23 +1,22 @@
+import {ChartType} from 'sentry/chartcuterie/types';
 import TransitionChart from 'sentry/components/charts/transitionChart';
 import TransparentLoadingMask from 'sentry/components/charts/transparentLoadingMask';
-import {Event, EventsStatsData} from 'sentry/types';
-import EventView, {MetaType} from 'sentry/utils/discover/eventView';
-import {
-  DiscoverQueryProps,
-  useGenericDiscoverQuery,
-} from 'sentry/utils/discover/genericDiscoverQuery';
+import {t} from 'sentry/locale';
+import type {Event} from 'sentry/types/event';
+import type {EventsStatsData} from 'sentry/types/organization';
+import type {MetaType} from 'sentry/utils/discover/eventView';
+import EventView from 'sentry/utils/discover/eventView';
+import type {DiscoverQueryProps} from 'sentry/utils/discover/genericDiscoverQuery';
+import {useGenericDiscoverQuery} from 'sentry/utils/discover/genericDiscoverQuery';
 import {DiscoverDatasets} from 'sentry/utils/discover/types';
 import {useRelativeDateTime} from 'sentry/utils/profiling/hooks/useRelativeDateTime';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
-import {
-  NormalizedTrendsTransaction,
-  TrendFunctionField,
-} from 'sentry/views/performance/trends/types';
-import {generateTrendFunctionAsString} from 'sentry/views/performance/trends/utils';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
+import type {NormalizedTrendsTransaction} from 'sentry/views/performance/trends/types';
 
-import {DataSection} from '../styles';
-
+import {RELATIVE_DAYS_WINDOW} from './consts';
 import Chart from './lineChart';
 
 function camelToUnderscore(key: string) {
@@ -38,10 +37,11 @@ function EventBreakpointChart({event}: EventBreakpointChartProps) {
   eventView.query = `event.type:transaction transaction:"${transaction}"`;
   eventView.dataset = DiscoverDatasets.METRICS;
 
-  const {start: beforeDateTime, end: afterDateTime} = useRelativeDateTime({
+  const datetime = useRelativeDateTime({
     anchor: breakpoint,
-    relativeDays: 14,
+    relativeDays: RELATIVE_DAYS_WINDOW,
   });
+  const {start: beforeDateTime, end: afterDateTime} = datetime;
 
   eventView.start = (beforeDateTime as Date).toISOString();
   eventView.end = (afterDateTime as Date).toISOString();
@@ -52,11 +52,12 @@ function EventBreakpointChart({event}: EventBreakpointChartProps) {
   const normalizedOccurrenceEvent = Object.keys(
     event?.occurrence?.evidenceData ?? []
   ).reduce((acc, key) => {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     acc[camelToUnderscore(key)] = event?.occurrence?.evidenceData?.[key];
     return acc;
   }, {}) as NormalizedTrendsTransaction;
 
-  const {data, isLoading} = useGenericDiscoverQuery<
+  const {data, isPending} = useGenericDiscoverQuery<
     {
       data: EventsStatsData;
       meta: MetaType;
@@ -71,26 +72,26 @@ function EventBreakpointChart({event}: EventBreakpointChartProps) {
       // Manually inject y-axis for events-stats because
       // getEventsAPIPayload doesn't pass it along
       ...eventView.getEventsAPIPayload(location),
-      yAxis: 'p95(transaction.duration)',
+      yAxis: ['p95(transaction.duration)', 'count()'],
     }),
   });
 
   return (
-    <DataSection>
-      <TransitionChart loading={isLoading} reloading>
-        <TransparentLoadingMask visible={isLoading} />
+    <InterimSection
+      type={SectionKey.REGRESSION_BREAKPOINT_CHART}
+      title={t('Regression Breakpoint Chart')}
+    >
+      <TransitionChart loading={isPending} reloading>
+        <TransparentLoadingMask visible={isPending} />
         <Chart
-          statsData={data?.data ?? []}
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+          percentileData={data?.['p95(transaction.duration)']?.data ?? []}
           evidenceData={normalizedOccurrenceEvent}
-          start={eventView.start}
-          end={eventView.end}
-          chartLabel={generateTrendFunctionAsString(
-            TrendFunctionField.P95,
-            'transaction.duration'
-          )}
+          datetime={datetime}
+          chartType={ChartType.SLACK_PERFORMANCE_ENDPOINT_REGRESSION}
         />
       </TransitionChart>
-    </DataSection>
+    </InterimSection>
   );
 }
 

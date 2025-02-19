@@ -1,16 +1,13 @@
-import {memo} from 'react';
-import isObject from 'lodash/isObject';
-
-import {OnExpandCallback} from 'sentry/components/objectInspector';
-import {objectIsEmpty} from 'sentry/utils';
+import {defined} from 'sentry/utils';
 import type {BreadcrumbFrame, ConsoleFrame} from 'sentry/utils/replays/types';
 import {isConsoleFrame} from 'sentry/utils/replays/types';
 import Format from 'sentry/views/replays/detail/console/format';
+import type {OnExpandCallback} from 'sentry/views/replays/detail/useVirtualizedInspector';
 
 interface Props {
   frame: BreadcrumbFrame;
+  onExpand: OnExpandCallback;
   expandPaths?: string[];
-  onExpand?: OnExpandCallback;
 }
 
 // There is a special case where `console.error()` is called with an Error object.
@@ -25,21 +22,22 @@ function isSerializedError(frame: ConsoleFrame) {
     typeof frame.message === 'string' &&
     Array.isArray(args) &&
     args.length <= 2 &&
-    isObject(args[0]) &&
-    objectIsEmpty(args[0])
+    args[0] &&
+    typeof args[0] === 'object' &&
+    Object.keys(args[0]).length === 0
   );
 }
 
 /**
  * Attempt to emulate the browser console as much as possible
  */
-function UnmemoizedMessageFormatter({frame, expandPaths, onExpand}: Props) {
+export default function MessageFormatter({frame, expandPaths, onExpand}: Props) {
   if (!isConsoleFrame(frame)) {
     return (
       <Format
         expandPaths={expandPaths}
         onExpand={onExpand}
-        args={[frame.category, frame.data]}
+        args={[frame.category, frame.message, frame.data].filter(defined)}
       />
     );
   }
@@ -50,7 +48,7 @@ function UnmemoizedMessageFormatter({frame, expandPaths, onExpand}: Props) {
   if (args && isSerializedError(frame)) {
     // Sometimes message can include stacktrace
     const splitMessage = frame.message.split('\n');
-    const errorMessagePiece = splitMessage[0].trim();
+    const errorMessagePiece = splitMessage[0]!.trim();
     // Error.prototype.toString() will prepend the error type meaning it will
     // not be the same as `message` property. We want message only when
     // creating a new Error instance, otherwise the type will repeat.
@@ -73,7 +71,14 @@ function UnmemoizedMessageFormatter({frame, expandPaths, onExpand}: Props) {
       // Some browsers won't allow you to write to error properties
     }
 
-    return <Format expandPaths={expandPaths} onExpand={onExpand} args={[fakeError]} />;
+    // An Error object has non enumerable attributes that we want <StructuredEventData> to print
+    const fakeErrorObject = JSON.parse(
+      JSON.stringify(fakeError, Object.getOwnPropertyNames(fakeError))
+    );
+
+    return (
+      <Format expandPaths={expandPaths} onExpand={onExpand} args={[fakeErrorObject]} />
+    );
   }
 
   return (
@@ -84,6 +89,3 @@ function UnmemoizedMessageFormatter({frame, expandPaths, onExpand}: Props) {
     />
   );
 }
-
-const MessageFormatter = memo(UnmemoizedMessageFormatter);
-export default MessageFormatter;

@@ -1,4 +1,5 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {RouteComponentPropsFixture} from 'sentry-fixture/routeComponentPropsFixture';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {
@@ -12,7 +13,7 @@ import {
 import SentryAppDetailedView from 'sentry/views/settings/organizationIntegrations/sentryAppDetailedView';
 
 describe('SentryAppDetailedView', function () {
-  const org = Organization();
+  const org = OrganizationFixture();
 
   const {router} = initializeOrg({
     projects: [
@@ -36,9 +37,9 @@ describe('SentryAppDetailedView', function () {
   });
 
   describe('Published Sentry App', function () {
-    let createRequest;
-    let deleteRequest;
-    let sentryAppInteractionRequest;
+    let createRequest: jest.Mock;
+    let deleteRequest: jest.Mock;
+    let sentryAppInteractionRequest: jest.Mock;
 
     beforeEach(() => {
       sentryAppInteractionRequest = MockApiClient.addMockResponse({
@@ -108,7 +109,7 @@ describe('SentryAppDetailedView', function () {
     it('renders a published sentry app', () => {
       render(
         <SentryAppDetailedView
-          {...TestStubs.routeComponentProps()}
+          {...RouteComponentPropsFixture()}
           params={{integrationSlug: 'clickup'}}
         />
       );
@@ -133,7 +134,7 @@ describe('SentryAppDetailedView', function () {
     it('installs and uninstalls', async function () {
       render(
         <SentryAppDetailedView
-          {...TestStubs.routeComponentProps()}
+          {...RouteComponentPropsFixture()}
           params={{integrationSlug: 'clickup'}}
         />
       );
@@ -208,7 +209,7 @@ describe('SentryAppDetailedView', function () {
     it('should get redirected to Developer Settings', () => {
       render(
         <SentryAppDetailedView
-          {...TestStubs.routeComponentProps()}
+          {...RouteComponentPropsFixture()}
           params={{integrationSlug: 'my-headband-washer-289499'}}
           router={router}
         />
@@ -220,7 +221,7 @@ describe('SentryAppDetailedView', function () {
   });
 
   describe('Unpublished Sentry App without Redirect Url', function () {
-    let createRequest;
+    let createRequest: jest.Mock;
 
     beforeEach(() => {
       MockApiClient.addMockResponse({
@@ -289,7 +290,7 @@ describe('SentryAppDetailedView', function () {
     it('shows the Integration name and install status', function () {
       render(
         <SentryAppDetailedView
-          {...TestStubs.routeComponentProps()}
+          {...RouteComponentPropsFixture()}
           params={{integrationSlug: 'la-croix-monitor'}}
         />
       );
@@ -300,7 +301,7 @@ describe('SentryAppDetailedView', function () {
     it('installs and uninstalls', async function () {
       render(
         <SentryAppDetailedView
-          {...TestStubs.routeComponentProps()}
+          {...RouteComponentPropsFixture()}
           params={{integrationSlug: 'la-croix-monitor'}}
         />
       );
@@ -311,7 +312,7 @@ describe('SentryAppDetailedView', function () {
   });
 
   describe('Unpublished Sentry App with Redirect Url', function () {
-    let createRequest;
+    let createRequest: jest.Mock;
     beforeEach(() => {
       MockApiClient.addMockResponse({
         url: `/sentry-apps/go-to-google/interaction/`,
@@ -372,7 +373,7 @@ describe('SentryAppDetailedView', function () {
     it('shows the Integration name and install status', function () {
       render(
         <SentryAppDetailedView
-          {...TestStubs.routeComponentProps()}
+          {...RouteComponentPropsFixture()}
           params={{integrationSlug: 'go-to-google'}}
         />
       );
@@ -385,7 +386,7 @@ describe('SentryAppDetailedView', function () {
     it('onClick: redirects url', async function () {
       render(
         <SentryAppDetailedView
-          {...TestStubs.routeComponentProps()}
+          {...RouteComponentPropsFixture()}
           params={{integrationSlug: 'go-to-google'}}
         />
       );

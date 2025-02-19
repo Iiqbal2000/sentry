@@ -1,21 +1,24 @@
 import {Component} from 'react';
-import {browserHistory, RouteComponentProps} from 'react-router';
 import isEqual from 'lodash/isEqual';
 
 import {loadOrganizationTags} from 'sentry/actionCreators/tags';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import * as Layout from 'sentry/components/layouts/thirds';
 import PageFiltersContainer from 'sentry/components/organizations/pageFilters/container';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import {Organization, PageFilters, Project} from 'sentry/types';
+import type {PageFilters} from 'sentry/types/core';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import EventView from 'sentry/utils/discover/eventView';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import type EventView from 'sentry/utils/discover/eventView';
 import {WebVital} from 'sentry/utils/fields';
 import {PerformanceEventViewProvider} from 'sentry/utils/performance/contexts/performanceEventViewContext';
 import {decodeScalar} from 'sentry/utils/queryString';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 import withApi from 'sentry/utils/withApi';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import withOrganization from 'sentry/utils/withOrganization';
 import withPageFilters from 'sentry/utils/withPageFilters';
 import withProjects from 'sentry/utils/withProjects';
@@ -23,13 +26,14 @@ import withProjects from 'sentry/utils/withProjects';
 import {generatePerformanceVitalDetailView} from '../data';
 import {
   addRoutePerformanceContext,
+  getPerformanceBaseUrl,
   getSelectedProjectPlatforms,
   getTransactionName,
 } from '../utils';
 
 import VitalDetailContent from './vitalDetailContent';
 
-type Props = RouteComponentProps<{}, {}> & {
+type Props = RouteComponentProps & {
   api: Client;
   loadingProjects: boolean;
   organization: Organization;
@@ -100,7 +104,7 @@ class VitalDetail extends Component<Props, State> {
     if (!eventView) {
       browserHistory.replace(
         normalizeUrl({
-          pathname: `/organizations/${organization.slug}/performance/`,
+          pathname: getPerformanceBaseUrl(organization.slug),
           query: {
             ...location.query,
           },

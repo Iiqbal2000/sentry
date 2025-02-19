@@ -1,95 +1,127 @@
 import ExternalLink from 'sentry/components/links/externalLink';
-import {Layout, LayoutProps} from 'sentry/components/onboarding/gettingStartedDoc/layout';
-import {ModuleProps} from 'sentry/components/onboarding/gettingStartedDoc/sdkDocumentation';
 import {StepType} from 'sentry/components/onboarding/gettingStartedDoc/step';
-import {ProductSolution} from 'sentry/components/onboarding/productSelection';
+import {
+  type Docs,
+  DocsPageLocation,
+  type DocsParams,
+  type OnboardingConfig,
+} from 'sentry/components/onboarding/gettingStartedDoc/types';
+import {
+  feedbackOnboardingJsLoader,
+  replayOnboardingJsLoader,
+} from 'sentry/gettingStartedDocs/javascript/jsLoader/jsLoader';
+import {
+  AlternativeConfiguration,
+  crashReportOnboardingPython,
+  featureFlagOnboarding,
+} from 'sentry/gettingStartedDocs/python/python';
 import {t, tct} from 'sentry/locale';
 
-// Configuration Start
-const performanceConfiguration = `    # Set traces_sample_rate to 1.0 to capture 100%
-    # of transactions for performance monitoring.
-    traces_sample_rate=1.0,`;
+type Params = DocsParams;
 
-const profilingConfiguration = `    # Set profiles_sample_rate to 1.0 to profile 100%
-    # of sampled transactions.
-    # We recommend adjusting this value in production.
-    profiles_sample_rate=1.0,`;
+const getInstallSnippet = () => `pip install --upgrade 'sentry-sdk[django]'`;
 
-const introduction = (
-  <p>
-    {tct('The Django integration adds support for the [link:Django Web Framework].', {
-      link: <ExternalLink href="https://www.djangoproject.com/" />,
-    })}
-  </p>
-);
-
-export const steps = ({
-  sentryInitContent,
-}: {
-  sentryInitContent?: string;
-} = {}): LayoutProps['steps'] => [
-  {
-    type: StepType.INSTALL,
-    description: (
-      <p>
-        {tct('The Django integration adds support for the [link:Django Web Framework].', {
-          link: <ExternalLink href="https://www.djangoproject.com/" />,
-        })}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'bash',
-        description: (
-          <p>
-            {tct(
-              'Install [code:sentry-sdk] from PyPI with the [sentryDjangoCode:django] extra:',
-              {
-                code: <code />,
-                sentryDjangoCode: <code />,
-              }
-            )}
-          </p>
-        ),
-        code: 'pip install --upgrade sentry-sdk[django]',
-      },
-    ],
-  },
-  {
-    type: StepType.CONFIGURE,
-    description: (
-      <p>
-        {tct(
-          'If you have the [codeDjango:django] package in your dependencies, the Django integration will be enabled automatically when you initialize the Sentry SDK. Initialize the Sentry SDK in your Django [codeSettings:settings.py] file:',
-          {
-            codeDjango: <code />,
-            codeSettings: <code />,
-          }
-        )}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'python',
-        code: `# settings.py
+const getSdkSetupSnippet = (params: Params) => `
 import sentry_sdk
 
 sentry_sdk.init(
-${sentryInitContent}
-)`,
-      },
-    ],
-  },
-  {
-    type: StepType.VERIFY,
-    description: t(
-      'You can easily verify your Sentry installation by creating a route that triggers an error:'
-    ),
-    configurations: [
-      {
-        language: 'python',
+    dsn="${params.dsn.public}",
+    # Add data like request headers and IP for users,
+    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+    send_default_pii=True,${
+      params.isPerformanceSelected
+        ? `
+    # Set traces_sample_rate to 1.0 to capture 100%
+    # of transactions for tracing.
+    traces_sample_rate=1.0,`
+        : ''
+    }${
+      params.isProfilingSelected &&
+      params.profilingOptions?.defaultProfilingMode !== 'continuous'
+        ? `
+    # Set profiles_sample_rate to 1.0 to profile 100%
+    # of sampled transactions.
+    # We recommend adjusting this value in production.
+    profiles_sample_rate=1.0,`
+        : params.isProfilingSelected &&
+            params.profilingOptions?.defaultProfilingMode === 'continuous'
+          ? `
+    _experiments={
+        # Set continuous_profiling_auto_start to True
+        # to automatically start the profiler on when
+        # possible.
+        "continuous_profiling_auto_start": True,
+    },`
+          : ''
+    }
+)
+`;
 
-        code: `# urls.py
+const onboarding: OnboardingConfig = {
+  install: (params: Params) => [
+    {
+      type: StepType.INSTALL,
+      description: tct(
+        'Install [code:sentry-sdk] from PyPI with the [code:django] extra:',
+        {
+          code: <code />,
+        }
+      ),
+      configurations: [
+        {
+          description:
+            params.docsLocation === DocsPageLocation.PROFILING_PAGE
+              ? tct(
+                  'You need a minimum version [code:1.18.0] of the [code:sentry-python] SDK for the profiling feature.',
+                  {
+                    code: <code />,
+                  }
+                )
+              : undefined,
+          language: 'bash',
+          code: getInstallSnippet(),
+        },
+      ],
+    },
+  ],
+  configure: (params: Params) => [
+    {
+      type: StepType.CONFIGURE,
+      description: tct(
+        'Initialize the Sentry SDK in your Django [code:settings.py] file:',
+        {
+          code: <code />,
+        }
+      ),
+      configurations: [
+        {
+          code: [
+            {
+              label: 'settings.py',
+              value: 'settings.py',
+              language: 'python',
+              code: getSdkSetupSnippet(params),
+            },
+          ],
+        },
+      ],
+      additionalInfo: <AlternativeConfiguration />,
+    },
+  ],
+  verify: () => [
+    {
+      type: StepType.VERIFY,
+      description: t(
+        'You can easily verify your Sentry installation by creating a route that triggers an error:'
+      ),
+      configurations: [
+        {
+          code: [
+            {
+              label: 'urls.py',
+              value: 'urls.py',
+              language: 'python',
+              code: `
 from django.urls import path
 
 def trigger_error(request):
@@ -99,59 +131,102 @@ urlpatterns = [
     path('sentry-debug/', trigger_error),
     # ...
 ]
-        `,
-      },
-    ],
-    additionalInfo: (
-      <div>
-        <p>
-          {tct(
-            'When you point your browser to [link:http://localhost:8000/sentry-debug/] a transaction in the Performance section of Sentry will be created.',
-            {
-              link: <ExternalLink href="http://localhost:8000/" />,
-            }
-          )}
-        </p>
-        <p>
-          {t(
-            'Additionally, an error event will be sent to Sentry and will be connected to the transaction.'
-          )}
-        </p>
-        <p>{t('It takes a couple of moments for the data to appear in Sentry.')}</p>
-      </div>
+                  `,
+            },
+          ],
+        },
+      ],
+      additionalInfo: (
+        <div>
+          <p>
+            {tct(
+              'When you point your browser to [link:http://localhost:8000/sentry-debug/] an error with a trace will be created. So you can explore errors and tracing portions of Sentry.',
+              {
+                link: <ExternalLink href="http://localhost:8000/sentry-debug/" />,
+              }
+            )}
+          </p>
+          <br />
+          <p>
+            {t(
+              'It can take a couple of moments for the data to appear in Sentry. Bear with us, the internet is huge.'
+            )}
+          </p>
+        </div>
+      ),
+    },
+  ],
+  nextSteps: () => [],
+};
+
+const performanceOnboarding: OnboardingConfig = {
+  introduction: () =>
+    t(
+      "Adding Performance to your Django project is simple. Make sure you've got these basics down."
     ),
-  },
-];
-// Configuration End
+  install: onboarding.install,
+  configure: params => [
+    {
+      type: StepType.CONFIGURE,
+      configurations: [
+        {
+          language: 'python',
+          description: tct(
+            'To configure the Sentry SDK, initialize it in your [code:settings.py] file:',
+            {code: <code />}
+          ),
+          code: `
+import sentry-sdk
 
-export function GettingStartedWithDjango({
-  dsn,
-  activeProductSelection = [],
-  ...props
-}: ModuleProps) {
-  const otherConfigs: string[] = [];
+sentry_sdk.init(
+  dsn: "${params.dsn.public}",
 
-  let sentryInitContent: string[] = [`    dsn="${dsn}",`];
+  // Set traces_sample_rate to 1.0 to capture 100%
+  // of transactions for performance monitoring.
+  traces_sample_rate=1.0,
+)`,
+          additionalInfo: tct(
+            'Learn more about tracing [linkTracingOptions:options], how to use the [linkTracesSampler:traces_sampler] function, or how to do [linkSampleTransactions:sampling].',
+            {
+              linkTracingOptions: (
+                <ExternalLink href="https://docs.sentry.io/platforms/python/configuration/options/#tracing-options" />
+              ),
+              linkTracesSampler: (
+                <ExternalLink href="https://docs.sentry.io/platforms/python/configuration/sampling/" />
+              ),
+              linkSampleTransactions: (
+                <ExternalLink href="https://docs.sentry.io/platforms/python/configuration/sampling/" />
+              ),
+            }
+          ),
+        },
+      ],
+    },
+  ],
+  verify: () => [
+    {
+      type: StepType.VERIFY,
+      description: tct(
+        'Verify that performance monitoring is working correctly with our [link:automatic instrumentation] by simply using your Python application.',
+        {
+          link: (
+            <ExternalLink href="https://docs.sentry.io/platforms/python/tracing/instrumentation/automatic-instrumentation/" />
+          ),
+        }
+      ),
+    },
+  ],
+  nextSteps: () => [],
+};
 
-  if (activeProductSelection.includes(ProductSolution.PERFORMANCE_MONITORING)) {
-    otherConfigs.push(performanceConfiguration);
-  }
+const docs: Docs = {
+  onboarding,
+  replayOnboardingJsLoader,
 
-  if (activeProductSelection.includes(ProductSolution.PROFILING)) {
-    otherConfigs.push(profilingConfiguration);
-  }
+  performanceOnboarding,
+  crashReportOnboarding: crashReportOnboardingPython,
+  featureFlagOnboarding,
+  feedbackOnboardingJsLoader,
+};
 
-  sentryInitContent = sentryInitContent.concat(otherConfigs);
-
-  return (
-    <Layout
-      introduction={introduction}
-      steps={steps({
-        sentryInitContent: sentryInitContent.join('\n'),
-      })}
-      {...props}
-    />
-  );
-}
-
-export default GettingStartedWithDjango;
+export default docs;

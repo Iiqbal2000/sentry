@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, Protocol, Type
+from collections.abc import Mapping
+from typing import Any, Protocol
 
 import sentry_sdk
 from sentry_sdk.tracing import Span
@@ -36,13 +37,13 @@ def clamp_pagination_per_page(
         raise ValueError("Invalid per_page parameter.")
 
     max_per_page = max(max_per_page, default_per_page)
-    if per_page > max_per_page:
-        raise ValueError(f"Invalid per_page value. Cannot exceed {max_per_page}.")
+    if per_page < 1 or per_page > max_per_page:
+        raise ValueError(f"Invalid per_page value. Must be between 1 and {max_per_page}.")
 
     return per_page
 
 
-def get_cursor(cursor_name: str | None, cursor_cls: Type[Cursor] = Cursor) -> Cursor | None:
+def get_cursor(cursor_name: str | None, cursor_cls: type[Cursor] = Cursor) -> Cursor | None:
     if not cursor_name:
         return None
 
@@ -54,7 +55,7 @@ def get_cursor(cursor_name: str | None, cursor_cls: Type[Cursor] = Cursor) -> Cu
 
 def get_paginator(
     paginator: PaginatorLike | None = None,
-    paginator_cls: Type[PaginatorLike] | None = None,
+    paginator_cls: type[PaginatorLike] | None = None,
     paginator_kwargs: Mapping[str, Any] | None = None,
 ) -> PaginatorLike:
     if paginator_cls is None:

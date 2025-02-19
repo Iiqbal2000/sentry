@@ -1,11 +1,12 @@
-import {Component, createRef, Fragment, Profiler, ReactNode} from 'react';
-import {Location} from 'history';
+import type {ReactNode} from 'react';
+import {Component, createRef, Fragment} from 'react';
 
 import EmptyStateWarning from 'sentry/components/emptyStateWarning';
+import InteractionStateLayer from 'sentry/components/interactionStateLayer';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {onRenderCallback} from 'sentry/utils/performanceForSentry';
+import {onRenderCallback, Profiler} from 'sentry/utils/performanceForSentry';
 
 import {
   Body,
@@ -62,8 +63,8 @@ export type ColResizeMetadata = {
 };
 
 type GridEditableProps<DataRow, ColumnKey> = {
-  columnOrder: GridColumnOrder<ColumnKey>[];
-  columnSortBy: GridColumnSortBy<ColumnKey>[];
+  columnOrder: Array<GridColumnOrder<ColumnKey>>;
+  columnSortBy: Array<GridColumnSortBy<ColumnKey>>;
   data: DataRow[];
 
   /**
@@ -92,22 +93,29 @@ type GridEditableProps<DataRow, ColumnKey> = {
       rowIndex?: number
     ) => React.ReactNode[];
   };
-  location: Location;
+  'aria-label'?: string;
+  bodyStyle?: React.CSSProperties;
   emptyMessage?: React.ReactNode;
-  error?: React.ReactNode | null;
+  error?: unknown | null;
   /**
    * Inject a set of buttons into the top of the grid table.
    * The controlling component is responsible for handling any actions
    * in these buttons and updating props to the GridEditable instance.
    */
   headerButtons?: () => React.ReactNode;
+
   height?: string | number;
+  highlightedRowKey?: number;
 
   isLoading?: boolean;
+
+  minimumColWidth?: number;
+
+  onRowMouseOut?: (row: DataRow, key: number, event: React.MouseEvent) => void;
+  onRowMouseOver?: (row: DataRow, key: number, event: React.MouseEvent) => void;
+
   scrollable?: boolean;
-
   stickyHeader?: boolean;
-
   /**
    * GridEditable (mostly) do not maintain any internal state and relies on the
    * parent component to tell it how/what to render and will mutate the view
@@ -170,7 +178,7 @@ class GridEditable<
 
   clearWindowLifecycleEvents() {
     Object.keys(this.resizeWindowLifecycleEvents).forEach(e => {
-      this.resizeWindowLifecycleEvents[e].forEach(c => window.removeEventListener(e, c));
+      this.resizeWindowLifecycleEvents[e]!.forEach(c => window.removeEventListener(e, c));
       this.resizeWindowLifecycleEvents[e] = [];
     });
   }
@@ -180,7 +188,7 @@ class GridEditable<
 
     const nextColumnOrder = [...this.props.columnOrder];
     nextColumnOrder[i] = {
-      ...nextColumnOrder[i],
+      ...nextColumnOrder[i]!,
       width: COL_WIDTH_UNDEFINED,
     };
     this.setGridTemplateColumns(nextColumnOrder);
@@ -194,7 +202,7 @@ class GridEditable<
     }
   };
 
-  onResizeMouseDown = (e: React.MouseEvent, i: number = -1) => {
+  onResizeMouseDown = (e: React.MouseEvent, i = -1) => {
     e.stopPropagation();
 
     // Block right-click and other funky stuff
@@ -203,7 +211,7 @@ class GridEditable<
     }
 
     // <GridResizer> is nested 1 level down from <GridHeadCell>
-    const cell = e.currentTarget!.parentElement;
+    const cell = e.currentTarget.parentElement;
     if (!cell) {
       return;
     }
@@ -216,10 +224,10 @@ class GridEditable<
     };
 
     window.addEventListener('mousemove', this.onResizeMouseMove);
-    this.resizeWindowLifecycleEvents.mousemove.push(this.onResizeMouseMove);
+    this.resizeWindowLifecycleEvents.mousemove!.push(this.onResizeMouseMove);
 
     window.addEventListener('mouseup', this.onResizeMouseUp);
-    this.resizeWindowLifecycleEvents.mouseup.push(this.onResizeMouseUp);
+    this.resizeWindowLifecycleEvents.mouseup!.push(this.onResizeMouseUp);
   };
 
   onResizeMouseUp = (e: MouseEvent) => {
@@ -231,7 +239,7 @@ class GridEditable<
       const widthChange = e.clientX - metadata.cursorX;
 
       onResizeColumn(metadata.columnIndex, {
-        ...columnOrder[metadata.columnIndex],
+        ...columnOrder[metadata.columnIndex]!,
         width: metadata.columnWidth + widthChange,
       });
     }
@@ -259,7 +267,7 @@ class GridEditable<
 
     const nextColumnOrder = [...this.props.columnOrder];
     nextColumnOrder[metadata.columnIndex] = {
-      ...nextColumnOrder[metadata.columnIndex],
+      ...nextColumnOrder[metadata.columnIndex]!,
       width: Math.max(metadata.columnWidth + widthChange, 0),
     };
 
@@ -282,22 +290,23 @@ class GridEditable<
       return;
     }
 
+    const minimumColWidth = this.props.minimumColWidth ?? COL_WIDTH_MINIMUM;
     const prependColumns = this.props.grid.prependColumnWidths || [];
     const prepend = prependColumns.join(' ');
     const widths = columnOrder.map((item, index) => {
       if (item.width === COL_WIDTH_UNDEFINED) {
-        return `minmax(${COL_WIDTH_MINIMUM}px, auto)`;
+        return `minmax(${minimumColWidth}px, auto)`;
       }
-      if (typeof item.width === 'number' && item.width > COL_WIDTH_MINIMUM) {
+      if (typeof item.width === 'number' && item.width > minimumColWidth) {
         if (index === columnOrder.length - 1) {
           return `minmax(${item.width}px, auto)`;
         }
         return `${item.width}px`;
       }
       if (index === columnOrder.length - 1) {
-        return `minmax(${COL_WIDTH_MINIMUM}px, auto)`;
+        return `minmax(${minimumColWidth}px, auto)`;
       }
-      return `${COL_WIDTH_MINIMUM}px`;
+      return `${minimumColWidth}px`;
     });
 
     // The last column has no resizer and should always be a flexible column
@@ -369,19 +378,26 @@ class GridEditable<
   }
 
   renderGridBodyRow = (dataRow: DataRow, row: number) => {
-    const {columnOrder, grid} = this.props;
+    const {columnOrder, grid, onRowMouseOver, onRowMouseOut, highlightedRowKey} =
+      this.props;
     const prependColumns = grid.renderPrependColumns
       ? grid.renderPrependColumns(false, dataRow, row)
       : [];
 
     return (
-      <GridRow key={row} data-test-id="grid-body-row">
-        {prependColumns &&
-          prependColumns.map((item, i) => (
-            <GridBodyCell data-test-id="grid-body-cell" key={`prepend-${i}`}>
-              {item}
-            </GridBodyCell>
-          ))}
+      <GridRow
+        key={row}
+        onMouseOver={event => onRowMouseOver?.(dataRow, row, event)}
+        onMouseOut={event => onRowMouseOut?.(dataRow, row, event)}
+        data-test-id="grid-body-row"
+      >
+        <InteractionStateLayer isHovered={row === highlightedRowKey} as="td" />
+
+        {prependColumns?.map((item, i) => (
+          <GridBodyCell data-test-id="grid-body-cell" key={`prepend-${i}`}>
+            {item}
+          </GridBodyCell>
+        ))}
         {columnOrder.map((col, i) => (
           <GridBodyCell data-test-id="grid-body-cell" key={`${col.key}${i}`}>
             {grid.renderBodyCell
@@ -429,7 +445,14 @@ class GridEditable<
   }
 
   render() {
-    const {title, headerButtons, scrollable, height} = this.props;
+    const {
+      title,
+      headerButtons,
+      scrollable,
+      height,
+      'aria-label': ariaLabel,
+      bodyStyle,
+    } = this.props;
     const showHeader = title || headerButtons;
     return (
       <Fragment>
@@ -442,8 +465,9 @@ class GridEditable<
               )}
             </Header>
           )}
-          <Body>
+          <Body style={bodyStyle}>
             <Grid
+              aria-label={ariaLabel}
               data-test-id="grid-editable"
               scrollable={scrollable}
               height={height}

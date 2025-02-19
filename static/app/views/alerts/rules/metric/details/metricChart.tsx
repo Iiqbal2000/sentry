@@ -1,17 +1,16 @@
 import {Fragment, PureComponent} from 'react';
-import {browserHistory, WithRouterProps} from 'react-router';
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 import color from 'color';
 import type {LineSeriesOption} from 'echarts';
-import capitalize from 'lodash/capitalize';
-import moment from 'moment';
-import momentTimezone from 'moment-timezone';
+import moment from 'moment-timezone';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import Feature from 'sentry/components/acl/feature';
 import {OnDemandMetricAlert} from 'sentry/components/alerts/onDemandMetricAlert';
 import {Button} from 'sentry/components/button';
-import {AreaChart, AreaChartSeries} from 'sentry/components/charts/areaChart';
+import type {AreaChartSeries} from 'sentry/components/charts/areaChart';
+import {AreaChart} from 'sentry/components/charts/areaChart';
 import ChartZoom from 'sentry/components/charts/chartZoom';
 import MarkArea from 'sentry/components/charts/components/markArea';
 import MarkLine from 'sentry/components/charts/components/markLine';
@@ -27,42 +26,42 @@ import {
 } from 'sentry/components/charts/styles';
 import {isEmptySeries} from 'sentry/components/charts/utils';
 import CircleIndicator from 'sentry/components/circleIndicator';
-import {
-  parseStatsPeriod,
-  StatsPeriodType,
-} from 'sentry/components/organizations/pageFilters/parse';
+import {parseStatsPeriod} from 'sentry/components/organizations/pageFilters/parse';
 import Panel from 'sentry/components/panels/panel';
 import PanelBody from 'sentry/components/panels/panelBody';
 import Placeholder from 'sentry/components/placeholder';
 import {Tooltip} from 'sentry/components/tooltip';
-import Truncate from 'sentry/components/truncate';
 import {IconCheckmark, IconClock, IconFire, IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import ConfigStore from 'sentry/stores/configStore';
 import {space} from 'sentry/styles/space';
-import {DateString, Organization, Project} from 'sentry/types';
-import {ReactEchartsRef, Series} from 'sentry/types/echarts';
-import {getUtcDateString} from 'sentry/utils/dates';
-import {getDuration} from 'sentry/utils/formatters';
+import type {DateString} from 'sentry/types/core';
+import type {ReactEchartsRef, Series} from 'sentry/types/echarts';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import toArray from 'sentry/utils/array/toArray';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import {DiscoverDatasets, SavedQueryDatasets} from 'sentry/utils/discover/types';
+import getDuration from 'sentry/utils/duration/getDuration';
 import getDynamicText from 'sentry/utils/getDynamicText';
+import {shouldShowOnDemandMetricAlertUI} from 'sentry/utils/onDemandMetrics/features';
 import {MINUTES_THRESHOLD_TO_DISPLAY_SECONDS} from 'sentry/utils/sessions';
-import theme from 'sentry/utils/theme';
-import toArray from 'sentry/utils/toArray';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
+import {capitalize} from 'sentry/utils/string/capitalize';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 // eslint-disable-next-line no-restricted-imports
 import withSentryRouter from 'sentry/utils/withSentryRouter';
 import {COMPARISON_DELTA_OPTIONS} from 'sentry/views/alerts/rules/metric/constants';
+import {getViableDateRange} from 'sentry/views/alerts/rules/metric/details/utils';
 import {makeDefaultCta} from 'sentry/views/alerts/rules/metric/metricRulePresets';
-import {
-  AlertRuleTriggerType,
-  MetricRule,
-  TimePeriod,
-} from 'sentry/views/alerts/rules/metric/types';
+import type {MetricRule} from 'sentry/views/alerts/rules/metric/types';
+import {AlertRuleTriggerType, Dataset} from 'sentry/views/alerts/rules/metric/types';
 import {getChangeStatus} from 'sentry/views/alerts/utils/getChangeStatus';
 import {AlertWizardAlertNames} from 'sentry/views/alerts/wizard/options';
 import {getAlertTypeFromAggregateDataset} from 'sentry/views/alerts/wizard/utils';
+import {hasDatasetSelector} from 'sentry/views/dashboards/utils';
 
-import {Incident} from '../../../types';
+import type {Anomaly, Incident} from '../../../types';
 import {
   alertDetailsLink,
   alertTooltipValueFormatter,
@@ -72,13 +71,13 @@ import {
 import {getMetricDatasetQueryExtras} from '../utils/getMetricDatasetQueryExtras';
 import {isCrashFreeAlert} from '../utils/isCrashFreeAlert';
 
-import {TimePeriodType} from './constants';
+import type {TimePeriodType} from './constants';
 import {
   getMetricAlertChartOption,
   transformSessionResponseToSeries,
 } from './metricChartOption';
 
-type Props = WithRouterProps & {
+interface Props extends WithRouterProps {
   api: Client;
   filter: string[] | null;
   interval: string;
@@ -86,35 +85,35 @@ type Props = WithRouterProps & {
   project: Project;
   query: string;
   rule: MetricRule;
+  theme: Theme;
   timePeriod: TimePeriodType;
+  anomalies?: Anomaly[];
+  formattedAggregate?: string;
   incidents?: Incident[];
   isOnDemandAlert?: boolean;
-  selectedIncident?: Incident | null;
-};
+}
 
-type State = {
-  height: number;
-  width: number;
-};
+type State = Record<string, never>;
 
 function formatTooltipDate(date: moment.MomentInput, format: string): string {
   const {
     options: {timezone},
   } = ConfigStore.get('user');
-  return momentTimezone.tz(date, timezone).format(format);
+  return moment.tz(date, timezone).format(format);
 }
 
 function getRuleChangeSeries(
   rule: MetricRule,
-  data: AreaChartSeries[]
+  data: AreaChartSeries[],
+  theme: Theme
 ): LineSeriesOption[] {
   const {dateModified} = rule;
-  if (!data.length || !data[0].data.length || !dateModified) {
+  if (!data.length || !data[0]!.data.length || !dateModified) {
     return [];
   }
 
-  const seriesData = data[0].data;
-  const seriesStart = new Date(seriesData[0].name).getTime();
+  const seriesData = data[0]!.data;
+  const seriesStart = new Date(seriesData[0]!.name).getTime();
   const ruleChanged = new Date(dateModified).getTime();
 
   if (ruleChanged < seriesStart) {
@@ -145,43 +144,12 @@ function getRuleChangeSeries(
   ];
 }
 
+function shouldUseErrorsDataset(dataset: Dataset, query: string): boolean {
+  return dataset === Dataset.ERRORS && /\bis:unresolved\b/.test(query);
+}
+
 class MetricChart extends PureComponent<Props, State> {
-  state = {
-    width: -1,
-    height: -1,
-  };
-
   ref: null | ReactEchartsRef = null;
-
-  /**
-   * Syncs component state with the chart's width/heights
-   */
-  updateDimensions = () => {
-    const chartRef = this.ref?.getEchartsInstance?.();
-    if (!chartRef) {
-      return;
-    }
-
-    const width = chartRef.getWidth();
-    const height = chartRef.getHeight();
-    if (width !== this.state.width || height !== this.state.height) {
-      this.setState({
-        width,
-        height,
-      });
-    }
-  };
-
-  handleRef = (ref: ReactEchartsRef): void => {
-    if (ref && !this.ref) {
-      this.ref = ref;
-      this.updateDimensions();
-    }
-
-    if (!ref) {
-      this.ref = null;
-    }
-  };
 
   handleZoom = (start: DateString, end: DateString) => {
     const {location} = this.props;
@@ -202,12 +170,31 @@ class MetricChart extends PureComponent<Props, State> {
   ) {
     const {rule, organization, project, timePeriod, query} = this.props;
 
+    let dataset: DiscoverDatasets | undefined = undefined;
+    if (shouldUseErrorsDataset(rule.dataset, query)) {
+      dataset = DiscoverDatasets.ERRORS;
+    }
+
+    let openInDiscoverDataset: SavedQueryDatasets | undefined = undefined;
+    if (hasDatasetSelector(organization)) {
+      if (rule.dataset === Dataset.ERRORS) {
+        openInDiscoverDataset = SavedQueryDatasets.ERRORS;
+      } else if (
+        rule.dataset === Dataset.TRANSACTIONS ||
+        rule.dataset === Dataset.GENERIC_METRICS
+      ) {
+        openInDiscoverDataset = SavedQueryDatasets.TRANSACTIONS;
+      }
+    }
+
     const {buttonText, ...props} = makeDefaultCta({
-      orgSlug: organization.slug,
+      organization,
       projects: [project],
       rule,
       timePeriod,
       query,
+      dataset,
+      openInDiscoverDataset,
     });
 
     const resolvedPercent =
@@ -261,13 +248,20 @@ class MetricChart extends PureComponent<Props, State> {
             </StyledSectionValue>
           </Fragment>
         </StyledInlineContainer>
-        {!isSessionAggregate(rule.aggregate) && (
-          <Feature features={['discover-basic']}>
-            <Button size="sm" {...props}>
-              {buttonText}
-            </Button>
-          </Feature>
-        )}
+        {!isSessionAggregate(rule.aggregate) &&
+          (getAlertTypeFromAggregateDataset(rule) === 'eap_metrics' ? (
+            <Feature features="visibility-explore-view">
+              <Button size="sm" {...props}>
+                {buttonText}
+              </Button>
+            </Feature>
+          ) : (
+            <Feature features="discover-basic">
+              <Button size="sm" {...props}>
+                {buttonText}
+              </Button>
+            </Feature>
+          ))}
       </StyledChartControls>
     );
   }
@@ -279,16 +273,16 @@ class MetricChart extends PureComponent<Props, State> {
     comparisonTimeseriesData?: Series[]
   ) {
     const {
+      anomalies,
       router,
-      selectedIncident,
       interval,
       filter,
       incidents,
       rule,
       organization,
       timePeriod: {start, end},
+      formattedAggregate,
     } = this.props;
-    const {width} = this.state;
     const {dateModified, timeWindow} = rule;
 
     if (loading || !timeseriesData) {
@@ -313,9 +307,11 @@ class MetricChart extends PureComponent<Props, State> {
     } = getMetricAlertChartOption({
       timeseriesData,
       rule,
+      seriesName: formattedAggregate,
       incidents,
-      selectedIncident,
-      isOnDemandMetricAlert: this.props.isOnDemandAlert,
+      anomalies,
+      showWaitingForData:
+        shouldShowOnDemandMetricAlertUI(organization) && this.props.isOnDemandAlert,
       handleIncidentClick,
     });
 
@@ -329,31 +325,19 @@ class MetricChart extends PureComponent<Props, State> {
         LineSeries({
           name: comparisonSeriesName,
           data: _data.map(({name, value}) => [name, value]),
-          lineStyle: {color: theme.gray200, type: 'dashed', width: 1},
-          itemStyle: {color: theme.gray200},
+          lineStyle: {color: this.props.theme.gray200, type: 'dashed', width: 1},
+          itemStyle: {color: this.props.theme.gray200},
           animation: false,
           animationThreshold: 1,
           animationDuration: 0,
           ...otherSeriesProps,
         })
       ),
-      ...getRuleChangeSeries(rule, timeseriesData),
+      ...getRuleChangeSeries(rule, timeseriesData, this.props.theme),
     ];
 
     const queryFilter =
       filter?.join(' ') + t(' over ') + getDuration(rule.timeWindow * 60);
-
-    const percentOfWidth =
-      width >= 1151
-        ? 15
-        : width < 1151 && width >= 700
-        ? 14
-        : width < 700 && width >= 515
-        ? 13
-        : width < 515 && width >= 300
-        ? 12
-        : 8;
-    const truncateWidth = (percentOfWidth / 100) * width;
 
     return (
       <ChartPanel>
@@ -365,21 +349,23 @@ class MetricChart extends PureComponent<Props, State> {
           </ChartHeader>
           <ChartFilters>
             <StyledCircleIndicator size={8} />
-            <Filters>{rule.aggregate}</Filters>
-            <Truncate value={queryFilter ?? ''} maxLength={truncateWidth} />
+            <Filters>{formattedAggregate ?? rule.aggregate}</Filters>
+            <Tooltip
+              title={queryFilter}
+              isHoverable
+              skipWrapper
+              overlayStyle={{maxWidth: '90vw', lineBreak: 'anywhere', textAlign: 'left'}}
+              showOnlyOnOverflow
+            >
+              <QueryFilters>{queryFilter}</QueryFilters>
+            </Tooltip>
           </ChartFilters>
           {getDynamicText({
             value: (
               <ChartZoom
-                router={router}
                 start={start}
                 end={end}
                 onZoom={zoomArgs => this.handleZoom(zoomArgs.start, zoomArgs.end)}
-                onFinished={() => {
-                  // We want to do this whenever the chart finishes re-rendering so that we can update the dimensions of
-                  // any graphics related to the triggers (e.g. the threshold areas + boundaries)
-                  this.updateDimensions();
-                }}
               >
                 {zoomRenderProps => (
                   <AreaChart
@@ -387,17 +373,19 @@ class MetricChart extends PureComponent<Props, State> {
                     {...chartOption}
                     showTimeInTooltip
                     minutesThresholdToDisplaySeconds={minutesThresholdToDisplaySeconds}
-                    forwardedRef={this.handleRef}
                     additionalSeries={additionalSeries}
                     tooltip={{
                       formatter: seriesParams => {
                         // seriesParams can be object instead of array
                         const pointSeries = toArray(seriesParams);
-                        const {marker, data: pointData, seriesName} = pointSeries[0];
+                        // @ts-expect-error TS(2339): Property 'marker' does not exist on type 'Callback... Remove this comment to see the full error message
+                        const {marker, data: pointData} = pointSeries[0];
+                        const seriesName =
+                          formattedAggregate ?? pointSeries[0]?.seriesName ?? '';
                         const [pointX, pointY] = pointData as [number, number];
                         const pointYFormatted = alertTooltipValueFormatter(
                           pointY,
-                          seriesName ?? '',
+                          seriesName,
                           rule.aggregate
                         );
 
@@ -410,10 +398,7 @@ class MetricChart extends PureComponent<Props, State> {
                           period: `${timeWindow}`,
                         };
                         const endTime = formatTooltipDate(
-                          moment(pointX).add(
-                            parseInt(period, 10),
-                            periodLength as StatsPeriodType
-                          ),
+                          moment(pointX).add(parseInt(period!, 10), periodLength),
                           'MMM D LT'
                         );
 
@@ -424,6 +409,7 @@ class MetricChart extends PureComponent<Props, State> {
                               )
                             : undefined;
 
+                        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
                         const comparisonPointY = comparisonSeries?.data[1] as
                           | number
                           | undefined;
@@ -431,7 +417,7 @@ class MetricChart extends PureComponent<Props, State> {
                           comparisonPointY !== undefined
                             ? alertTooltipValueFormatter(
                                 comparisonPointY,
-                                seriesName ?? '',
+                                seriesName,
                                 rule.aggregate
                               )
                             : undefined;
@@ -449,10 +435,10 @@ class MetricChart extends PureComponent<Props, State> {
 
                         const changeStatusColor =
                           changeStatus === AlertRuleTriggerType.CRITICAL
-                            ? theme.red300
+                            ? this.props.theme.red300
                             : changeStatus === AlertRuleTriggerType.WARNING
-                            ? theme.yellow300
-                            : theme.green300;
+                              ? this.props.theme.yellow300
+                              : this.props.theme.green300;
 
                         return [
                           `<div class="tooltip-series">`,
@@ -496,8 +482,17 @@ class MetricChart extends PureComponent<Props, State> {
     );
   }
 
-  renderEmptyOnDemandAlert(timeseriesData: Series[] = [], loading?: boolean) {
-    if (loading || !this.props.isOnDemandAlert || !isEmptySeries(timeseriesData[0])) {
+  renderEmptyOnDemandAlert(
+    organization: Organization,
+    timeseriesData: Series[] = [],
+    loading?: boolean
+  ) {
+    if (
+      loading ||
+      !this.props.isOnDemandAlert ||
+      !shouldShowOnDemandMetricAlertUI(organization) ||
+      !isEmptySeries(timeseriesData[0]!)
+    ) {
       return null;
     }
 
@@ -533,40 +528,27 @@ class MetricChart extends PureComponent<Props, State> {
       location,
       isOnDemandAlert,
     } = this.props;
-    const {aggregate, timeWindow, environment, dataset} = rule;
+    const {aggregate, environment, dataset} = rule;
 
-    // Fix for 7 days * 1m interval being over the max number of results from events api
-    // 10k events is the current max
-    if (
-      timePeriod.usingPeriod &&
-      timePeriod.period === TimePeriod.SEVEN_DAYS &&
-      interval === '1m'
-    ) {
-      timePeriod.start = getUtcDateString(
-        // -5 minutes provides a small cushion for rounding up minutes. This might be able to be smaller
-        moment(moment.utc(timePeriod.end).subtract(10000 - 5, 'minutes'))
-      );
-    }
-
-    // If the chart duration isn't as long as the rollup duration the events-stats
-    // endpoint will return an invalid timeseriesData dataset
-    const viableStartDate = getUtcDateString(
-      moment.min(
-        moment.utc(timePeriod.start),
-        moment.utc(timePeriod.end).subtract(timeWindow, 'minutes')
-      )
-    );
-
-    const viableEndDate = getUtcDateString(
-      moment.utc(timePeriod.end).add(timeWindow, 'minutes')
-    );
-
-    const queryExtras = getMetricDatasetQueryExtras({
-      organization,
-      location,
-      dataset,
-      newAlertOrQuery: false,
+    const {start: viableStartDate, end: viableEndDate} = getViableDateRange({
+      rule,
+      interval,
+      timePeriod,
     });
+
+    const queryExtras: Record<string, string> = {
+      ...getMetricDatasetQueryExtras({
+        organization,
+        location,
+        dataset,
+        newAlertOrQuery: false,
+        useOnDemandMetrics: isOnDemandAlert,
+      }),
+    };
+
+    if (shouldUseErrorsDataset(dataset, query)) {
+      queryExtras.dataset = 'errors';
+    }
 
     return isCrashFreeAlert(dataset) ? (
       <SessionsRequest
@@ -578,6 +560,7 @@ class MetricChart extends PureComponent<Props, State> {
         end={viableEndDate}
         query={query}
         interval={interval}
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         field={SESSION_AGGREGATE_TO_FIELD[aggregate]}
         groupBy={['session.status']}
       >
@@ -606,11 +589,12 @@ class MetricChart extends PureComponent<Props, State> {
         partial={false}
         queryExtras={queryExtras}
         referrer="api.alerts.alert-rule-chart"
-        useOnDemandMetrics={isOnDemandAlert}
+        useRpc={dataset === Dataset.EVENTS_ANALYTICS_PLATFORM}
+        useOnDemandMetrics
       >
         {({loading, timeseriesData, comparisonTimeseriesData}) => (
           <Fragment>
-            {this.renderEmptyOnDemandAlert(timeseriesData, loading)}
+            {this.renderEmptyOnDemandAlert(organization, timeseriesData, loading)}
             {this.renderChart(
               loading,
               timeseriesData,
@@ -656,12 +640,17 @@ const ChartFilters = styled('div')`
   font-family: ${p => p.theme.text.family};
   color: ${p => p.theme.textColor};
   display: inline-grid;
-  grid-template-columns: repeat(3, max-content);
+  grid-template-columns: max-content max-content auto;
   align-items: center;
 `;
 
 const Filters = styled('span')`
   margin-right: ${space(1)};
+`;
+
+const QueryFilters = styled('span')`
+  min-width: 0px;
+  ${p => p.theme.overflowEllipsis}
 `;
 
 const StyledSectionValue = styled(SectionValue)`

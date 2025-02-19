@@ -1,5 +1,3 @@
-from typing import Optional
-
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, router, transaction
 from django.db.models import F
@@ -22,15 +20,16 @@ from sentry.models.grouplink import GroupLink
 from sentry.models.groupsubscription import GroupSubscription
 from sentry.models.project import Project
 from sentry.models.pullrequest import PullRequest
-from sentry.models.release import Release, ReleaseProject
+from sentry.models.release import Release
+from sentry.models.releases.release_project import ReleaseProject
 from sentry.models.repository import Repository
 from sentry.notifications.types import GroupSubscriptionReason
-from sentry.services.hybrid_cloud.user import RpcUser
-from sentry.services.hybrid_cloud.user_option import get_option_from_list, user_option_service
 from sentry.signals import buffer_incr_complete, issue_resolved
 from sentry.tasks.clear_expired_resolutions import clear_expired_resolutions
 from sentry.types.activity import ActivityType
 from sentry.types.group import GroupSubStatus
+from sentry.users.services.user import RpcUser
+from sentry.users.services.user_option import get_option_from_list, user_option_service
 
 
 def validate_release_empty_version(instance: Release, **kwargs):
@@ -72,7 +71,7 @@ def remove_resolved_link(link):
             )
 
 
-def resolved_in_commit(instance, created, **kwargs):
+def resolved_in_commit(instance: Commit, created, **kwargs):
     current_datetime = timezone.now()
 
     groups = instance.find_referenced_groups()
@@ -88,6 +87,9 @@ def resolved_in_commit(instance, created, **kwargs):
         if link.group_id not in group_ids:
             remove_resolved_link(link)
 
+    if len(groups) == 0:
+        return
+
     try:
         repo = Repository.objects.get(id=instance.repository_id)
     except Repository.DoesNotExist:
@@ -97,11 +99,11 @@ def resolved_in_commit(instance, created, **kwargs):
         with in_test_hide_transaction_boundary():
             user_list = list(instance.author.find_users())
     else:
-        user_list = ()
+        user_list = []
 
-    acting_user: Optional[RpcUser] = None
+    acting_user: RpcUser | None = None
 
-    self_assign_issue: str = "0"
+    self_assign_issue = "0"
     if user_list:
         acting_user = user_list[0]
         with in_test_hide_transaction_boundary():
@@ -179,11 +181,10 @@ def resolved_in_commit(instance, created, **kwargs):
                         id=repo.integration_id,
                         organization_id=repo.organization_id,
                     )
-                user = user_list[0] if user_list else None
 
                 issue_resolved.send_robust(
                     organization_id=repo.organization_id,
-                    user=user,
+                    user=user_list[0] if user_list else None,
                     group=group,
                     project=group.project,
                     resolution_type="with_commit",
@@ -191,7 +192,7 @@ def resolved_in_commit(instance, created, **kwargs):
                 )
 
 
-def resolved_in_pull_request(instance, created, **kwargs):
+def resolved_in_pull_request(instance: PullRequest, created, **kwargs):
     groups = instance.find_referenced_groups()
 
     # Delete GroupLinks where message may have changed
@@ -205,6 +206,9 @@ def resolved_in_pull_request(instance, created, **kwargs):
         if link.group_id not in group_ids:
             remove_resolved_link(link)
 
+    if len(groups) == 0:
+        return
+
     try:
         repo = Repository.objects.get(id=instance.repository_id)
     except Repository.DoesNotExist:
@@ -212,7 +216,7 @@ def resolved_in_pull_request(instance, created, **kwargs):
     if instance.author:
         user_list = list(instance.author.find_users())
     else:
-        user_list = ()
+        user_list = []
 
     for group in groups:
         try:
@@ -224,7 +228,7 @@ def resolved_in_pull_request(instance, created, **kwargs):
                     relationship=GroupLink.Relationship.resolves,
                     linked_id=instance.id,
                 )
-                acting_user: Optional[RpcUser] = None
+                acting_user: RpcUser | None = None
                 if user_list:
                     acting_user = user_list[0]
                     GroupAssignee.objects.assign(

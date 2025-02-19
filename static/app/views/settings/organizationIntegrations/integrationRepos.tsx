@@ -1,14 +1,10 @@
-import {Fragment} from 'react';
-import styled from '@emotion/styled';
-import debounce from 'lodash/debounce';
+import {Fragment, useState} from 'react';
 
-import {addRepository, migrateRepository} from 'sentry/actionCreators/integrations';
-import {Alert} from 'sentry/components/alert';
-import {Button} from 'sentry/components/button';
-import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
-import DropdownAutoComplete from 'sentry/components/dropdownAutoComplete';
-import DropdownButton from 'sentry/components/dropdownButton';
+import {LinkButton} from 'sentry/components/button';
+import {Alert} from 'sentry/components/core/alert';
 import EmptyMessage from 'sentry/components/emptyMessage';
+import LoadingError from 'sentry/components/loadingError';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
 import Pagination from 'sentry/components/pagination';
 import Panel from 'sentry/components/panels/panel';
 import PanelBody from 'sentry/components/panels/panelBody';
@@ -17,63 +13,52 @@ import RepositoryRow from 'sentry/components/repositoryRow';
 import {IconCommit} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import RepositoryStore from 'sentry/stores/repositoryStore';
-import {space} from 'sentry/styles/space';
-import type {
-  Integration,
-  IntegrationRepository,
-  Organization,
-  Repository,
-} from 'sentry/types';
-import withOrganization from 'sentry/utils/withOrganization';
+import type {Integration, Repository} from 'sentry/types/integrations';
+import {useApiQuery} from 'sentry/utils/queryClient';
+import useOrganization from 'sentry/utils/useOrganization';
 
-type Props = DeprecatedAsyncComponent['props'] & {
+import {IntegrationReposAddRepository} from './integrationReposAddRepository';
+
+type Props = {
   integration: Integration;
-  organization: Organization;
 };
 
-type State = DeprecatedAsyncComponent['state'] & {
-  adding: boolean;
-  dropdownBusy: boolean;
-  integrationRepos: {
-    repos: IntegrationRepository[];
-    searchable: boolean;
-  };
-  integrationReposErrorStatus: number | null;
-  itemList: Repository[];
-};
+function IntegrationRepos(props: Props) {
+  const [integrationReposErrorStatus, setIntegrationReposeErrorStatus] = useState<
+    number | null | undefined
+  >(null);
 
-class IntegrationRepos extends DeprecatedAsyncComponent<Props, State> {
-  getDefaultState(): State {
-    return {
-      ...super.getDefaultState(),
-      adding: false,
-      itemList: [],
-      integrationRepos: {repos: [], searchable: false},
-      integrationReposErrorStatus: null,
-      dropdownBusy: true,
-    };
+  const {integration} = props;
+  const organization = useOrganization();
+  const ENDPOINT = `/organizations/${organization.slug}/repos/`;
+
+  const {
+    data: fetchedItemList,
+    isPending,
+    isError,
+    refetch,
+    getResponseHeader,
+  } = useApiQuery<Repository[]>(
+    [ENDPOINT, {query: {status: 'active', integration_id: integration.id}}],
+    {
+      staleTime: 0,
+    }
+  );
+  const [itemListState, setItemList] = useState<Repository[]>([]);
+
+  if (isPending) {
+    return <LoadingIndicator />;
   }
 
-  componentDidMount() {
-    super.componentDidMount();
-    this.searchRepositoriesRequest();
+  if (isError) {
+    return <LoadingError onRetry={refetch} />;
   }
 
-  getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
-    const {organization, integration} = this.props;
-    return [
-      [
-        'itemList',
-        `/organizations/${organization.slug}/repos/`,
-        {query: {status: 'active', integration_id: integration.id}},
-      ],
-    ];
-  }
+  const itemList = itemListState.length ? itemListState : fetchedItemList;
 
   // Called by row to signal repository change.
-  onRepositoryChange = data => {
-    const itemList = this.state.itemList;
-    itemList.forEach(item => {
+  const onRepositoryChange = (data: Repository) => {
+    const newItemList = itemList.map(item => {
       if (item.id === data.id) {
         item.status = data.status;
         // allow for custom scm repositories to be updated, and
@@ -81,201 +66,68 @@ class IntegrationRepos extends DeprecatedAsyncComponent<Props, State> {
         item.url = data.url === undefined ? item.url : data.url;
         item.name = data.name || item.name;
       }
+      return item;
     });
-    this.setState({itemList});
+    setItemList(newItemList);
     RepositoryStore.resetRepositories();
   };
 
-  debouncedSearchRepositoriesRequest = debounce(
-    query => this.searchRepositoriesRequest(query),
-    200
-  );
-
-  searchRepositoriesRequest = (searchQuery?: string) => {
-    const {organization, integration} = this.props;
-    const query = {search: searchQuery};
-    const endpoint = `/organizations/${organization.slug}/integrations/${integration.id}/repos/`;
-    return this.api.request(endpoint, {
-      method: 'GET',
-      query,
-      success: data => {
-        this.setState({integrationRepos: data, dropdownBusy: false});
-      },
-      error: error => {
-        this.setState({dropdownBusy: false, integrationReposErrorStatus: error?.status});
-      },
-    });
+  const handleAddRepository = (repo: Repository) => {
+    setItemList([...itemList, repo]);
   };
 
-  handleSearchRepositories = (e?: React.ChangeEvent<HTMLInputElement>) => {
-    this.setState({dropdownBusy: true, integrationReposErrorStatus: null});
-    this.debouncedSearchRepositoriesRequest(e?.target.value);
-  };
+  const itemListPageLinks = getResponseHeader?.('Link') ?? undefined;
 
-  addRepo(selection: {label: JSX.Element; searchKey: string; value: string}) {
-    const {integration, organization} = this.props;
-    const {itemList} = this.state;
-
-    this.setState({adding: true});
-
-    const migratableRepo = itemList.filter(item => {
-      if (!(selection.value && item.externalSlug)) {
-        return false;
-      }
-      return selection.value === item.externalSlug;
-    })[0];
-
-    let promise: Promise<Repository>;
-    if (migratableRepo) {
-      promise = migrateRepository(
-        this.api,
-        organization.slug,
-        migratableRepo.id,
-        integration
-      );
-    } else {
-      promise = addRepository(this.api, organization.slug, selection.value, integration);
-    }
-    promise.then(
-      (repo: Repository) => {
-        this.setState({adding: false, itemList: itemList.concat(repo)});
-        RepositoryStore.resetRepositories();
-      },
-      () => this.setState({adding: false})
-    );
-  }
-
-  renderDropdown() {
-    if (
-      !['github', 'gitlab'].includes(this.props.integration.provider.key) &&
-      !this.props.organization.access.includes('org:integrations')
-    ) {
-      return (
-        <DropdownButton
-          disabled
-          title={t(
-            'You must be an organization owner, manager or admin to add repositories'
-          )}
-          isOpen={false}
-          size="xs"
-        >
-          {t('Add Repository')}
-        </DropdownButton>
-      );
-    }
-    const repositories = new Set(
-      this.state.itemList.filter(item => item.integrationId).map(i => i.externalSlug)
-    );
-    const repositoryOptions = (this.state.integrationRepos.repos || []).filter(
-      repo => !repositories.has(repo.identifier)
-    );
-    const items = repositoryOptions.map(repo => ({
-      searchKey: repo.name,
-      value: repo.identifier,
-      label: (
-        <StyledListElement>
-          <StyledName>{repo.name}</StyledName>
-        </StyledListElement>
-      ),
-    }));
-
-    const menuHeader = <StyledReposLabel>{t('Repositories')}</StyledReposLabel>;
-    const onChange = this.state.integrationRepos.searchable
-      ? this.handleSearchRepositories
-      : undefined;
-
-    return (
-      <DropdownAutoComplete
-        items={items}
-        onSelect={this.addRepo.bind(this)}
-        onChange={onChange}
-        menuHeader={menuHeader}
-        emptyMessage={t('No repositories available')}
-        noResultsMessage={t('No repositories found')}
-        busy={this.state.dropdownBusy}
-        alignMenu="right"
-      >
-        {({isOpen}) => (
-          <DropdownButton isOpen={isOpen} size="xs" busy={this.state.adding}>
-            {t('Add Repository')}
-          </DropdownButton>
-        )}
-      </DropdownAutoComplete>
-    );
-  }
-
-  renderBody() {
-    const {itemListPageLinks, integrationReposErrorStatus, itemList} = this.state;
-    return (
-      <Fragment>
-        {integrationReposErrorStatus === 400 && (
+  return (
+    <Fragment>
+      {integrationReposErrorStatus === 400 && (
+        <Alert.Container>
           <Alert type="error" showIcon>
             {t(
               'We were unable to fetch repositories for this integration. Try again later. If this error continues, please reconnect this integration by uninstalling and then reinstalling.'
             )}
           </Alert>
-        )}
+        </Alert.Container>
+      )}
 
-        <Panel>
-          <PanelHeader hasButtons>
-            <div>{t('Repositories')}</div>
-            <DropdownWrapper>{this.renderDropdown()}</DropdownWrapper>
-          </PanelHeader>
-          <PanelBody>
-            {itemList.length === 0 && (
-              <EmptyMessage
-                icon={<IconCommit />}
-                title={t('Sentry is better with commit data')}
-                description={t(
-                  'Add a repository to begin tracking its commit data. Then, set up release tracking to unlock features like suspect commits, suggested issue owners, and deploy emails.'
-                )}
-                action={
-                  <Button href="https://docs.sentry.io/product/releases/">
-                    {t('Learn More')}
-                  </Button>
-                }
-              />
-            )}
-            {itemList.map(repo => (
-              <RepositoryRow
-                api={this.api}
-                key={repo.id}
-                repository={repo}
-                orgSlug={this.props.organization.slug}
-                onRepositoryChange={this.onRepositoryChange}
-              />
-            ))}
-          </PanelBody>
-        </Panel>
-        {itemListPageLinks && (
-          <Pagination pageLinks={itemListPageLinks} {...this.props} />
-        )}
-      </Fragment>
-    );
-  }
+      <Panel>
+        <PanelHeader hasButtons>
+          <div>{t('Repositories')}</div>
+          <IntegrationReposAddRepository
+            integration={integration}
+            currentRepositories={itemList}
+            onSearchError={setIntegrationReposeErrorStatus}
+            onAddRepository={handleAddRepository}
+          />
+        </PanelHeader>
+        <PanelBody>
+          {itemList.length === 0 && (
+            <EmptyMessage
+              icon={<IconCommit />}
+              title={t('Sentry is better with commit data')}
+              description={t(
+                'Add a repository to begin tracking its commit data. Then, set up release tracking to unlock features like suspect commits, suggested issue owners, and deploy emails.'
+              )}
+              action={
+                <LinkButton href="https://docs.sentry.io/product/releases/" external>
+                  {t('Learn More')}
+                </LinkButton>
+              }
+            />
+          )}
+          {itemList.map(repo => (
+            <RepositoryRow
+              key={repo.id}
+              repository={repo}
+              orgSlug={organization.slug}
+              onRepositoryChange={onRepositoryChange}
+            />
+          ))}
+        </PanelBody>
+      </Panel>
+      <Pagination pageLinks={itemListPageLinks} />
+    </Fragment>
+  );
 }
 
-export default withOrganization(IntegrationRepos);
-
-const StyledReposLabel = styled('div')`
-  width: 250px;
-  font-size: 0.875em;
-  padding: ${space(1)} 0;
-  text-transform: uppercase;
-`;
-
-const DropdownWrapper = styled('div')`
-  text-transform: none;
-`;
-
-const StyledListElement = styled('div')`
-  display: flex;
-  align-items: center;
-  padding: ${space(0.5)};
-`;
-
-const StyledName = styled('div')`
-  flex-shrink: 1;
-  min-width: 0;
-  ${p => p.theme.overflowEllipsis};
-`;
+export default IntegrationRepos;

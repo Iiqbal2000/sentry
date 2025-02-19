@@ -1,34 +1,30 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
-import isEmpty from 'lodash/isEmpty';
-import uniq from 'lodash/uniq';
+import type {Location} from 'history';
 
 import {
   addErrorMessage,
   addMessage,
   addSuccessMessage,
 } from 'sentry/actionCreators/indicator';
+import HookOrDefault from 'sentry/components/hookOrDefault';
 import * as Layout from 'sentry/components/layouts/thirds';
 import Link from 'sentry/components/links/link';
 import LoadingError from 'sentry/components/loadingError';
 import PageFiltersContainer from 'sentry/components/organizations/pageFilters/container';
 import Pagination from 'sentry/components/pagination';
-import PanelTable from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {IconArrow} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Project} from 'sentry/types';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
+import {uniq} from 'sentry/utils/array/uniq';
 import {VisuallyCompleteWithData} from 'sentry/utils/performanceForSentry';
 import Projects from 'sentry/utils/projects';
-import {
-  ApiQueryKey,
-  setApiQueryData,
-  useApiQuery,
-  useQueryClient,
-} from 'sentry/utils/queryClient';
+import type {ApiQueryKey} from 'sentry/utils/queryClient';
+import {setApiQueryData, useApiQuery, useQueryClient} from 'sentry/utils/queryClient';
 import useRouteAnalyticsEventNames from 'sentry/utils/routeAnalytics/useRouteAnalyticsEventNames';
 import useRouteAnalyticsParams from 'sentry/utils/routeAnalytics/useRouteAnalyticsParams';
 import useApi from 'sentry/utils/useApi';
@@ -37,7 +33,8 @@ import useOrganization from 'sentry/utils/useOrganization';
 import useRouter from 'sentry/utils/useRouter';
 
 import FilterBar from '../../filterBar';
-import {AlertRuleType, CombinedMetricIssueAlerts} from '../../types';
+import type {CombinedAlerts} from '../../types';
+import {AlertRuleType, CombinedAlertType} from '../../types';
 import {getTeamParams, isIssueAlert} from '../../utils';
 import AlertHeader from '../header';
 
@@ -58,6 +55,11 @@ function getAlertListQueryKey(orgSlug: string, query: Location['query']): ApiQue
   return [`/organizations/${orgSlug}/combined-rules/`, {query: queryParams}];
 }
 
+const DataConsentBanner = HookOrDefault({
+  hookName: 'component:data-consent-banner',
+  defaultComponent: null,
+});
+
 function AlertRulesList() {
   const location = useLocation();
   const router = useRouter();
@@ -72,13 +74,14 @@ function AlertRulesList() {
       : location.query.sort,
   });
 
+  // Fetch alert rules
   const {
     data: ruleListResponse = [],
     refetch,
     getResponseHeader,
-    isLoading,
+    isPending,
     isError,
-  } = useApiQuery<Array<CombinedMetricIssueAlerts | null>>(
+  } = useApiQuery<Array<CombinedAlerts | null>>(
     getAlertListQueryKey(organization.slug, location.query),
     {
       staleTime: 0,
@@ -107,11 +110,27 @@ function AlertRulesList() {
     });
   };
 
+  const handleChangeType = (alertType: CombinedAlertType[]) => {
+    const {cursor: _cursor, page: _page, ...currentQuery} = location.query;
+    router.push({
+      pathname: location.pathname,
+      query: {
+        ...currentQuery,
+        alertType,
+      },
+    });
+  };
+
   const handleOwnerChange = (
     projectId: string,
-    rule: CombinedMetricIssueAlerts,
+    rule: CombinedAlerts,
     ownerValue: string
   ) => {
+    // TODO(davidenwang): Once we have edit apis for uptime alerts, fill this in
+    if (rule.type === CombinedAlertType.UPTIME) {
+      return;
+    }
+
     const endpoint =
       rule.type === 'alert_rule'
         ? `/organizations/${organization.slug}/alert-rules/${rule.id}`
@@ -130,17 +149,17 @@ function AlertRulesList() {
     });
   };
 
-  const handleDeleteRule = async (projectId: string, rule: CombinedMetricIssueAlerts) => {
+  const handleDeleteRule = async (projectId: string, rule: CombinedAlerts) => {
+    const deleteEndpoints: Record<CombinedAlertType, string> = {
+      [CombinedAlertType.ISSUE]: `/projects/${organization.slug}/${projectId}/rules/${rule.id}/`,
+      [CombinedAlertType.METRIC]: `/organizations/${organization.slug}/alert-rules/${rule.id}/`,
+      [CombinedAlertType.UPTIME]: `/projects/${organization.slug}/${projectId}/uptime/${rule.id}/`,
+      [CombinedAlertType.CRONS]: `/projects/${organization.slug}/${projectId}/monitors/${rule.id}/`,
+    };
+
     try {
-      await api.requestPromise(
-        isIssueAlert(rule)
-          ? `/projects/${organization.slug}/${projectId}/rules/${rule.id}/`
-          : `/organizations/${organization.slug}/alert-rules/${rule.id}/`,
-        {
-          method: 'DELETE',
-        }
-      );
-      setApiQueryData<Array<CombinedMetricIssueAlerts | null>>(
+      await api.requestPromise(deleteEndpoints[rule.type], {method: 'DELETE'});
+      setApiQueryData<Array<CombinedAlerts | null>>(
         queryClient,
         getAlertListQueryKey(organization.slug, location.query),
         data => data?.filter(r => r?.id !== rule.id && r?.type !== rule.type)
@@ -155,7 +174,15 @@ function AlertRulesList() {
   const hasEditAccess = organization.access.includes('alerts:write');
 
   const ruleList = ruleListResponse.filter(defined);
-  const projectsFromResults = uniq(ruleList.flatMap(({projects}) => projects));
+  const projectsFromResults = uniq(
+    ruleList.flatMap(rule =>
+      rule.type === CombinedAlertType.UPTIME
+        ? [rule.projectSlug]
+        : rule.type === CombinedAlertType.CRONS
+          ? [rule.project.slug]
+          : rule.projects
+    )
+  );
   const ruleListPageLinks = getResponseHeader?.('Link');
 
   const sort: {asc: boolean; field: SortField} = {
@@ -174,16 +201,19 @@ function AlertRulesList() {
       <SentryDocumentTitle title={t('Alerts')} orgSlug={organization.slug} />
 
       <PageFiltersContainer>
-        <AlertHeader router={router} activeTab="rules" />
+        <AlertHeader activeTab="rules" />
         <Layout.Body>
           <Layout.Main fullWidth>
+            <DataConsentBanner source="alerts" />
             <FilterBar
               location={location}
               onChangeFilter={handleChangeFilter}
               onChangeSearch={handleChangeSearch}
+              onChangeAlertType={handleChangeType}
+              hasTypeFilter
             />
             <StyledPanelTable
-              isLoading={isLoading}
+              isLoading={isPending}
               isEmpty={ruleList.length === 0 && !isError}
               emptyMessage={t('No alert rules found for the current query.')}
               headers={[
@@ -233,24 +263,34 @@ function AlertRulesList() {
                   onRetry={refetch}
                 />
               ) : null}
-              <VisuallyCompleteWithData id="AlertRules-Body" hasData={!isEmpty(ruleList)}>
+              <VisuallyCompleteWithData
+                id="AlertRules-Body"
+                hasData={ruleList.length > 0}
+              >
                 <Projects orgId={organization.slug} slugs={projectsFromResults}>
                   {({initiallyLoaded, projects}) =>
-                    ruleList.map(rule => (
-                      <RuleListRow
-                        // Metric and issue alerts can have the same id
-                        key={`${
-                          isIssueAlert(rule) ? AlertRuleType.METRIC : AlertRuleType.ISSUE
-                        }-${rule.id}`}
-                        projectsLoaded={initiallyLoaded}
-                        projects={projects as Project[]}
-                        rule={rule}
-                        orgId={organization.slug}
-                        onOwnerChange={handleOwnerChange}
-                        onDelete={handleDeleteRule}
-                        hasEditAccess={hasEditAccess}
-                      />
-                    ))
+                    ruleList.map(rule => {
+                      const isIssueAlertInstance = isIssueAlert(rule);
+                      const keyPrefix = isIssueAlertInstance
+                        ? AlertRuleType.ISSUE
+                        : rule.type === CombinedAlertType.UPTIME
+                          ? AlertRuleType.UPTIME
+                          : AlertRuleType.METRIC;
+
+                      return (
+                        <RuleListRow
+                          // Metric and issue alerts can have the same id
+                          key={`${keyPrefix}-${rule.id}`}
+                          projectsLoaded={initiallyLoaded}
+                          projects={projects as Project[]}
+                          rule={rule}
+                          organization={organization}
+                          onOwnerChange={handleOwnerChange}
+                          onDelete={handleDeleteRule}
+                          hasEditAccess={hasEditAccess}
+                        />
+                      );
+                    })
                   }
                 </Projects>
               </VisuallyCompleteWithData>

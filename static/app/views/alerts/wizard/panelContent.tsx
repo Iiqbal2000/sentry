@@ -2,7 +2,8 @@ import diagramApdex from 'sentry-images/spot/alerts-wizard-apdex.svg';
 import diagramCLS from 'sentry-images/spot/alerts-wizard-cls.svg';
 import diagramCrashFreeSessions from 'sentry-images/spot/alerts-wizard-crash-free-sessions.svg';
 import diagramCrashFreeUsers from 'sentry-images/spot/alerts-wizard-crash-free-users.svg';
-import diagramCustom from 'sentry-images/spot/alerts-wizard-custom.svg';
+import diagramCrons from 'sentry-images/spot/alerts-wizard-crons.svg';
+import diagramCustomTransaction from 'sentry-images/spot/alerts-wizard-custom.svg';
 import diagramErrors from 'sentry-images/spot/alerts-wizard-errors.svg';
 import diagramFailureRate from 'sentry-images/spot/alerts-wizard-failure-rate.svg';
 import diagramFID from 'sentry-images/spot/alerts-wizard-fid.svg';
@@ -10,14 +11,15 @@ import diagramIssues from 'sentry-images/spot/alerts-wizard-issues.svg';
 import diagramLCP from 'sentry-images/spot/alerts-wizard-lcp.svg';
 import diagramThroughput from 'sentry-images/spot/alerts-wizard-throughput.svg';
 import diagramTransactionDuration from 'sentry-images/spot/alerts-wizard-transaction-duration.svg';
+import diagramUptime from 'sentry-images/spot/alerts-wizard-uptime.svg';
 import diagramUsers from 'sentry-images/spot/alerts-wizard-users-experiencing-errors.svg';
 
 import {t} from 'sentry/locale';
 
-import {AlertType} from './options';
+import type {AlertType} from './options';
 
 type PanelContent = {
-  description: string;
+  description: React.ReactNode;
   examples: string[];
   docsLink?: string;
   illustration?: string;
@@ -119,15 +121,15 @@ export const AlertWizardPanelContent: Record<AlertType, PanelContent> = {
     docsLink: 'https://docs.sentry.io/product/performance/web-vitals',
     illustration: diagramCLS,
   },
-  custom: {
+  custom_transactions: {
     description: t(
-      'Alert on metrics which are not listed above, such as first paint (FP), first contentful paint (FCP), and time to first byte (TTFB).'
+      'Alert on performance metrics which are not listed above, such as first paint (FP), first contentful paint (FCP), and time to first byte (TTFB).'
     ),
     examples: [
       t('When the 95th percentile FP of a page is longer than 250 milliseconds.'),
       t('When the average TTFB of a page is longer than 600 millliseconds.'),
     ],
-    illustration: diagramCustom,
+    illustration: diagramCustomTransaction,
   },
   crash_free_sessions: {
     description: t(
@@ -146,5 +148,35 @@ export const AlertWizardPanelContent: Record<AlertType, PanelContent> = {
       t('When the Crash Free Rate is below 97%, send an email notification to yourself.'),
     ],
     illustration: diagramCrashFreeUsers,
+  },
+  uptime_monitor: {
+    description: t(
+      'Alert when the availability or reliability of a monitored URL changes, providing instant notifications and insights to quickly detect and resolve issues.'
+    ),
+    examples: [
+      t('When the URL returns a response status code other than 200.'),
+      t('When the URL response times out after 20 seconds.'),
+      t('When a DNS resolution error is detected for the URL.'),
+    ],
+    illustration: diagramUptime,
+  },
+  crons_monitor: {
+    description: t(
+      'Alert on scheduled monitors that check-in on recurring jobs and tell you if they’re running on schedule, failing, or succeeding.'
+    ),
+    examples: [
+      t('When a scheduled job fails during execution'),
+      t("When a scheduled job runs for longer than it's expected runtime"),
+      t('When a scheduled job does not run'),
+    ],
+    illustration: diagramCrons,
+  },
+  eap_metrics: {
+    description: t('Alert on spans.'),
+    examples: [
+      t('When your average time in queue exceeds 100ms.'),
+      t('When your app runs more than 1000 queries in a minute.'),
+    ],
+    illustration: diagramThroughput,
   },
 };

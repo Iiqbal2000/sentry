@@ -3,35 +3,45 @@ __all__ = [
     "ClickArray",
     "ClickScalar",
     "ClickSelectorComposite",
+    "DeadClickSelectorComposite",
     "ErrorIdsArray",
+    "RageClickSelectorComposite",
     "SimpleAggregateDurationScalar",
     "SumOfClickArray",
     "SumOfClickScalar",
     "SumOfClickSelectorComposite",
     "SumOfDeadClickSelectorComposite",
-    "SumOfErrorIdsArray",
+    "SumOfIntegerIdScalar",
     "SumOfIPv4Scalar",
     "SumOfRageClickSelectorComposite",
     "SumOfStringArray",
     "SumOfStringScalar",
-    "SumOfTagScalar",
+    "SumOfTagAggregate",
     "SumOfUUIDArray",
-    "TagScalar",
+    "TagAggregate",
 ]
 
 
 from .activity import AggregateActivityScalar
-from .aggregate import SumOfIPv4Scalar, SumOfStringArray, SumOfStringScalar, SumOfUUIDArray
+from .aggregate import (
+    SumOfIntegerIdScalar,
+    SumOfIPv4Scalar,
+    SumOfStringArray,
+    SumOfStringScalar,
+    SumOfUUIDArray,
+)
 from .duration import SimpleAggregateDurationScalar
-from .error_ids import ErrorIdsArray, SumOfErrorIdsArray
+from .error_ids import ErrorIdsArray
 from .selector import (
     ClickArray,
     ClickScalar,
     ClickSelectorComposite,
+    DeadClickSelectorComposite,
+    RageClickSelectorComposite,
     SumOfClickArray,
     SumOfClickScalar,
     SumOfClickSelectorComposite,
     SumOfDeadClickSelectorComposite,
     SumOfRageClickSelectorComposite,
 )
-from .tags import SumOfTagScalar, TagScalar
+from .tags import SumOfTagAggregate, TagAggregate

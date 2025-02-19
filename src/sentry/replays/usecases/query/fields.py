@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import datetime
-from typing import Callable, Generic, Type, TypeVar
+from collections.abc import Callable
+from typing import Generic, TypeVar
 
 from snuba_sdk import Condition
 
 from sentry.api.event_search import SearchFilter
+from sentry.replays.lib.new_query.errors import OperatorNotSupported
 from sentry.replays.lib.new_query.parsers import parse_str
-from sentry.replays.usecases.query.conditions import SumOfTagScalar
 from sentry.replays.usecases.query.conditions.base import ComputedBase
+from sentry.replays.usecases.query.conditions.tags import SumOfTagAggregate, TagScalar
 
 T = TypeVar("T")
 
@@ -23,7 +25,7 @@ T = TypeVar("T")
 
 
 class ComputedField(Generic[T]):
-    def __init__(self, parse: Callable[[str], T], query: Type[ComputedBase]) -> None:
+    def __init__(self, parse: Callable[[str], T], query: type[ComputedBase]) -> None:
         self.parse = parse
         self.query = query
 
@@ -54,7 +56,7 @@ class ComputedField(Generic[T]):
         elif operator == "!=":
             visitor = self.query.visit_not_match
         else:
-            raise Exception(f"Unsupported wildcard search operator: '{operator}'")
+            raise OperatorNotSupported(f"Unsupported wildcard search operator: '{operator}'")
 
         return visitor(value)
 
@@ -64,7 +66,7 @@ class ComputedField(Generic[T]):
         elif operator == "NOT IN":
             visitor = self.query.visit_not_in
         else:
-            raise Exception(f"Unsupported composite search operator: '{operator}'")
+            raise OperatorNotSupported(f"Unsupported composite search operator: '{operator}'")
 
         return visitor(value)
 
@@ -82,7 +84,7 @@ class ComputedField(Generic[T]):
         elif operator == "<=":
             visitor = self.query.visit_lte
         else:
-            raise Exception(f"Unsupported search operator: '{operator}'")
+            raise OperatorNotSupported(f"Unsupported search operator: '{operator}'")
 
         return visitor(value)
 
@@ -93,15 +95,19 @@ class ComputedField(Generic[T]):
 
 
 class TagField:
-    def __init__(self) -> None:
+    def __init__(self, query: type[SumOfTagAggregate] | type[TagScalar]) -> None:
         self.parse = parse_str
-        self.query = SumOfTagScalar
+        self.query = query
 
-    def apply(self, key: str, search_filter: SearchFilter) -> Condition:
+    def apply(self, search_filter: SearchFilter) -> Condition:
         """Apply a search operation against any named expression.
 
         A named expression can be a column name or an expression alias.
         """
+        key = search_filter.key.name
+        if key.startswith("tags["):
+            key = key[5:-1]
+
         operator = search_filter.operator
         value = search_filter.value.value
 
@@ -124,7 +130,7 @@ class TagField:
         elif operator == "!=":
             visitor = self.query.visit_not_match
         else:
-            raise Exception(f"Unsupported wildcard search operator: '{operator}'")
+            raise OperatorNotSupported(f"Unsupported wildcard search operator: '{operator}'")
 
         return visitor(key, value)
 
@@ -134,7 +140,7 @@ class TagField:
         elif operator == "NOT IN":
             visitor = self.query.visit_not_in
         else:
-            raise Exception(f"Unsupported composite search operator: '{operator}'")
+            raise OperatorNotSupported(f"Unsupported composite search operator: '{operator}'")
 
         return visitor(key, value)
 
@@ -144,6 +150,6 @@ class TagField:
         elif operator == "!=":
             visitor = self.query.visit_neq
         else:
-            raise Exception(f"Unsupported search operator: '{operator}'")
+            raise OperatorNotSupported(f"Unsupported search operator: '{operator}'")
 
         return visitor(key, value)

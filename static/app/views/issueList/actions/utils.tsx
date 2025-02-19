@@ -1,10 +1,10 @@
 import {Fragment} from 'react';
-import capitalize from 'lodash/capitalize';
 
-import {Alert} from 'sentry/components/alert';
+import {Alert} from 'sentry/components/core/alert';
 import ExternalLink from 'sentry/components/links/externalLink';
 import {t, tct, tn} from 'sentry/locale';
-import {IgnoredStatusDetails, Organization} from 'sentry/types';
+import {capitalize} from 'sentry/utils/string/capitalize';
+import commonTheme from 'sentry/utils/theme';
 
 import ExtraDescription from './extraDescription';
 
@@ -14,11 +14,12 @@ export const BULK_LIMIT_STR = BULK_LIMIT.toLocaleString();
 export enum ConfirmAction {
   RESOLVE = 'resolve',
   UNRESOLVE = 'unresolve',
-  IGNORE = 'ignore',
+  ARCHIVE = 'archive',
   BOOKMARK = 'bookmark',
   UNBOOKMARK = 'unbookmark',
   MERGE = 'merge',
   DELETE = 'delete',
+  SET_PRIORITY = 'reprioritize',
 }
 
 function getBulkConfirmMessage(action: string, queryCount: number) {
@@ -53,9 +54,11 @@ function PerformanceIssueAlert({
   }
 
   return (
-    <Alert type="info" showIcon>
-      {children}
-    </Alert>
+    <Alert.Container>
+      <Alert type="info" showIcon>
+        {children}
+      </Alert>
+    </Alert.Container>
   );
 }
 
@@ -64,11 +67,9 @@ export function getConfirm({
   allInQuerySelected,
   query,
   queryCount,
-  organization,
 }: {
   allInQuerySelected: boolean;
   numIssues: number;
-  organization: Organization;
   query: string;
   queryCount: number;
 }) {
@@ -81,20 +82,15 @@ export function getConfirm({
     canBeUndone: boolean;
     append?: string;
   }) {
-    const actionText =
-      action === ConfirmAction.IGNORE &&
-      organization.features.includes('escalating-issues')
-        ? t('archive')
-        : action;
     const question = allInQuerySelected
-      ? getBulkConfirmMessage(`${actionText}${append}`, queryCount)
+      ? getBulkConfirmMessage(`${action}${append}`, queryCount)
       : tn(
           // Use sprintf argument swapping since the number value must come
           // first. See https://github.com/alexei/sprintf.js#argument-swapping
           `Are you sure you want to %2$s this %s issue%3$s?`,
           `Are you sure you want to %2$s these %s issues%3$s?`,
           numIssues,
-          actionText,
+          action,
           append
         );
 
@@ -108,7 +104,7 @@ export function getConfirm({
                 'Bulk deletion is only recommended for junk data. To clear your stream, consider resolving or ignoring. [link:When should I delete events?]',
                 {
                   link: (
-                    <ExternalLink href="https://help.sentry.io/account/billing/when-should-i-delete-events/" />
+                    <ExternalLink href="https://sentry.zendesk.com/hc/en-us/articles/23813143627675-When-should-I-delete-events" />
                   ),
                 }
               )}
@@ -162,8 +158,15 @@ export function getLabel(numIssues: number, allInQuerySelected: boolean) {
   };
 }
 
-export function performanceIssuesSupportsIgnoreAction(
-  statusDetails: IgnoredStatusDetails
-) {
-  return !(statusDetails.ignoreWindow || statusDetails.ignoreUserWindow);
-}
+// A mapping of which screen sizes will trigger the column to disappear
+// e.g. 'Trend': screen.small => 'Trend' column will disappear on screen.small widths
+export const COLUMN_BREAKPOINTS = {
+  ISSUE: undefined, // Issue column is always visible
+  TREND: commonTheme.breakpoints.small,
+  AGE: commonTheme.breakpoints.xlarge,
+  SEEN: commonTheme.breakpoints.xlarge,
+  EVENTS: commonTheme.breakpoints.medium,
+  USERS: commonTheme.breakpoints.medium,
+  PRIORITY: commonTheme.breakpoints.large,
+  ASSIGNEE: commonTheme.breakpoints.xsmall,
+};

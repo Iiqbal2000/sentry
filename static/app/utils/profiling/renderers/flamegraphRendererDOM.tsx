@@ -1,24 +1,25 @@
-import {mat3} from 'gl-matrix';
+import type {mat3} from 'gl-matrix';
 
-import {Flamegraph} from 'sentry/utils/profiling/flamegraph';
-import {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
-import {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
-import {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import type {Flamegraph} from 'sentry/utils/profiling/flamegraph';
+import type {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
+import type {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
+import type {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import type {FlamegraphRendererOptions} from 'sentry/utils/profiling/renderers/flamegraphRenderer';
 import {
   DEFAULT_FLAMEGRAPH_RENDERER_OPTIONS,
   FlamegraphRenderer,
-  FlamegraphRendererOptions,
 } from 'sentry/utils/profiling/renderers/flamegraphRenderer';
 import {Rect} from 'sentry/utils/profiling/speedscope';
 
 // Convert color component from 0-1 to 0-255 range
 function colorComponentsToRgba(color: number[]): string {
-  return `rgba(${Math.floor(color[0] * 255)}, ${Math.floor(color[1] * 255)}, ${Math.floor(
-    color[2] * 255
+  return `rgba(${Math.floor(color[0]! * 255)}, ${Math.floor(color[1]! * 255)}, ${Math.floor(
+    color[2]! * 255
   )}, ${color[3] ?? 1})`;
 }
 
 export class FlamegraphRendererDOM extends FlamegraphRenderer {
+  ctx: CanvasRenderingContext2D | null = null;
   container: HTMLElement;
 
   constructor(
@@ -28,6 +29,10 @@ export class FlamegraphRendererDOM extends FlamegraphRenderer {
     options: FlamegraphRendererOptions = DEFAULT_FLAMEGRAPH_RENDERER_OPTIONS
   ) {
     super(canvas, flamegraph, theme, options);
+
+    // safe renderer initialization does not skip the renderer
+    // @ts-expect-error TS(2740): Type '{}' is missing the following properties from... Remove this comment to see the full error message
+    this.ctx = {};
 
     const newContainer = document.createElement('div');
     canvas.parentElement?.appendChild(newContainer);
@@ -55,7 +60,7 @@ export class FlamegraphRendererDOM extends FlamegraphRenderer {
       ).transformRect(configViewToPhysicalSpace);
 
       const colors =
-        this.colorMap.get(frame.key) ?? this.theme.COLORS.FRAME_GRAYSCALE_COLOR;
+        this.colorMap.get(frame.key) ?? this.theme.COLORS.FRAME_FALLBACK_COLOR;
       const color = colorComponentsToRgba(colors);
 
       const div = document.createElement('div');

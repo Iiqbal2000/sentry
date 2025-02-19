@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 from sentry.dynamic_sampling.models.base import Model, ModelInput, ModelType
 from sentry.dynamic_sampling.models.common import RebalancedItem, sum_classes_counts
@@ -8,10 +7,10 @@ from sentry.dynamic_sampling.models.full_rebalancing import FullRebalancingInput
 
 @dataclass
 class TransactionsRebalancingInput(ModelInput):
-    classes: List[RebalancedItem]
+    classes: list[RebalancedItem]
     sample_rate: float
-    total_num_classes: Optional[int]
-    total: Optional[float]
+    total_num_classes: int | None
+    total: float | None
     intensity: float
 
     def validate(self) -> bool:
@@ -23,9 +22,9 @@ class TransactionsRebalancingInput(ModelInput):
 
 
 class TransactionsRebalancingModel(
-    Model[TransactionsRebalancingInput, Tuple[List[RebalancedItem], float]]
+    Model[TransactionsRebalancingInput, tuple[list[RebalancedItem], float]]
 ):
-    def _run(self, model_input: TransactionsRebalancingInput) -> Tuple[List[RebalancedItem], float]:
+    def _run(self, model_input: TransactionsRebalancingInput) -> tuple[list[RebalancedItem], float]:
         """
         Adjusts sampling rates to bring the number of samples kept in each class as close to
         the same value as possible while maintaining the overall sampling rate.
@@ -55,7 +54,10 @@ class TransactionsRebalancingModel(
         if total is None:
             total = total_explicit
 
-        if total_num_classes is None:
+        # invariant violation: total number of classes should be at least the number of specified classes
+        # sometimes (maybe due to running the queries at slightly different times), the totals number might be less.
+        # in this case we should use the number of specified classes as the total number of classes
+        if total_num_classes is None or total_num_classes < len(classes):
             total_num_classes = len(classes)
 
         # total count for the unspecified classes

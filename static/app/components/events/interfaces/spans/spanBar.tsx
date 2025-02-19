@@ -1,7 +1,7 @@
 import 'intersection-observer'; // this is a polyfill
 
 import {Component, createRef, Fragment} from 'react';
-import {CellMeasurerCache, List as ReactVirtualizedList} from 'react-virtualized';
+import type {CellMeasurerCache, List as ReactVirtualizedList} from 'react-virtualized';
 import styled from '@emotion/styled';
 import {withProfiler} from '@sentry/react';
 
@@ -11,7 +11,8 @@ import {
   FREQUENCY_BOX_WIDTH,
   SpanFrequencyBox,
 } from 'sentry/components/events/interfaces/spans/spanFrequencyBox';
-import {ROW_HEIGHT, SpanBarType} from 'sentry/components/performance/waterfall/constants';
+import type {SpanBarType} from 'sentry/components/performance/waterfall/constants';
+import {ROW_HEIGHT} from 'sentry/components/performance/waterfall/constants';
 import {MessageRow} from 'sentry/components/performance/waterfall/messageRow';
 import {
   Row,
@@ -49,23 +50,18 @@ import {Tooltip} from 'sentry/components/tooltip';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import {
-  AggregateEventTransaction,
-  EventOrGroupType,
-  EventTransaction,
-} from 'sentry/types/event';
+import type {AggregateEventTransaction, EventTransaction} from 'sentry/types/event';
+import {EventOrGroupType} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import {generateEventSlug} from 'sentry/utils/discover/urls';
 import toPercent from 'sentry/utils/number/toPercent';
-import {
-  QuickTraceContext,
-  QuickTraceContextChildrenProps,
-} from 'sentry/utils/performance/quickTrace/quickTraceContext';
-import {
+import type {QuickTraceContextChildrenProps} from 'sentry/utils/performance/quickTrace/quickTraceContext';
+import {QuickTraceContext} from 'sentry/utils/performance/quickTrace/quickTraceContext';
+import type {
   QuickTraceEvent,
-  TraceError,
+  TraceErrorOrIssue,
   TraceFull,
 } from 'sentry/utils/performance/quickTrace/types';
 import {isTraceTransaction} from 'sentry/utils/performance/quickTrace/utils';
@@ -78,19 +74,23 @@ import {
   NUM_OF_SPANS_FIT_IN_MINI_MAP,
 } from './constants';
 import * as DividerHandlerManager from './dividerHandlerManager';
+import type {NewTraceDetailsSpanBar} from './newTraceDetailsSpanBar';
+import type {ScrollbarManagerChildrenProps} from './scrollbarManager';
+import {withScrollbarManager} from './scrollbarManager';
 import SpanBarCursorGuide from './spanBarCursorGuide';
 import SpanDetail from './spanDetail';
 import {MeasurementMarker} from './styles';
-import {
+import type {
   AggregateSpanType,
   FetchEmbeddedChildrenState,
   GapSpanType,
-  GroupType,
   ParsedTraceType,
   ProcessedSpanType,
   SpanType,
   TreeDepthType,
 } from './types';
+import {GroupType} from './types';
+import type {SpanBoundsType, SpanGeneratedBoundsType, SpanViewBoundsType} from './utils';
 import {
   durationlessBrowserOps,
   formatSpanTreeLabel,
@@ -104,10 +104,7 @@ import {
   isOrphanSpan,
   isOrphanTreeDepth,
   shouldLimitAffectedToTiming,
-  SpanBoundsType,
-  SpanGeneratedBoundsType,
   spanTargetHash,
-  SpanViewBoundsType,
   unwrapTreeDepth,
 } from './utils';
 
@@ -115,7 +112,7 @@ import {
 // for (let i = 0; i <= 1.0; i += 0.01) {
 //   INTERSECTION_THRESHOLDS.push(i);
 // }
-const INTERSECTION_THRESHOLDS: Array<number> = [
+const INTERSECTION_THRESHOLDS: number[] = [
   0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14,
   0.15, 0.16, 0.17, 0.18, 0.19, 0.2, 0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27, 0.28, 0.29,
   0.3, 0.31, 0.32, 0.33, 0.34, 0.35, 0.36, 0.37, 0.38, 0.39, 0.4, 0.41, 0.42, 0.43, 0.44,
@@ -127,11 +124,11 @@ const INTERSECTION_THRESHOLDS: Array<number> = [
 
 export const MARGIN_LEFT = 0;
 
-export type SpanBarProps = {
+export type SpanBarProps = ScrollbarManagerChildrenProps & {
   addContentSpanBarRef: (instance: HTMLDivElement | null) => void;
   addExpandedSpan: (span: Readonly<ProcessedSpanType>, callback?: () => void) => void;
   cellMeasurerCache: CellMeasurerCache;
-  continuingTreeDepths: Array<TreeDepthType>;
+  continuingTreeDepths: TreeDepthType[];
   didAnchoredSpanMount: () => boolean;
   event: Readonly<EventTransaction | AggregateEventTransaction>;
   fetchEmbeddedChildrenState: FetchEmbeddedChildrenState;
@@ -139,6 +136,7 @@ export type SpanBarProps = {
   getCurrentLeftPos: () => number;
   isEmbeddedTransactionTimeAdjusted: boolean;
   isSpanExpanded: (span: Readonly<ProcessedSpanType>) => boolean;
+  isSpanInEmbeddedTree: boolean;
   listRef: React.RefObject<ReactVirtualizedList>;
   numOfSpanChildren: number;
   numOfSpans: number;
@@ -151,7 +149,7 @@ export type SpanBarProps = {
   showSpanTree: boolean;
   span: ProcessedSpanType | AggregateSpanType;
   spanNumber: number;
-  storeSpanBar: (spanBar: SpanBar) => void;
+  storeSpanBar: (spanBar: SpanBar | NewTraceDetailsSpanBar) => void;
   toggleEmbeddedChildren:
     | (((orgSlug: string, eventSlugs: string[]) => void) | undefined)
     | undefined;
@@ -159,6 +157,7 @@ export type SpanBarProps = {
   toggleSpanTree: () => void;
   trace: Readonly<ParsedTraceType>;
   treeDepth: number;
+  fromTraceView?: boolean;
   groupOccurrence?: number;
   groupType?: GroupType;
   isLast?: boolean;
@@ -247,8 +246,8 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
 
   spanContentRef: HTMLDivElement | null = null;
   intersectionObserver?: IntersectionObserver = void 0;
-  zoomLevel: number = 1; // assume initial zoomLevel is 100%
-  _mounted: boolean = false;
+  zoomLevel = 1; // assume initial zoomLevel is 100%
+  _mounted = false;
 
   handleWheel = (event: WheelEvent) => {
     // https://stackoverflow.com/q/57358640
@@ -276,9 +275,11 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
       () => {
         const {measure, span, addExpandedSpan, removeExpandedSpan} = this.props;
 
-        this.state.showDetail
-          ? addExpandedSpan(span, measure)
-          : removeExpandedSpan(span, measure);
+        if (this.state.showDetail) {
+          addExpandedSpan(span, measure);
+        } else {
+          removeExpandedSpan(span, measure);
+        }
       }
     );
   };
@@ -306,7 +307,7 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
     transactions,
     errors,
   }: {
-    errors: TraceError[] | null;
+    errors: TraceErrorOrIssue[] | null;
     isVisible: boolean;
     transactions: QuickTraceEvent[] | null;
   }) {
@@ -316,13 +317,12 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
       return null;
     }
 
-    const isAggregateSpan =
-      event.type === EventOrGroupType.AGGREGATE_TRANSACTION && span.type === 'aggregate';
+    const isAggregateEvent = event.type === EventOrGroupType.AGGREGATE_TRANSACTION;
 
-    if (isAggregateSpan) {
+    if (isAggregateEvent) {
       return (
         <AggregateSpanDetail
-          span={span}
+          span={span as AggregateSpanType}
           organization={organization}
           event={event}
           isRoot={!!isRoot}
@@ -337,7 +337,7 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
 
     return (
       <SpanDetail
-        span={span as ProcessedSpanType}
+        span={span}
         organization={organization}
         event={event as EventTransaction}
         isRoot={!!isRoot}
@@ -427,7 +427,7 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
     return (
       <Fragment>
         {Array.from(measurements.values()).map(verticalMark => {
-          const mark = Object.values(verticalMark.marks)[0];
+          const mark = Object.values(verticalMark.marks)[0]!;
           const {timestamp} = mark;
           const bounds = getMeasurementBounds(timestamp, generateBounds);
 
@@ -477,7 +477,7 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
       return null;
     }
 
-    const connectorBars: Array<React.ReactNode> = continuingTreeDepths.map(treeDepth => {
+    const connectorBars: React.ReactNode[] = continuingTreeDepths.map(treeDepth => {
       const depth: number = unwrapTreeDepth(treeDepth);
 
       if (depth === 0) {
@@ -556,6 +556,12 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
 
             PerformanceInteraction.startInteraction('SpanTreeToggle', 1000 * 10);
             this.props.toggleSpanTree();
+
+            // TODO Abdullah Khan: A little bit hacky, but ensures that the toggled tree aligns
+            // with the rest of the span tree, in the trace view.
+            if (this.props.fromTraceView) {
+              this.props.updateHorizontalScrollState(0.5);
+            }
           }}
         >
           <Count value={numOfSpanChildren} />
@@ -565,7 +571,7 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
     );
   }
 
-  renderTitle(errors: TraceError[] | null) {
+  renderTitle(errors: TraceErrorOrIssue[] | null) {
     const {
       span,
       spanBarType,
@@ -594,7 +600,7 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
             if (groupType === GroupType.SIBLINGS && 'op' in span) {
               toggleSiblingSpanGroup?.(span, groupOccurrence ?? 0);
             } else {
-              toggleSpanGroup && toggleSpanGroup();
+              toggleSpanGroup?.();
             }
           }}
         >
@@ -880,12 +886,14 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
     );
   }
 
-  getRelatedErrors(quickTrace: QuickTraceContextChildrenProps): TraceError[] | null {
+  getRelatedErrors(
+    quickTrace: QuickTraceContextChildrenProps
+  ): TraceErrorOrIssue[] | null {
     if (!quickTrace) {
       return null;
     }
 
-    const {span} = this.props;
+    const {span, isSpanInEmbeddedTree} = this.props;
     const {currentEvent} = quickTrace;
 
     if (
@@ -896,7 +904,16 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
       return null;
     }
 
-    return currentEvent.errors.filter(error => error.span === span.span_id);
+    const performanceIssues = currentEvent.performance_issues.filter(
+      issue =>
+        issue.span.some(id => id === span.span_id) ||
+        issue.suspect_spans.some(suspectSpanId => suspectSpanId === span.span_id)
+    );
+
+    return [
+      ...currentEvent.errors.filter(error => error.span === span.span_id),
+      ...(isSpanInEmbeddedTree ? [] : performanceIssues), // Spans can be shown when embedded in performance issues
+    ];
   }
 
   getChildTransactions(
@@ -916,7 +933,7 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
     return trace.filter(({parent_span_id}) => parent_span_id === span.span_id);
   }
 
-  renderErrorBadge(errors: TraceError[] | null): React.ReactNode {
+  renderErrorBadge(errors: TraceErrorOrIssue[] | null): React.ReactNode {
     return errors?.length ? <ErrorBadge /> : null;
   }
 
@@ -939,6 +956,7 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
           containerDisplayMode="block"
         >
           <EmbeddedTransactionBadge
+            inTraceView={!!this.props.fromTraceView}
             expanded={showEmbeddedChildren}
             onClick={() => {
               if (toggleEmbeddedChildren) {
@@ -1017,7 +1035,7 @@ export class SpanBar extends Component<SpanBarProps, SpanBarState> {
     transactions,
   }: {
     dividerHandlerChildrenProps: DividerHandlerManager.DividerHandlerManagerChildrenProps;
-    errors: TraceError[] | null;
+    errors: TraceErrorOrIssue[] | null;
     transactions: QuickTraceEvent[] | null;
   }) {
     const {dividerPosition, addGhostDividerLineRef} = dividerHandlerChildrenProps;
@@ -1226,4 +1244,4 @@ const StyledIconWarning = styled(IconWarning)`
 
 const Regroup = styled('span')``;
 
-export const ProfiledSpanBar = withProfiler(SpanBar);
+export const ProfiledSpanBar = withProfiler(withScrollbarManager(SpanBar));

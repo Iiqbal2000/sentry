@@ -1,9 +1,9 @@
-import {browserHistory} from 'react-router';
 import * as Sentry from '@sentry/react';
 import Cookies from 'js-cookie';
 import * as qs from 'query-string';
 
-import {openSudo, redirectToProject} from 'sentry/actionCreators/modal';
+import {redirectToProject} from 'sentry/actionCreators/redirectToProject';
+import {openSudo} from 'sentry/actionCreators/sudoModal';
 import {EXPERIMENTAL_SPA} from 'sentry/constants';
 import {
   PROJECT_MOVED,
@@ -12,13 +12,13 @@ import {
 } from 'sentry/constants/apiErrorCodes';
 import controlsilopatterns from 'sentry/data/controlsiloUrlPatterns';
 import {metric} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import getCsrfToken from 'sentry/utils/getCsrfToken';
 import {uniqueId} from 'sentry/utils/guid';
 import RequestError from 'sentry/utils/requestError/requestError';
 import {sanitizePath} from 'sentry/utils/requestError/sanitizePath';
 
 import ConfigStore from './stores/configStore';
-import OrganizationStore from './stores/organizationStore';
 
 export class Request {
   /**
@@ -119,21 +119,27 @@ const ALLOWED_ANON_PAGES = [
   /^\/share\//,
   /^\/auth\/login\//,
   /^\/join-request\//,
+  /^\/unsubscribe\//,
 ];
 
 /**
  * Return true if we should skip calling the normal error handler
  */
-const globalErrorHandlers: ((resp: ResponseMeta) => boolean)[] = [];
+const globalErrorHandlers: Array<
+  (resp: ResponseMeta, options: RequestOptions) => boolean
+> = [];
 
 export const initApiClientErrorHandling = () =>
-  globalErrorHandlers.push((resp: ResponseMeta) => {
+  globalErrorHandlers.push((resp: ResponseMeta, options: RequestOptions) => {
     const pageAllowsAnon = ALLOWED_ANON_PAGES.find(regex =>
       regex.test(window.location.pathname)
     );
 
     // Ignore error unless it is a 401
     if (!resp || resp.status !== 401 || pageAllowsAnon) {
+      return false;
+    }
+    if (resp && options.allowAuthError && resp.status === 401) {
       return false;
     }
 
@@ -250,6 +256,11 @@ export type RequestCallbacks = {
 
 export type RequestOptions = RequestCallbacks & {
   /**
+   * Set true, if an authentication required error is allowed for
+   * a request.
+   */
+  allowAuthError?: boolean;
+  /**
    * Values to attach to the body of the request.
    */
   data?: any;
@@ -275,6 +286,13 @@ export type RequestOptions = RequestCallbacks & {
    * Query parameters to add to the requested URL.
    */
   query?: Record<string, any>;
+  /**
+   * By default, requests will be aborted anytime api.clear() is called,
+   * which is commonly used on unmounts. When skipAbort is true, the
+   * request is opted out of this behavior. Useful for when you still
+   * want to cache a request on unmount.
+   */
+  skipAbort?: boolean;
 };
 
 type ClientOptions = {
@@ -324,7 +342,7 @@ export class Client {
   wrapCallback<T extends any[]>(
     id: string,
     func: FunctionCallback<T> | undefined,
-    cleanup: boolean = false
+    cleanup = false
   ) {
     return (...args: T) => {
       const req = this.activeRequests[id];
@@ -339,7 +357,7 @@ export class Client {
 
       // Check if API response is a 302 -- means project slug was renamed and user
       // needs to be redirected
-      // @ts-expect-error
+      // @ts-expect-error TS(2556): A spread argument must either have a tuple type or... Remove this comment to see the full error message
       if (hasProjectBeenRenamed(...args)) {
         return undefined;
       }
@@ -396,7 +414,7 @@ export class Client {
   }
 
   /**
-   * Initate a request to the backend API.
+   * Initiate a request to the backend API.
    *
    * Consider using `requestPromise` for the async Promise version of this method.
    */
@@ -407,12 +425,12 @@ export class Client {
 
     let data = options.data;
 
-    if (data !== undefined && method !== 'GET') {
+    if (data !== undefined && method !== 'GET' && !(data instanceof FormData)) {
       data = JSON.stringify(data);
     }
 
     // TODO(epurkhiser): Mimicking the old jQuery API, data could be a string /
-    // object for GET requets. jQuery just sticks it onto the URL as query
+    // object for GET requests. jQuery just sticks it onto the URL as query
     // parameters
     if (method === 'GET' && data) {
       const queryString = typeof data === 'string' ? data : qs.stringify(data);
@@ -483,12 +501,14 @@ export class Client {
 
     // AbortController is optional, though most browser should support it.
     const aborter =
-      typeof AbortController !== 'undefined' ? new AbortController() : undefined;
+      typeof AbortController !== 'undefined' && !options.skipAbort
+        ? new AbortController()
+        : undefined;
 
     // GET requests may not have a body
     const body = method !== 'GET' ? data : undefined;
 
-    const requestHeaders = new Headers(this.headers);
+    const requestHeaders = new Headers({...this.headers, ...options.headers});
 
     // Do not set the X-CSRFToken header when making a request outside of the
     // current domain. Because we use subdomains we loosely compare origins
@@ -518,7 +538,7 @@ export class Client {
           const {status, statusText} = response;
           let {ok} = response;
           let errorReason = 'Request not OK'; // the default error reason
-          let twoHundredErrorReason;
+          let twoHundredErrorReason: string | undefined;
 
           // Try to get text out of the response no matter the status
           try {
@@ -536,7 +556,7 @@ export class Client {
           const responseContentType = response.headers.get('content-type');
           const isResponseJSON = responseContentType?.includes('json');
           const wasExpectingJson =
-            requestHeaders.get('Content-Type') === 'application/json';
+            requestHeaders.get('Accept') === Client.JSON_HEADERS.Accept;
 
           const isStatus3XX = status >= 300 && status < 400;
           if (status !== 204 && !isStatus3XX) {
@@ -587,27 +607,28 @@ export class Client {
               const parameterizedPath = sanitizePath(path);
               const message = '200 treated as error';
 
-              const scope = new Sentry.Scope();
-              scope.setTags({endpoint: `${method} ${parameterizedPath}`, errorReason});
-              scope.setExtras({
-                twoHundredErrorReason,
-                responseJSON,
-                responseText,
-                responseContentType,
-                errorReason,
-              });
-              // Make sure all of these errors group, so we don't produce a bunch of noise
-              scope.setFingerprint([message]);
+              Sentry.withScope(scope => {
+                scope.setTags({endpoint: `${method} ${parameterizedPath}`, errorReason});
+                scope.setExtras({
+                  twoHundredErrorReason,
+                  responseJSON,
+                  responseText,
+                  responseContentType,
+                  errorReason,
+                });
+                // Make sure all of these errors group, so we don't produce a bunch of noise
+                scope.setFingerprint([message]);
 
-              Sentry.captureException(
-                new Error(`${message}: ${method} ${parameterizedPath}`),
-                scope
-              );
+                Sentry.captureException(
+                  new Error(`${message}: ${method} ${parameterizedPath}`)
+                );
+              });
             }
 
             const shouldSkipErrorHandler =
-              globalErrorHandlers.map(handler => handler(responseMeta)).filter(Boolean)
-                .length > 0;
+              globalErrorHandlers
+                .map(handler => handler(responseMeta, options))
+                .filter(Boolean).length > 0;
 
             if (!shouldSkipErrorHandler) {
               errorHandler(responseMeta, statusText, errorReason);
@@ -677,13 +698,20 @@ export class Client {
 }
 
 export function resolveHostname(path: string, hostname?: string): string {
-  const storeState = OrganizationStore.get();
   const configLinks = ConfigStore.get('links');
+  const systemFeatures = ConfigStore.get('features');
 
   hostname = hostname ?? '';
-  if (!hostname && storeState.organization?.features.includes('frontend-domainsplit')) {
+  if (!hostname && systemFeatures.has('system:multi-region')) {
+    // /_admin/ is special: since it doesn't update OrganizationStore, it's
+    // commonly the case that requests will be made for data which does not
+    // exist in the same region as the one in configLinks.regionUrl. Because of
+    // this we want to explicitly default those requests to be proxied through
+    // the control silo which can handle region resolution in exchange for a
+    // bit of latency.
+    const isAdmin = window.location.pathname.startsWith('/_admin/');
     const isControlSilo = detectControlSiloPath(path);
-    if (!isControlSilo && configLinks.regionUrl) {
+    if (!isAdmin && !isControlSilo && configLinks.regionUrl) {
       hostname = configLinks.regionUrl;
     }
     if (isControlSilo && configLinks.sentryUrl) {

@@ -1,8 +1,10 @@
-import {browserHistory} from 'react-router';
-import selectEvent from 'react-select-event';
-import {AuthProvider} from 'sentry-fixture/authProvider';
-import {Members} from 'sentry-fixture/members';
-import {Organization} from 'sentry-fixture/organization';
+import {AuthProviderFixture} from 'sentry-fixture/authProvider';
+import {MemberFixture} from 'sentry-fixture/member';
+import {MembersFixture} from 'sentry-fixture/members';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {RouterFixture} from 'sentry-fixture/routerFixture';
+import {TeamFixture} from 'sentry-fixture/team';
+import {UserFixture} from 'sentry-fixture/user';
 
 import {
   render,
@@ -12,16 +14,16 @@ import {
   waitFor,
   within,
 } from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
 import ConfigStore from 'sentry/stores/configStore';
+import ModalStore from 'sentry/stores/modalStore';
 import OrganizationsStore from 'sentry/stores/organizationsStore';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import OrganizationMembersList from 'sentry/views/settings/organizationMembers/organizationMembersList';
 
 jest.mock('sentry/utils/analytics');
-
-jest.mock('sentry/api');
 jest.mock('sentry/actionCreators/indicator');
 
 const roles = [
@@ -29,80 +31,62 @@ const roles = [
     id: 'admin',
     name: 'Admin',
     desc: 'This is the admin role',
-    allowed: true,
+    isAllowed: true,
   },
   {
     id: 'member',
     name: 'Member',
     desc: 'This is the member role',
-    allowed: true,
+    isAllowed: true,
   },
   {
     id: 'owner',
     name: 'Owner',
     desc: 'This is the owner role',
-    allowed: true,
+    isAllowed: true,
   },
 ];
 
-// const missingMembers = [
-//   {
-//     integration: 'github',
-//     users: TestStubs.MissingMembers(),
-//   },
-// ];
-
 describe('OrganizationMembersList', function () {
-  const members = TestStubs.Members();
+  const members = MembersFixture();
 
-  const ownerTeam = TestStubs.Team({slug: 'owner-team', orgRole: 'owner'});
-  const member = TestStubs.Member({
+  const team = TeamFixture({slug: 'team'});
+  const member = MemberFixture({
     id: '5',
     email: 'member@sentry.io',
-    teams: [ownerTeam.slug],
+    teams: [team.slug],
     teamRoles: [
       {
-        teamSlug: ownerTeam.slug,
+        teamSlug: team.slug,
         role: null,
       },
     ],
     flags: {
       'sso:linked': true,
+      'idp:provisioned': false,
+      'idp:role-restricted': false,
+      'member-limit:restricted': false,
+      'partnership:restricted': false,
+      'sso:invalid': false,
     },
-    groupOrgRoles: [
-      {
-        teamSlug: ownerTeam.slug,
-        role: {id: 'owner'},
-      },
-    ],
   });
 
-  const currentUser = members[1];
-  const organization = Organization({
+  const currentUser = members[1]!;
+  currentUser.user = UserFixture({
+    ...currentUser,
+    flags: {newsletter_consent_prompt: true},
+  });
+  const organization = OrganizationFixture({
     access: ['member:admin', 'org:admin', 'member:write'],
     status: {
       id: 'active',
       name: 'active',
     },
   });
-  const router = TestStubs.router();
-  const defaultProps = {
-    organization,
-    router,
-    location: router.location,
-    routes: router.routes,
-    route: router.routes[0],
-    params: router.params,
-    routeParams: router.params,
-  };
-
-  jest.spyOn(ConfigStore, 'get').mockImplementation(() => currentUser);
-
-  afterAll(function () {
-    (ConfigStore.get as jest.Mock).mockRestore();
-  });
+  const router = RouterFixture();
 
   beforeEach(function () {
+    ConfigStore.set('user', currentUser.user!);
     MockApiClient.clearMockResponses();
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/members/me/',
@@ -112,7 +96,7 @@ describe('OrganizationMembersList', function () {
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/members/',
       method: 'GET',
-      body: [...Members(), member],
+      body: [...MembersFixture(), member],
     });
     MockApiClient.addMockResponse({
       url: `/organizations/org-slug/members/${member.id}/`,
@@ -135,7 +119,7 @@ describe('OrganizationMembersList', function () {
               name: 'sentry@test.com',
             },
           },
-          team: TestStubs.Team(),
+          team: TeamFixture(),
         },
       ],
     });
@@ -143,14 +127,14 @@ describe('OrganizationMembersList', function () {
       url: '/organizations/org-slug/auth-provider/',
       method: 'GET',
       body: {
-        ...AuthProvider(),
+        ...AuthProviderFixture(),
         require_link: true,
       },
     });
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/teams/',
       method: 'GET',
-      body: [TestStubs.Team(), ownerTeam],
+      body: [TeamFixture(), team],
     });
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/invite-requests/',
@@ -163,90 +147,91 @@ describe('OrganizationMembersList', function () {
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/prompts-activity/',
+      url: '/organizations/org-slug/prompts-activity/',
       method: 'GET',
       body: {
         dismissed_ts: undefined,
         snoozed_ts: undefined,
       },
     });
-    (browserHistory.push as jest.Mock).mockReset();
     OrganizationsStore.load([organization]);
+    ModalStore.init();
   });
 
   it('can remove a member', async function () {
     const deleteMock = MockApiClient.addMockResponse({
-      url: `/organizations/org-slug/members/${members[0].id}/`,
+      url: `/organizations/org-slug/members/${members[0]!.id}/`,
       method: 'DELETE',
     });
 
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: TestStubs.routerContext([{organization}]),
-    });
+    render(<OrganizationMembersList />, {organization, router});
+    renderGlobalModal({router});
 
-    await userEvent.click(screen.getAllByRole('button', {name: 'Remove'})[0]);
+    // The organization member row
+    expect(await screen.findByTestId(members[0]!.email)).toBeInTheDocument();
 
-    renderGlobalModal();
-    await userEvent.click(screen.getByTestId('confirm-button'));
+    await userEvent.click(
+      within(screen.getByTestId(members[0]!.email)).getByRole('button', {name: 'Remove'})
+    );
+    await userEvent.click(await screen.findByRole('button', {name: 'Confirm'}));
 
     await waitFor(() => expect(addSuccessMessage).toHaveBeenCalled());
 
     expect(deleteMock).toHaveBeenCalled();
-    expect(browserHistory.push).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
     expect(OrganizationsStore.getAll()).toEqual([organization]);
   });
 
   it('displays error message when failing to remove member', async function () {
     const deleteMock = MockApiClient.addMockResponse({
-      url: `/organizations/org-slug/members/${members[0].id}/`,
+      url: `/organizations/org-slug/members/${members[0]!.id}/`,
       method: 'DELETE',
       statusCode: 500,
     });
 
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: TestStubs.routerContext([{organization}]),
-    });
+    render(<OrganizationMembersList />, {organization, router});
+    renderGlobalModal({router});
 
-    await userEvent.click(screen.getAllByRole('button', {name: 'Remove'})[0]);
+    // The organization member row
+    expect(await screen.findByTestId(members[0]!.email)).toBeInTheDocument();
 
-    renderGlobalModal();
-    await userEvent.click(screen.getByTestId('confirm-button'));
+    await userEvent.click(
+      within(screen.getByTestId(members[0]!.email)).getByRole('button', {name: 'Remove'})
+    );
+    await userEvent.click(await screen.findByRole('button', {name: 'Confirm'}));
 
     await waitFor(() => expect(addErrorMessage).toHaveBeenCalled());
 
     expect(deleteMock).toHaveBeenCalled();
-    expect(browserHistory.push).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
     expect(OrganizationsStore.getAll()).toEqual([organization]);
   });
 
   it('can leave org', async function () {
     const deleteMock = MockApiClient.addMockResponse({
-      url: `/organizations/org-slug/members/${members[1].id}/`,
+      url: `/organizations/org-slug/members/${members[1]!.id}/`,
       method: 'DELETE',
     });
 
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: TestStubs.routerContext([{organization}]),
-    });
+    render(<OrganizationMembersList />, {organization, router});
+    renderGlobalModal({router});
 
-    await userEvent.click(screen.getAllByRole('button', {name: 'Leave'})[0]);
-
-    renderGlobalModal();
-    await userEvent.click(screen.getByTestId('confirm-button'));
+    await userEvent.click(await screen.findByRole('button', {name: 'Leave'}));
+    await userEvent.click(await screen.findByRole('button', {name: 'Confirm'}));
 
     await waitFor(() => expect(addSuccessMessage).toHaveBeenCalled());
 
     expect(deleteMock).toHaveBeenCalled();
-    expect(browserHistory.push).toHaveBeenCalledTimes(1);
-    expect(browserHistory.push).toHaveBeenCalledWith('/organizations/new/');
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith({pathname: '/organizations/new/'});
   });
 
   it('can redirect to remaining org after leaving', async function () {
     const deleteMock = MockApiClient.addMockResponse({
-      url: `/organizations/org-slug/members/${members[1].id}/`,
+      url: `/organizations/org-slug/members/${members[1]!.id}/`,
       method: 'DELETE',
     });
-    const secondOrg = Organization({
+    const secondOrg = OrganizationFixture({
       slug: 'org-two',
       status: {
         id: 'active',
@@ -255,99 +240,91 @@ describe('OrganizationMembersList', function () {
     });
     OrganizationsStore.addOrReplace(secondOrg);
 
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: TestStubs.routerContext([{organization}]),
-    });
+    render(<OrganizationMembersList />, {organization, router});
+    renderGlobalModal({router});
 
-    await userEvent.click(screen.getAllByRole('button', {name: 'Leave'})[0]);
-
-    renderGlobalModal();
+    await userEvent.click(await screen.findByRole('button', {name: 'Leave'}));
     await userEvent.click(screen.getByTestId('confirm-button'));
 
     await waitFor(() => expect(addSuccessMessage).toHaveBeenCalled());
 
     expect(deleteMock).toHaveBeenCalled();
-    expect(browserHistory.push).toHaveBeenCalledTimes(1);
-    expect(browserHistory.push).toHaveBeenCalledWith(
-      `/organizations/${secondOrg.slug}/issues/`
-    );
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/organizations/org-two/issues/',
+    });
     expect(OrganizationsStore.getAll()).toEqual([secondOrg]);
   });
 
   it('displays error message when failing to leave org', async function () {
     const deleteMock = MockApiClient.addMockResponse({
-      url: `/organizations/org-slug/members/${members[1].id}/`,
+      url: `/organizations/org-slug/members/${members[1]!.id}/`,
       method: 'DELETE',
       statusCode: 500,
     });
 
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: TestStubs.routerContext([{organization}]),
-    });
+    render(<OrganizationMembersList />, {organization, router});
+    renderGlobalModal({router});
 
-    await userEvent.click(screen.getAllByRole('button', {name: 'Leave'})[0]);
-
-    renderGlobalModal();
-    await userEvent.click(screen.getByTestId('confirm-button'));
+    await userEvent.click(await screen.findByRole('button', {name: 'Leave'}));
+    await userEvent.click(await screen.findByRole('button', {name: 'Confirm'}));
 
     await waitFor(() => expect(addErrorMessage).toHaveBeenCalled());
 
     expect(deleteMock).toHaveBeenCalled();
-    expect(browserHistory.push).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
     expect(OrganizationsStore.getAll()).toEqual([organization]);
   });
 
   it('can re-send SSO link to member', async function () {
     const inviteMock = MockApiClient.addMockResponse({
-      url: `/organizations/org-slug/members/${members[0].id}/`,
+      url: `/organizations/org-slug/members/${members[0]!.id}/`,
       method: 'PUT',
       body: {
         id: '1234',
       },
     });
 
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: TestStubs.routerContext([{organization}]),
-    });
+    render(<OrganizationMembersList />, {organization});
 
     expect(inviteMock).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole('button', {name: 'Resend SSO link'}));
+    await userEvent.click(await screen.findByRole('button', {name: 'Resend SSO link'}));
     expect(inviteMock).toHaveBeenCalled();
   });
 
   it('can re-send invite to member', async function () {
     const inviteMock = MockApiClient.addMockResponse({
-      url: `/organizations/org-slug/members/${members[1].id}/`,
+      url: `/organizations/org-slug/members/${members[1]!.id}/`,
       method: 'PUT',
       body: {
         id: '1234',
       },
     });
 
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: TestStubs.routerContext([{organization}]),
-    });
+    render(<OrganizationMembersList />, {organization});
 
     expect(inviteMock).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole('button', {name: 'Resend invite'}));
+    await userEvent.click(await screen.findByRole('button', {name: 'Resend invite'}));
     expect(inviteMock).toHaveBeenCalled();
   });
 
   it('can search organization members', async function () {
+    const filterRouter = RouterFixture();
     const searchMock = MockApiClient.addMockResponse({
       url: '/organizations/org-slug/members/',
       body: [],
     });
 
-    const routerContext = TestStubs.routerContext();
-
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: routerContext,
+    const {rerender} = render(<OrganizationMembersList />, {
+      router: filterRouter,
     });
 
-    await userEvent.type(screen.getByPlaceholderText('Search Members'), 'member');
+    await userEvent.type(await screen.findByPlaceholderText('Search Members'), 'member');
+
+    filterRouter.location.query = {query: 'member'};
+    rerender(<OrganizationMembersList />);
 
     expect(searchMock).toHaveBeenLastCalledWith(
       '/organizations/org-slug/members/',
@@ -361,7 +338,9 @@ describe('OrganizationMembersList', function () {
 
     await userEvent.keyboard('{enter}');
 
-    expect(routerContext.context.router.push).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(filterRouter.push).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('can filter members', async function () {
@@ -369,13 +348,17 @@ describe('OrganizationMembersList', function () {
       url: '/organizations/org-slug/members/',
       body: [],
     });
-    const routerContext = TestStubs.routerContext();
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: routerContext,
+
+    const filterRouter = RouterFixture();
+    const {rerender} = render(<OrganizationMembersList />, {
+      router: filterRouter,
     });
 
-    await userEvent.click(screen.getByRole('button', {name: 'Filter'}));
+    await userEvent.click(await screen.findByRole('button', {name: 'Filter'}));
     await userEvent.click(screen.getByRole('option', {name: 'Member'}));
+
+    filterRouter.location.query = {query: 'role:member'};
+    rerender(<OrganizationMembersList />);
 
     expect(searchMock).toHaveBeenLastCalledWith(
       '/organizations/org-slug/members/',
@@ -399,6 +382,8 @@ describe('OrganizationMembersList', function () {
         })
       );
 
+      filterRouter.location.query = {query: `${filter}:true`};
+      rerender(<OrganizationMembersList />);
       expect(searchMock).toHaveBeenLastCalledWith(
         '/organizations/org-slug/members/',
         expect.objectContaining({
@@ -413,6 +398,8 @@ describe('OrganizationMembersList', function () {
         })
       );
 
+      filterRouter.location.query = {query: `${filter}:false`};
+      rerender(<OrganizationMembersList />);
       expect(searchMock).toHaveBeenLastCalledWith(
         '/organizations/org-slug/members/',
         expect.objectContaining({
@@ -429,30 +416,16 @@ describe('OrganizationMembersList', function () {
     }
   });
 
-  it('can filter members with org roles from team membership', async function () {
-    const routerContext = TestStubs.routerContext();
-    render(<OrganizationMembersList {...defaultProps} />, {
-      context: routerContext,
-    });
-
-    await userEvent.click(screen.getByRole('button', {name: 'Filter'}));
-    await userEvent.click(screen.getByRole('option', {name: 'Owner'}));
-    await userEvent.click(screen.getByRole('button', {name: 'Filter'}));
-
-    const owners = screen.queryAllByText('Owner');
-    expect(owners).toHaveLength(3);
-  });
-
   describe('OrganizationInviteRequests', function () {
-    const inviteRequest = TestStubs.Member({
+    const inviteRequest = MemberFixture({
       id: '123',
       user: null,
       inviteStatus: 'requested_to_be_invited',
-      inviter: TestStubs.User(),
+      inviterName: UserFixture().name,
       role: 'member',
       teams: [],
     });
-    const joinRequest = TestStubs.Member({
+    const joinRequest = MemberFixture({
       id: '456',
       user: null,
       email: 'test@gmail.com',
@@ -461,8 +434,8 @@ describe('OrganizationMembersList', function () {
       teams: [],
     });
 
-    it('disable buttons for no access', function () {
-      const org = Organization({
+    it('disable buttons for no access', async function () {
+      const org = OrganizationFixture({
         status: {
           id: 'active',
           name: 'active',
@@ -478,16 +451,14 @@ describe('OrganizationMembersList', function () {
         method: 'PUT',
       });
 
-      render(<OrganizationMembersList {...defaultProps} organization={org} />, {
-        context: TestStubs.routerContext([{organization: org}]),
-      });
+      render(<OrganizationMembersList />, {organization: org});
 
-      expect(screen.getByText('Pending Members')).toBeInTheDocument();
+      expect(await screen.findByText('Pending Members')).toBeInTheDocument();
       expect(screen.getByRole('button', {name: 'Approve'})).toBeDisabled();
     });
 
     it('can approve invite request and update', async function () {
-      const org = Organization({
+      const org = OrganizationFixture({
         access: ['member:admin', 'org:admin', 'member:write'],
         status: {
           id: 'active',
@@ -504,15 +475,13 @@ describe('OrganizationMembersList', function () {
         method: 'PUT',
       });
 
-      render(<OrganizationMembersList {...defaultProps} />, {
-        context: TestStubs.routerContext([{organization: org}]),
-      });
+      render(<OrganizationMembersList />, {organization, router});
 
-      expect(screen.getByText('Pending Members')).toBeInTheDocument();
+      expect(await screen.findByText('Pending Members')).toBeInTheDocument();
 
       await userEvent.click(screen.getByRole('button', {name: 'Approve'}));
 
-      renderGlobalModal();
+      renderGlobalModal({router});
       await userEvent.click(screen.getByTestId('confirm-button'));
 
       expect(screen.queryByText('Pending Members')).not.toBeInTheDocument();
@@ -525,7 +494,7 @@ describe('OrganizationMembersList', function () {
     });
 
     it('can deny invite request and remove', async function () {
-      const org = Organization({
+      const org = OrganizationFixture({
         access: ['member:admin', 'org:admin', 'member:write'],
         status: {
           id: 'active',
@@ -542,11 +511,9 @@ describe('OrganizationMembersList', function () {
         method: 'DELETE',
       });
 
-      render(<OrganizationMembersList {...defaultProps} />, {
-        context: TestStubs.routerContext([{organization: org}]),
-      });
+      render(<OrganizationMembersList />, {organization});
 
-      expect(screen.getByText('Pending Members')).toBeInTheDocument();
+      expect(await screen.findByText('Pending Members')).toBeInTheDocument();
 
       await userEvent.click(screen.getByRole('button', {name: 'Deny'}));
 
@@ -560,7 +527,7 @@ describe('OrganizationMembersList', function () {
     });
 
     it('can update invite requests', async function () {
-      const org = Organization({
+      const org = OrganizationFixture({
         access: ['member:admin', 'org:admin', 'member:write'],
         status: {
           id: 'active',
@@ -578,15 +545,16 @@ describe('OrganizationMembersList', function () {
         method: 'PUT',
       });
 
-      render(<OrganizationMembersList {...defaultProps} />, {
-        context: TestStubs.routerContext([{organization: org}]),
-      });
+      render(<OrganizationMembersList />, {organization: org, router});
 
-      await selectEvent.select(screen.getAllByRole('textbox')[1], ['Admin']);
+      expect(await screen.findByText('Pending Members')).toBeInTheDocument();
+      await selectEvent.select(screen.getByRole('textbox', {name: 'Role: Member'}), [
+        'Admin',
+      ]);
 
       await userEvent.click(screen.getByRole('button', {name: 'Approve'}));
 
-      renderGlobalModal();
+      renderGlobalModal({router});
       await userEvent.click(screen.getByTestId('confirm-button'));
 
       expect(updateWithApprove).toHaveBeenCalledWith(
@@ -596,54 +564,91 @@ describe('OrganizationMembersList', function () {
     });
   });
 
-  // TODO(cathy): uncomment
+  describe('Org Access Requests', function () {
+    it('can invite member', async function () {
+      const inviteOrg = OrganizationFixture({
+        features: ['invite-members'],
+        access: ['member:admin', 'org:admin', 'member:write'],
+        status: {
+          id: 'active',
+          name: 'active',
+        },
+      });
 
-  // describe('inviteBanner', function () {
-  //   it('invites member from banner', async function () {
-  //     MockApiClient.addMockResponse({
-  //       url: '/organizations/org-slug/missing-members/',
-  //       method: 'GET',
-  //       body: missingMembers,
-  //     });
+      render(<OrganizationMembersList />, {organization: inviteOrg, router});
+      renderGlobalModal({router});
 
-  //     const newMember = TestStubs.Member({
-  //       id: '6',
-  //       email: 'hello@sentry.io',
-  //       teams: [],
-  //       teamRoles: [],
-  //       flags: {
-  //         'sso:linked': true,
-  //         'idp:provisioned': false,
-  //       },
-  //     });
+      await userEvent.click(await screen.findByRole('button', {name: 'Invite Members'}));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
 
-  //     MockApiClient.addMockResponse({
-  //       url: '/organizations/org-slug/members/?referrer=github_nudge_invite',
-  //       method: 'POST',
-  //       body: newMember,
-  //     });
+    it('can not invite members without the invite-members feature', async function () {
+      const org = OrganizationFixture({
+        features: [],
+        access: ['member:admin', 'org:admin', 'member:write'],
+        status: {
+          id: 'active',
+          name: 'active',
+        },
+      });
 
-  //     const org = Organization({
-  //       features: ['integrations-gh-invite'],
-  //       githubNudgeInvite: true,
-  //     });
+      render(<OrganizationMembersList />, {organization: org, router});
+      renderGlobalModal({router});
 
-  //     render(<OrganizationMembersList {...defaultProps} organization={org} />, {
-  //       context: TestStubs.routerContext([{organization: org}]),
-  //     });
+      expect(await screen.findByRole('button', {name: 'Invite Members'})).toBeDisabled();
+    });
 
-  //     expect(
-  //       await screen.findByRole('heading', {
-  //         name: 'Bring your full GitHub team on board in Sentry',
-  //       })
-  //     ).toBeInTheDocument();
-  //     expect(screen.queryAllByTestId('invite-missing-member')).toHaveLength(5);
-  //     expect(screen.getByText('See all 5 missing members')).toBeInTheDocument();
+    it('cannot invite members if SSO is required', async function () {
+      const org = OrganizationFixture({
+        features: ['invite-members'],
+        access: [],
+        status: {
+          id: 'active',
+          name: 'active',
+        },
+        requiresSso: true,
+      });
 
-  //     const inviteButton = screen.queryAllByTestId('invite-missing-member')[0];
-  //     await userEvent.click(inviteButton);
-  //     expect(screen.queryAllByTestId('invite-missing-member')).toHaveLength(4);
-  //     expect(screen.getByText('See all 4 missing members')).toBeInTheDocument();
-  //   });
-  // });
+      render(<OrganizationMembersList />, {organization: org, router});
+      renderGlobalModal({router});
+
+      await userEvent.click(screen.getByRole('button', {name: 'Invite Members'}));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('can invite without permissions', async function () {
+      const org = OrganizationFixture({
+        features: ['invite-members'],
+        access: [],
+        status: {
+          id: 'active',
+          name: 'active',
+        },
+      });
+
+      render(<OrganizationMembersList />, {organization: org, router});
+      renderGlobalModal({router});
+
+      await userEvent.click(await screen.findByRole('button', {name: 'Invite Members'}));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    it('renders member list', async function () {
+      MockApiClient.addMockResponse({
+        url: '/organizations/org-slug/members/',
+        method: 'GET',
+        body: [member],
+      });
+      MockApiClient.addMockResponse({
+        url: '/organizations/org-slug/prompts-activity/',
+        method: 'GET',
+        body: {},
+      });
+      render(<OrganizationMembersList />, {organization, router});
+      renderGlobalModal({router});
+
+      expect(await screen.findByText('Members')).toBeInTheDocument();
+      expect(screen.getByText(member.name)).toBeInTheDocument();
+    });
+  });
 });

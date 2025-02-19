@@ -1,20 +1,23 @@
 import {Component} from 'react';
-import {WithRouterProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {updateProjects} from 'sentry/actionCreators/pageFilters';
-import {Button} from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
+import ButtonBar from 'sentry/components/buttonBar';
 import ErrorPanel from 'sentry/components/charts/errorPanel';
 import EmptyMessage from 'sentry/components/emptyMessage';
 import IdBadge from 'sentry/components/idBadge';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Link from 'sentry/components/links/link';
 import Panel from 'sentry/components/panels/panel';
-import PanelTable, {PanelTableHeader} from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import {IconGraph, IconSettings, IconWarning} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {DataCategoryInfo, Project} from 'sentry/types';
+import type {DataCategoryInfo} from 'sentry/types/core';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
+import type {Project} from 'sentry/types/project';
+// eslint-disable-next-line no-restricted-imports
 import withSentryRouter from 'sentry/utils/withSentryRouter';
 
 import {formatUsageWithUnits, getFormatUsageOptions} from './utils';
@@ -22,27 +25,30 @@ import {formatUsageWithUnits, getFormatUsageOptions} from './utils';
 const DOCS_URL = 'https://docs.sentry.io/product/accounts/membership/#restricting-access';
 
 type Props = {
-  dataCategory: DataCategoryInfo['plural'];
+  dataCategory: DataCategoryInfo;
   headers: React.ReactNode[];
   usageStats: TableStat[];
   errors?: Record<string, Error>;
   isEmpty?: boolean;
   isError?: boolean;
   isLoading?: boolean;
-} & WithRouterProps<{}, {}>;
+  showStoredOutcome?: boolean;
+} & WithRouterProps;
 
 export type TableStat = {
   accepted: number;
-  dropped: number;
+  accepted_stored: number;
   filtered: number;
+  invalid: number;
   project: Project;
   projectLink: string;
   projectSettingsLink: string;
+  rate_limited: number;
   total: number;
 };
 
 class UsageTable extends Component<Props> {
-  getErrorMessage = errorMessage => {
+  getErrorMessage = (errorMessage: any) => {
     if (errorMessage.projectStats.responseJSON.detail === 'No projects available') {
       return (
         <EmptyMessage
@@ -68,8 +74,9 @@ class UsageTable extends Component<Props> {
   }
 
   renderTableRow(stat: TableStat & {project: Project}) {
-    const {dataCategory} = this.props;
-    const {project, total, accepted, filtered, dropped} = stat;
+    const {dataCategory, showStoredOutcome} = this.props;
+    const {project, total, accepted, accepted_stored, filtered, invalid, rate_limited} =
+      stat;
 
     return [
       <CellProject key={0}>
@@ -84,42 +91,70 @@ class UsageTable extends Component<Props> {
         </Link>
       </CellProject>,
       <CellStat key={1}>
-        {formatUsageWithUnits(total, dataCategory, getFormatUsageOptions(dataCategory))}
+        {formatUsageWithUnits(
+          total,
+          dataCategory.plural,
+          getFormatUsageOptions(dataCategory.plural)
+        )}
       </CellStat>,
       <CellStat key={2}>
         {formatUsageWithUnits(
           accepted,
-          dataCategory,
-          getFormatUsageOptions(dataCategory)
+          dataCategory.plural,
+          getFormatUsageOptions(dataCategory.plural)
+        )}
+        {showStoredOutcome && (
+          <SubText>
+            {`(${formatUsageWithUnits(
+              accepted_stored,
+              dataCategory.plural,
+              getFormatUsageOptions(dataCategory.plural)
+            )})`}
+          </SubText>
         )}
       </CellStat>,
       <CellStat key={3}>
         {formatUsageWithUnits(
           filtered,
-          dataCategory,
-          getFormatUsageOptions(dataCategory)
+          dataCategory.plural,
+          getFormatUsageOptions(dataCategory.plural)
         )}
       </CellStat>,
       <CellStat key={4}>
-        {formatUsageWithUnits(dropped, dataCategory, getFormatUsageOptions(dataCategory))}
+        {formatUsageWithUnits(
+          rate_limited,
+          dataCategory.plural,
+          getFormatUsageOptions(dataCategory.plural)
+        )}
       </CellStat>,
       <CellStat key={5}>
-        <Button
-          title="Go to project level stats"
-          data-test-id={project.slug}
-          size="xs"
-          onClick={() => {
-            this.loadProject(parseInt(stat.project.id, 10));
-          }}
-        >
-          <StyledIconGraph type="bar" size="sm" />
-          <span>View Stats</span>
-        </Button>
-        <Link to={stat.projectSettingsLink}>
-          <StyledSettingsButton size="xs" title="Go to project settings">
-            <SettingsIcon size="sm" />
-          </StyledSettingsButton>
-        </Link>
+        {formatUsageWithUnits(
+          invalid,
+          dataCategory.plural,
+          getFormatUsageOptions(dataCategory.plural)
+        )}
+      </CellStat>,
+      <CellStat key={6}>
+        <ButtonBar gap={1}>
+          <Button
+            icon={<IconGraph type="bar" />}
+            title="Go to project level stats"
+            data-test-id={project.slug}
+            size="xs"
+            onClick={() => {
+              this.loadProject(parseInt(stat.project.id, 10));
+            }}
+          >
+            {t('View Stats')}
+          </Button>
+          <LinkButton
+            icon={<IconSettings />}
+            size="xs"
+            aria-label={t('Project Settings')}
+            title={t('Go to project settings')}
+            to={stat.projectSettingsLink}
+          />
+        </ButtonBar>
       </CellStat>,
     ];
   }
@@ -146,14 +181,9 @@ class UsageTable extends Component<Props> {
 export default withSentryRouter(UsageTable);
 
 const StyledPanelTable = styled(PanelTable)`
-  grid-template-columns: repeat(6, auto);
-
+  grid-template-columns: repeat(7, auto);
   @media (min-width: ${p => p.theme.breakpoints.small}) {
-    grid-template-columns: 1fr repeat(5, minmax(0, auto));
-  }
-
-  ${PanelTableHeader} {
-    height: 45px;
+    grid-template-columns: 1fr repeat(6, minmax(0, auto));
   }
 `;
 
@@ -162,8 +192,6 @@ export const CellStat = styled('div')`
   align-items: center;
   font-variant-numeric: tabular-nums;
   justify-content: right;
-  padding-top: 9px;
-  padding-bottom: 9px;
 `;
 
 export const CellProject = styled(CellStat)`
@@ -176,30 +204,7 @@ const StyledIdBadge = styled(IdBadge)`
   flex-shrink: 1;
 `;
 
-const SettingsIcon = styled(IconSettings)`
-  color: ${p => p.theme.gray300};
-  align-items: center;
-  display: inline-flex;
-  justify-content: space-between;
-  margin-right: ${space(1.0)};
-  margin-left: ${space(1.0)};
-  transition: 0.5s opacity ease-out;
-
-  &:hover {
-    color: ${p => p.theme.textColor};
-  }
-`;
-
-const StyledIconGraph = styled(IconGraph)`
-  color: ${p => p.theme.gray300};
-  margin-right: 5px;
-  &:hover {
-    color: ${p => p.theme.textColor};
-    cursor: pointer;
-  }
-`;
-
-const StyledSettingsButton = styled(Button)`
-  padding: 0px;
-  margin-left: 7px;
+const SubText = styled('span')`
+  color: ${p => p.theme.subText};
+  margin-left: ${space(0.5)};
 `;

@@ -1,11 +1,8 @@
 import {Fragment} from 'react';
-import {browserHistory, RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 import debounce from 'lodash/debounce';
-import flatten from 'lodash/flatten';
 import groupBy from 'lodash/groupBy';
 import startCase from 'lodash/startCase';
-import uniq from 'lodash/uniq';
 import * as qs from 'query-string';
 
 import DocIntegrationAvatar from 'sentry/components/avatar/docIntegrationAvatar';
@@ -20,17 +17,20 @@ import SentryAppIcon from 'sentry/components/sentryAppIcon';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {
+import type {
   AppOrProviderOrPlugin,
   DocIntegration,
   Integration,
   IntegrationProvider,
-  Organization,
   PluginWithProjectList,
   SentryApp,
   SentryAppInstallation,
-} from 'sentry/types';
-import {createFuzzySearch, Fuse} from 'sentry/utils/fuzzySearch';
+} from 'sentry/types/integrations';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import {uniq} from 'sentry/utils/array/uniq';
+import type {Fuse} from 'sentry/utils/fuzzySearch';
+import {createFuzzySearch} from 'sentry/utils/fuzzySearch';
 import {
   getAlertText,
   getCategoriesForIntegration,
@@ -43,7 +43,7 @@ import {
 } from 'sentry/utils/integrationUtil';
 import withOrganization from 'sentry/utils/withOrganization';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
-import PermissionAlert from 'sentry/views/settings/organization/permissionAlert';
+import {OrganizationPermissionAlert} from 'sentry/views/settings/organization/organizationPermissionAlert';
 import CreateIntegrationButton from 'sentry/views/settings/organizationIntegrations/createIntegrationButton';
 import ReinstallAlert from 'sentry/views/settings/organizationIntegrations/reinstallAlert';
 
@@ -63,7 +63,7 @@ const fuseOptions = {
   keys: ['slug', 'key', 'name', 'id'],
 };
 
-type Props = RouteComponentProps<{}, {}> & {
+type Props = RouteComponentProps & {
   hideHeader: boolean;
   organization: Organization;
 };
@@ -175,7 +175,7 @@ export class IntegrationListDirectory extends DeprecatedAsyncComponent<
 
   getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
     const {organization} = this.props;
-    const baseEndpoints: ([string, string, any] | [string, string])[] = [
+    const baseEndpoints: Array<[string, string, any] | [string, string]> = [
       ['config', `/organizations/${organization.slug}/config/integrations/`],
       [
         'integrations',
@@ -317,8 +317,8 @@ export class IntegrationListDirectory extends DeprecatedAsyncComponent<
   getFilterParameters = (): {searchInput: string; selectedCategory: string} => {
     const {category, search} = qs.parse(this.props.location.search);
 
-    const selectedCategory = Array.isArray(category) ? category[0] : category || '';
-    const searchInput = Array.isArray(search) ? search[0] : search || '';
+    const selectedCategory = Array.isArray(category) ? category[0]! : category || '';
+    const searchInput = Array.isArray(search) ? search[0]! : search || '';
 
     return {searchInput, selectedCategory};
   };
@@ -335,7 +335,7 @@ export class IntegrationListDirectory extends DeprecatedAsyncComponent<
       category: selectedCategory ? selectedCategory : undefined,
     });
 
-    browserHistory.replace({
+    this.props.router.replace({
       pathname: this.props.location.pathname,
       search: searchString ? `?${searchString}` : undefined,
     });
@@ -508,7 +508,7 @@ export class IntegrationListDirectory extends DeprecatedAsyncComponent<
     const {organization} = this.props;
     const {displayedList, list, searchInput, selectedCategory, integrations} = this.state;
     const title = t('Integrations');
-    const categoryList = uniq(flatten(list.map(getCategoriesForIntegration))).sort();
+    const categoryList = uniq(list.flatMap(getCategoriesForIntegration)).sort();
 
     return (
       <Fragment>
@@ -543,7 +543,7 @@ export class IntegrationListDirectory extends DeprecatedAsyncComponent<
             action={<CreateIntegrationButton analyticsView="integrations_directory" />}
           />
         )}
-        <PermissionAlert access={['org:integrations']} />
+        <OrganizationPermissionAlert access={['org:integrations']} />
         <ReinstallAlert integrations={integrations} />
         <Panel>
           <PanelBody data-test-id="integration-panel">
@@ -597,7 +597,7 @@ const EmptyResultsBody = styled('div')`
 `;
 
 const EmptyResultsBodyBold = styled(EmptyResultsBody)`
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
 `;
 
 export default withOrganization(IntegrationListDirectory);

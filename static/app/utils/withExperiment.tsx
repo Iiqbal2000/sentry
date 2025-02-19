@@ -1,10 +1,10 @@
-import {Organization} from 'sentry/types';
-import {
+import type {
   ExperimentAssignment,
   ExperimentKey,
   Experiments,
   ExperimentType,
 } from 'sentry/types/experiments';
+import type {Organization} from 'sentry/types/organization';
 import {useExperiment} from 'sentry/utils/useExperiment';
 
 type Options<E extends ExperimentKey, L extends boolean> = {
@@ -33,7 +33,7 @@ type Options<E extends ExperimentKey, L extends boolean> = {
 
 type ExpectedProps<T extends ExperimentType> = T extends 'organization'
   ? {organization: Organization}
-  : {};
+  : never;
 
 type InjectedExperimentProps<E extends ExperimentKey, L extends boolean> = {
   /**
@@ -41,7 +41,7 @@ type InjectedExperimentProps<E extends ExperimentKey, L extends boolean> = {
    * your component depending on the value.
    */
   experimentAssignment: ExperimentAssignment[E];
-} & (L extends true ? LogExperimentProps : {});
+} & (L extends true ? LogExperimentProps : never);
 
 type LogExperimentProps = {
   /**

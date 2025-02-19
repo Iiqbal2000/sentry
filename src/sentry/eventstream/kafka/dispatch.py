@@ -1,7 +1,8 @@
 import logging
 import random
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
-from typing import Any, Generator, Mapping, Optional
+from typing import Any
 
 from arroyo.backends.kafka.consumer import KafkaPayload
 from arroyo.types import Message
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def _sampled_eventstream_timer(instance: str) -> Generator[None, None, None]:
+def _sampled_eventstream_timer(instance: str) -> Generator[None]:
     record_metric = random.random() < 0.1
     if record_metric is True:
         with metrics.timer(_DURATION_METRIC, instance=instance):
@@ -35,15 +36,16 @@ def _sampled_eventstream_timer(instance: str) -> Generator[None, None, None]:
 def dispatch_post_process_group_task(
     event_id: str,
     project_id: int,
-    group_id: Optional[int],
+    group_id: int | None,
     is_new: bool,
-    is_regression: Optional[bool],
+    is_regression: bool | None,
     is_new_group_environment: bool,
-    primary_hash: Optional[str],
+    primary_hash: str | None,
     queue: str,
     skip_consume: bool = False,
-    group_states: Optional[GroupStates] = None,
-    occurrence_id: Optional[str] = None,
+    group_states: GroupStates | None = None,
+    occurrence_id: str | None = None,
+    eventstream_type: str | None = None,
 ) -> None:
     if skip_consume:
         logger.info("post_process.skip.raw_event", extra={"event_id": event_id})
@@ -61,12 +63,13 @@ def dispatch_post_process_group_task(
                 "group_states": group_states,
                 "occurrence_id": occurrence_id,
                 "project_id": project_id,
+                "eventstream_type": eventstream_type,
             },
             queue=queue,
         )
 
 
-def _get_task_kwargs(message: Message[KafkaPayload]) -> Optional[Mapping[str, Any]]:
+def _get_task_kwargs(message: Message[KafkaPayload]) -> Mapping[str, Any] | None:
     use_kafka_headers = options.get("post-process-forwarder:kafka-headers")
 
     if use_kafka_headers:
@@ -82,14 +85,19 @@ def _get_task_kwargs(message: Message[KafkaPayload]) -> Optional[Mapping[str, An
             return get_task_kwargs_for_message(message.payload.value)
 
 
-def _get_task_kwargs_and_dispatch(message: Message[KafkaPayload]) -> None:
+def _get_task_kwargs_and_dispatch(
+    message: Message[KafkaPayload], eventstream_type: str | None = None
+) -> None:
     task_kwargs = _get_task_kwargs(message)
     if not task_kwargs:
         return None
 
-    dispatch_post_process_group_task(**task_kwargs)
+    dispatch_post_process_group_task(**task_kwargs, eventstream_type=eventstream_type)
 
 
 class EventPostProcessForwarderStrategyFactory(PostProcessForwarderStrategyFactory):
-    def _dispatch_function(self, message: Message[KafkaPayload]) -> None:
-        return _get_task_kwargs_and_dispatch(message)
+    @staticmethod
+    def _dispatch_function(
+        message: Message[KafkaPayload], eventstream_type: str | None = None
+    ) -> None:
+        return _get_task_kwargs_and_dispatch(message, eventstream_type)

@@ -1,4 +1,5 @@
-from typing import List
+import time
+from typing import TypedDict
 
 from django.db import IntegrityError, router, transaction
 from drf_spectacular.utils import OpenApiResponse, extend_schema
@@ -7,15 +8,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry import audit_log
+from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
-from sentry.api.base import (
-    DEFAULT_SLUG_ERROR_MESSAGE,
-    DEFAULT_SLUG_PATTERN,
-    EnvironmentMixin,
-    PreventNumericSlugMixin,
-    region_silo_endpoint,
-)
+from sentry.api.base import EnvironmentMixin, region_silo_endpoint
 from sentry.api.bases.team import TeamEndpoint, TeamPermission
+from sentry.api.fields.sentry_slug import SentrySerializerSlugField
+from sentry.api.helpers.default_inbound_filters import set_default_inbound_filters
+from sentry.api.helpers.default_symbol_sources import set_default_symbol_sources
 from sentry.api.paginator import OffsetPaginator
 from sentry.api.serializers import ProjectSummarySerializer, serialize
 from sentry.api.serializers.models.project import OrganizationProjectResponse, ProjectSerializer
@@ -24,26 +23,27 @@ from sentry.apidocs.examples.project_examples import ProjectExamples
 from sentry.apidocs.examples.team_examples import TeamExamples
 from sentry.apidocs.parameters import CursorQueryParam, GlobalParams
 from sentry.apidocs.utils import inline_sentry_response_serializer
-from sentry.constants import ObjectStatus
+from sentry.constants import PROJECT_SLUG_MAX_LENGTH, RESERVED_PROJECT_SLUGS, ObjectStatus
+from sentry.models.organization import Organization
 from sentry.models.project import Project
+from sentry.models.team import Team
+from sentry.seer.similarity.utils import project_is_seer_eligible
 from sentry.signals import project_created
 from sentry.utils.snowflake import MaxSnowflakeRetryError
 
 ERR_INVALID_STATS_PERIOD = "Invalid stats_period. Valid choices are '', '24h', '14d', and '30d'"
 
 
-class ProjectPostSerializer(serializers.Serializer, PreventNumericSlugMixin):
+class ProjectPostSerializer(serializers.Serializer):
     name = serializers.CharField(
         help_text="The name for the project.", max_length=50, required=True
     )
-    slug = serializers.RegexField(
-        DEFAULT_SLUG_PATTERN,
+    slug = SentrySerializerSlugField(
         help_text="""Uniquely identifies a project and is used for the interface.
         If not provided, it is automatically generated from the name.""",
-        max_length=50,
+        max_length=PROJECT_SLUG_MAX_LENGTH,
         required=False,
         allow_null=True,
-        error_messages={"invalid": DEFAULT_SLUG_ERROR_MESSAGE},
     )
     platform = serializers.CharField(
         help_text="The platform for the project.", required=False, allow_blank=True, allow_null=True
@@ -63,6 +63,11 @@ their own alerts to be notified of new issues.
             return value
         raise serializers.ValidationError("Invalid platform")
 
+    def validate_name(self, value: str) -> str:
+        if value in RESERVED_PROJECT_SLUGS:
+            raise serializers.ValidationError(f'The name "{value}" is reserved and not allowed.')
+        return value
+
 
 # While currently the UI suggests teams are a parent of a project, in reality
 # the project is the core component, and which team it is on is simply an
@@ -81,6 +86,12 @@ class TeamProjectPermission(TeamPermission):
     }
 
 
+class AuditData(TypedDict):
+    request: Request
+    organization: Organization
+    target_object: int
+
+
 @extend_schema(tags=["Teams"])
 @region_silo_endpoint
 class TeamProjectsEndpoint(TeamEndpoint, EnvironmentMixin):
@@ -89,18 +100,19 @@ class TeamProjectsEndpoint(TeamEndpoint, EnvironmentMixin):
         "POST": ApiPublishStatus.PUBLIC,
     }
     permission_classes = (TeamProjectPermission,)
+    owner = ApiOwner.ENTERPRISE
 
     @extend_schema(
         operation_id="List a Team's Projects",
         parameters=[
-            GlobalParams.ORG_SLUG,
-            GlobalParams.TEAM_SLUG,
+            GlobalParams.ORG_ID_OR_SLUG,
+            GlobalParams.TEAM_ID_OR_SLUG,
             CursorQueryParam,
         ],
         request=None,
         responses={
             200: inline_sentry_response_serializer(
-                "ListTeamProjectResponse", List[OrganizationProjectResponse]
+                "ListTeamProjectResponse", list[OrganizationProjectResponse]
             ),
             403: RESPONSE_FORBIDDEN,
             404: OpenApiResponse(description="Team not found."),
@@ -148,8 +160,8 @@ class TeamProjectsEndpoint(TeamEndpoint, EnvironmentMixin):
         tags=["Projects"],
         operation_id="Create a New Project",
         parameters=[
-            GlobalParams.ORG_SLUG,
-            GlobalParams.TEAM_SLUG,
+            GlobalParams.ORG_ID_OR_SLUG,
+            GlobalParams.TEAM_ID_OR_SLUG,
         ],
         request=ProjectPostSerializer,
         responses={
@@ -161,14 +173,23 @@ class TeamProjectsEndpoint(TeamEndpoint, EnvironmentMixin):
         },
         examples=ProjectExamples.CREATE_PROJECT,
     )
-    def post(self, request: Request, team) -> Response:
+    def post(self, request: Request, team: Team) -> Response:
         """
         Create a new project bound to a team.
         """
+        from sentry.api.endpoints.organization_projects_experiment import (
+            DISABLED_FEATURE_ERROR_STRING,
+        )
+
         serializer = ProjectPostSerializer(data=request.data)
 
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if (
+            team.organization.flags.disable_member_project_creation
+            and not request.access.has_scope("org:write")
+        ):
+            return Response({"detail": DISABLED_FEATURE_ERROR_STRING}, status=403)
 
         result = serializer.validated_data
         with transaction.atomic(router.db_for_write(Project)):
@@ -187,13 +208,33 @@ class TeamProjectsEndpoint(TeamEndpoint, EnvironmentMixin):
 
             # XXX: create sample event?
 
-            self.create_audit_entry(
-                request=request,
-                organization=team.organization,
-                target_object=project.id,
-                event=audit_log.get_event_id("PROJECT_ADD"),
-                data=project.get_audit_log_data(),
-            )
+            # Turns on some inbound filters by default for new Javascript platform projects
+            if project.platform and project.platform.startswith("javascript"):
+                set_default_inbound_filters(project, team.organization)
+
+            set_default_symbol_sources(project)
+
+            common_audit_data: AuditData = {
+                "request": request,
+                "organization": team.organization,
+                "target_object": project.id,
+            }
+
+            if request.data.get("origin"):
+                self.create_audit_entry(
+                    **common_audit_data,
+                    event=audit_log.get_event_id("PROJECT_ADD_WITH_ORIGIN"),
+                    data={
+                        **project.get_audit_log_data(),
+                        "origin": request.data.get("origin"),
+                    },
+                )
+            else:
+                self.create_audit_entry(
+                    **common_audit_data,
+                    event=audit_log.get_event_id("PROJECT_ADD"),
+                    data={**project.get_audit_log_data()},
+                )
 
             project_created.send(
                 project=project,
@@ -201,5 +242,9 @@ class TeamProjectsEndpoint(TeamEndpoint, EnvironmentMixin):
                 default_rules=result.get("default_rules", True),
                 sender=self,
             )
+
+            # Create project option to turn on ML similarity feature for new EA projects
+            if project_is_seer_eligible(project):
+                project.update_option("sentry:similarity_backfill_completed", int(time.time()))
 
         return Response(serialize(project, request.user), status=201)

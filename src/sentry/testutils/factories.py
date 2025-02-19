@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import contextlib
+import copy
 import io
 import os
 import random
+import zipfile
 from base64 import b64encode
 from binascii import hexlify
-from contextlib import contextmanager
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
+from enum import Enum
 from hashlib import sha1
 from importlib import import_module
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any
 from unittest import mock
 from uuid import uuid4
 
+import orjson
 import petname
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
@@ -20,73 +25,85 @@ from django.core.files.base import ContentFile
 from django.db import router, transaction
 from django.test.utils import override_settings
 from django.utils import timezone
-from django.utils.encoding import force_str
 from django.utils.text import slugify
 
+from sentry.auth.access import RpcBackedAccess
+from sentry.auth.services.auth.model import RpcAuthState, RpcMemberSsoState
 from sentry.constants import SentryAppInstallationStatus, SentryAppStatus
 from sentry.event_manager import EventManager
+from sentry.eventstore.models import Event
+from sentry.hybridcloud.models.outbox import RegionOutbox, outbox_context
+from sentry.hybridcloud.models.webhookpayload import WebhookPayload
+from sentry.hybridcloud.outbox.category import OutboxCategory, OutboxScope
 from sentry.incidents.logic import (
     create_alert_rule,
     create_alert_rule_trigger,
     create_alert_rule_trigger_action,
     query_datasets_to_type,
 )
-from sentry.incidents.models import (
+from sentry.incidents.models.alert_rule import (
+    AlertRuleDetectionType,
     AlertRuleThresholdType,
     AlertRuleTriggerAction,
+)
+from sentry.incidents.models.incident import (
     Incident,
     IncidentActivity,
     IncidentProject,
-    IncidentSeen,
     IncidentTrigger,
     IncidentType,
     TriggerStatus,
 )
-from sentry.issues.grouptype import get_group_type_by_type_id
-from sentry.mediators import token_exchange
-from sentry.models.activity import Activity
-from sentry.models.actor import Actor
-from sentry.models.apikey import ApiKey
-from sentry.models.apitoken import ApiToken
-from sentry.models.artifactbundle import ArtifactBundle
-from sentry.models.avatars.doc_integration_avatar import DocIntegrationAvatar
-from sentry.models.commit import Commit
-from sentry.models.commitauthor import CommitAuthor
-from sentry.models.commitfilechange import CommitFileChange
-from sentry.models.debugfile import ProjectDebugFile
-from sentry.models.environment import Environment
-from sentry.models.eventattachment import EventAttachment
-from sentry.models.files.file import File
-from sentry.models.group import Group
-from sentry.models.grouphistory import GroupHistory
-from sentry.models.grouplink import GroupLink
-from sentry.models.identity import Identity, IdentityProvider, IdentityStatus
-from sentry.models.integrations.doc_integration import DocIntegration
-from sentry.models.integrations.external_actor import ExternalActor
-from sentry.models.integrations.external_issue import ExternalIssue
-from sentry.models.integrations.integration import Integration
-from sentry.models.integrations.integration_feature import (
+from sentry.integrations.models.doc_integration import DocIntegration
+from sentry.integrations.models.doc_integration_avatar import DocIntegrationAvatar
+from sentry.integrations.models.external_actor import ExternalActor
+from sentry.integrations.models.external_issue import ExternalIssue
+from sentry.integrations.models.integration import Integration
+from sentry.integrations.models.integration_external_project import IntegrationExternalProject
+from sentry.integrations.models.integration_feature import (
     Feature,
     IntegrationFeature,
     IntegrationTypes,
 )
-from sentry.models.integrations.repository_project_path_config import RepositoryProjectPathConfig
-from sentry.models.integrations.sentry_app_installation import SentryAppInstallation
-from sentry.models.notificationaction import (
-    ActionService,
-    ActionTarget,
-    ActionTrigger,
-    NotificationAction,
+from sentry.integrations.models.organization_integration import OrganizationIntegration
+from sentry.integrations.models.repository_project_path_config import RepositoryProjectPathConfig
+from sentry.integrations.types import ExternalProviders
+from sentry.issues.grouptype import get_group_type_by_type_id
+from sentry.models.activity import Activity
+from sentry.models.apikey import ApiKey
+from sentry.models.apitoken import ApiToken
+from sentry.models.artifactbundle import ArtifactBundle
+from sentry.models.authidentity import AuthIdentity
+from sentry.models.authprovider import AuthProvider
+from sentry.models.commit import Commit
+from sentry.models.commitauthor import CommitAuthor
+from sentry.models.commitfilechange import CommitFileChange
+from sentry.models.dashboard import Dashboard
+from sentry.models.dashboard_widget import (
+    DashboardWidget,
+    DashboardWidgetDisplayTypes,
+    DashboardWidgetQuery,
 )
+from sentry.models.debugfile import ProjectDebugFile
+from sentry.models.environment import Environment
+from sentry.models.eventattachment import EventAttachment
+from sentry.models.files.control_file import ControlFile
+from sentry.models.files.file import File
+from sentry.models.group import Group
+from sentry.models.grouphistory import GroupHistory
+from sentry.models.grouplink import GroupLink
+from sentry.models.grouprelease import GroupRelease
 from sentry.models.organization import Organization
 from sentry.models.organizationmapping import OrganizationMapping
 from sentry.models.organizationmember import OrganizationMember
 from sentry.models.organizationmemberteam import OrganizationMemberTeam
-from sentry.models.platformexternalissue import PlatformExternalIssue
+from sentry.models.organizationslugreservation import OrganizationSlugReservation
+from sentry.models.orgauthtoken import OrgAuthToken
 from sentry.models.project import Project
 from sentry.models.projectbookmark import ProjectBookmark
 from sentry.models.projectcodeowners import ProjectCodeOwners
-from sentry.models.release import Release
+from sentry.models.projecttemplate import ProjectTemplate
+from sentry.models.release import Release, ReleaseStatus
 from sentry.models.releasecommit import ReleaseCommit
 from sentry.models.releaseenvironment import ReleaseEnvironment
 from sentry.models.releasefile import ReleaseFile, update_artifact_index
@@ -95,28 +112,82 @@ from sentry.models.repository import Repository
 from sentry.models.rule import Rule
 from sentry.models.rulesnooze import RuleSnooze
 from sentry.models.savedsearch import SavedSearch
-from sentry.models.sentryfunction import SentryFunction
-from sentry.models.servicehook import ServiceHook
 from sentry.models.team import Team
-from sentry.models.user import User
-from sentry.models.useremail import UserEmail
-from sentry.models.userpermission import UserPermission
 from sentry.models.userreport import UserReport
-from sentry.sentry_apps import SentryAppInstallationCreator, SentryAppInstallationTokenCreator
-from sentry.sentry_apps.apps import SentryAppCreator
-from sentry.services.hybrid_cloud.app.serial import serialize_sentry_app_installation
-from sentry.services.hybrid_cloud.hook import hook_service
+from sentry.notifications.models.notificationaction import (
+    ActionService,
+    ActionTarget,
+    ActionTrigger,
+    NotificationAction,
+)
+from sentry.notifications.models.notificationsettingprovider import NotificationSettingProvider
+from sentry.organizations.services.organization import RpcOrganization, RpcUserOrganizationContext
+from sentry.sentry_apps.installations import (
+    SentryAppInstallationCreator,
+    SentryAppInstallationTokenCreator,
+)
+from sentry.sentry_apps.logic import SentryAppCreator
+from sentry.sentry_apps.models.platformexternalissue import PlatformExternalIssue
+from sentry.sentry_apps.models.sentry_app import SentryApp
+from sentry.sentry_apps.models.sentry_app_avatar import SentryAppAvatar
+from sentry.sentry_apps.models.sentry_app_installation import SentryAppInstallation
+from sentry.sentry_apps.models.sentry_app_installation_for_provider import (
+    SentryAppInstallationForProvider,
+)
+from sentry.sentry_apps.models.servicehook import ServiceHook
+from sentry.sentry_apps.services.app.serial import serialize_sentry_app_installation
+from sentry.sentry_apps.services.hook import hook_service
+from sentry.sentry_apps.token_exchange.grant_exchanger import GrantExchanger
 from sentry.signals import project_created
-from sentry.silo import SiloMode, unguarded_write
+from sentry.silo.base import SiloMode
 from sentry.snuba.dataset import Dataset
+from sentry.snuba.models import QuerySubscriptionDataSourceHandler
+from sentry.tempest.models import MessageType as TempestMessageType
+from sentry.tempest.models import TempestCredentials
 from sentry.testutils.outbox import outbox_runner
 from sentry.testutils.silo import assume_test_silo_mode
 from sentry.types.activity import ActivityType
-from sentry.types.integrations import ExternalProviders
-from sentry.types.region import Region, get_region_by_name
-from sentry.utils import json, loremipsum
+from sentry.types.actor import Actor
+from sentry.types.region import Region, get_local_region, get_region_by_name
+from sentry.types.token import AuthTokenType
+from sentry.uptime.models import (
+    IntervalSecondsLiteral,
+    ProjectUptimeSubscription,
+    ProjectUptimeSubscriptionMode,
+    UptimeStatus,
+    UptimeSubscription,
+    UptimeSubscriptionRegion,
+)
+from sentry.users.models.identity import Identity, IdentityProvider, IdentityStatus
+from sentry.users.models.user import User
+from sentry.users.models.user_avatar import UserAvatar
+from sentry.users.models.user_option import UserOption
+from sentry.users.models.useremail import UserEmail
+from sentry.users.models.userpermission import UserPermission
+from sentry.users.models.userrole import UserRole
+from sentry.users.services.user import RpcUser
+from sentry.utils import loremipsum
 from sentry.utils.performance_issues.performance_problem import PerformanceProblem
+from sentry.workflow_engine.models import (
+    Action,
+    DataCondition,
+    DataConditionGroup,
+    DataConditionGroupAction,
+    DataSource,
+    DataSourceDetector,
+    Detector,
+    DetectorState,
+    DetectorWorkflow,
+    Workflow,
+    WorkflowDataConditionGroup,
+)
+from sentry.workflow_engine.registry import data_source_type_registry
 from social_auth.models import UserSocialAuth
+
+
+class EventType(Enum):
+    ERROR = "error"
+    DEFAULT = "default"
 
 
 def get_fixture_path(*parts: str) -> str:
@@ -249,7 +320,7 @@ DEFAULT_EVENT_DATA = {
 
 def _patch_artifact_manifest(path, org=None, release=None, project=None, extra_files=None):
     with open(path, "rb") as fp:
-        manifest = json.load(fp)
+        manifest = orjson.loads(fp.read())
     if org:
         manifest["org"] = org
     if release:
@@ -258,7 +329,7 @@ def _patch_artifact_manifest(path, org=None, release=None, project=None, extra_f
         manifest["project"] = project
     for path in extra_files or {}:
         manifest["files"][path] = {"url": path}
-    return json.dumps(manifest)
+    return orjson.dumps(manifest).decode()
 
 
 # TODO(dcramer): consider moving to something more scalable like factoryboy
@@ -269,26 +340,41 @@ class Factories:
         if not name:
             name = petname.generate(2, " ", letters=10).title()
 
-        if isinstance(region, str):
-            region = get_region_by_name(region)
-
-        @contextmanager
-        def org_creation_context():
-            if region is None:
-                yield
+        with contextlib.ExitStack() as ctx:
+            if region is None or SiloMode.get_current_mode() == SiloMode.MONOLITH:
+                region_name = get_local_region().name
             else:
-                with override_settings(SILO_MODE=SiloMode.REGION, SENTRY_REGION=region.name):
-                    yield
+                if isinstance(region, Region):
+                    region_name = region.name
+                else:
+                    region_obj = get_region_by_name(region)  # Verify it exists
+                    region_name = region_obj.name
 
-        with org_creation_context():
-            org = Organization.objects.create(name=name, **kwargs)
+                ctx.enter_context(
+                    override_settings(SILO_MODE=SiloMode.REGION, SENTRY_REGION=region_name)
+                )
 
-        if region is not None:
-            with assume_test_silo_mode(SiloMode.CONTROL), unguarded_write(
-                using=router.db_for_write(OrganizationMapping)
-            ):
-                mapping = OrganizationMapping.objects.get(organization_id=org.id)
-                mapping.update(region_name=region.name)
+            with outbox_context(flush=False):
+                org = Organization.objects.create(name=name, **kwargs)
+
+            with assume_test_silo_mode(SiloMode.CONTROL):
+                # Organization mapping creation relies on having a matching org slug reservation
+                OrganizationSlugReservation(
+                    organization_id=org.id,
+                    region_name=region_name,
+                    user_id=owner.id if owner else -1,
+                    slug=org.slug,
+                ).save(unsafe_write=True)
+
+            # Manually replicate org data after adding an org slug reservation
+            org.handle_async_replication(org.id)
+
+            # Flush remaining organization update outboxes accumulated by org create
+            RegionOutbox(
+                shard_identifier=org.id,
+                shard_scope=OutboxScope.ORGANIZATION_SCOPE,
+                category=OutboxCategory.ORGANIZATION_UPDATE,
+            ).drain_shard()
 
         if owner:
             Factories.create_member(organization=org, user_id=owner.id, role="owner")
@@ -352,18 +438,34 @@ class Factories:
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
     def create_api_key(organization, scope_list=None, **kwargs):
-        return ApiKey.objects.create(
-            organization_id=organization.id if organization else None, scope_list=scope_list
+        return ApiKey.objects.create(organization_id=organization.id, scope_list=scope_list)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_auth_provider(**kwargs):
+        return AuthProvider.objects.create(**kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_auth_identity(**kwargs):
+        return AuthIdentity.objects.create(**kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_user_auth_token(user, scope_list: list[str] | None = None, **kwargs) -> ApiToken:
+        if scope_list is None:
+            scope_list = []
+        return ApiToken.objects.create(
+            user=user,
+            scope_list=scope_list,
+            token_type=AuthTokenType.USER,
+            **kwargs,
         )
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
-    def create_user_auth_token(user, scope_list: List[str], **kwargs) -> ApiToken:
-        return ApiToken.objects.create(
-            user=user,
-            scope_list=scope_list,
-            **kwargs,
-        )
+    def create_org_auth_token(*args, **kwargs) -> OrgAuthToken:
+        return OrgAuthToken.objects.create(*args, **kwargs)
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
@@ -394,7 +496,9 @@ class Factories:
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
-    def create_project(organization=None, teams=None, fire_project_created=False, **kwargs):
+    def create_project(
+        organization=None, teams=None, fire_project_created=False, **kwargs
+    ) -> Project:
         if not kwargs.get("name"):
             kwargs["name"] = petname.generate(2, " ", letters=10).title()
         if not kwargs.get("slug"):
@@ -412,6 +516,17 @@ class Factories:
                     project=project, user=AnonymousUser(), default_rules=True, sender=Factories
                 )
         return project
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_project_template(project=None, organization=None, **kwargs) -> ProjectTemplate:
+        if not kwargs.get("name"):
+            kwargs["name"] = petname.generate(2, " ", letters=10).title()
+
+        with transaction.atomic(router.db_for_write(Project)):
+            project_template = ProjectTemplate.objects.create(organization=organization, **kwargs)
+
+        return project_template
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
@@ -490,19 +605,48 @@ class Factories:
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
+    def create_tempest_credentials(
+        project: Project,
+        created_by: User | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        message: str = "",
+        message_type: str | None = None,
+        latest_fetched_item_id: str | None = None,
+    ):
+        if client_id is None:
+            client_id = str(uuid4())
+        if client_secret is None:
+            client_secret = str(uuid4())
+        if message_type is None:
+            message_type = TempestMessageType.ERROR
+
+        return TempestCredentials.objects.create(
+            project=project,
+            created_by_id=created_by.id if created_by else None,
+            client_id=client_id,
+            client_secret=client_secret,
+            message=message,
+            message_type=message_type,
+            latest_fetched_item_id=latest_fetched_item_id,
+        )
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
     def create_release(
         project: Project,
-        user: Optional[User] = None,
-        version: Optional[str] = None,
-        date_added: Optional[datetime] = None,
-        additional_projects: Optional[Sequence[Project]] = None,
-        environments: Optional[Sequence[Environment]] = None,
-        date_released: Optional[datetime] = None,
-        adopted: Optional[datetime] = None,
-        unadopted: Optional[datetime] = None,
+        user: User | None = None,
+        version: str | None = None,
+        date_added: datetime | None = None,
+        additional_projects: Sequence[Project] | None = None,
+        environments: Sequence[Environment] | None = None,
+        date_released: datetime | None = None,
+        adopted: datetime | None = None,
+        unadopted: datetime | None = None,
+        status: int | None = ReleaseStatus.OPEN,
     ):
         if version is None:
-            version = force_str(hexlify(os.urandom(20)))
+            version = hexlify(os.urandom(20)).decode()
 
         if date_added is None:
             date_added = timezone.now()
@@ -515,6 +659,7 @@ class Factories:
             organization_id=project.organization_id,
             date_added=date_added,
             date_released=date_released,
+            status=status,
         )
 
         release.add_project(project)
@@ -525,7 +670,7 @@ class Factories:
             ReleaseEnvironment.objects.create(
                 organization=project.organization, release=release, environment=environment
             )
-            for project in [project] + additional_projects:
+            for project in [project, *additional_projects]:
                 ReleaseProjectEnvironment.objects.create(
                     project=project,
                     release=release,
@@ -560,6 +705,14 @@ class Factories:
         return release
 
     @staticmethod
+    def create_group_release(project: Project, group: Group, release: Release) -> GroupRelease:
+        return GroupRelease.objects.create(
+            project_id=project.id,
+            group_id=group.id,
+            release_id=release.id,
+        )
+
+    @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
     def create_release_file(release_id, file=None, name=None, dist_id=None):
         if file is None:
@@ -588,13 +741,11 @@ class Factories:
     def create_artifact_bundle_zip(
         org=None, release=None, project=None, extra_files=None, fixture_path="artifact_bundle"
     ):
-        import zipfile
-
         bundle = io.BytesIO()
         bundle_dir = get_fixture_path(fixture_path)
-        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as zipfile:
+        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as zipf:
             for path, content in (extra_files or {}).items():
-                zipfile.writestr(path, content)
+                zipf.writestr(path, content)
             for path, _, files in os.walk(bundle_dir):
                 for filename in files:
                     fullpath = os.path.join(path, filename)
@@ -603,9 +754,9 @@ class Factories:
                         manifest = _patch_artifact_manifest(
                             fullpath, org, release, project, extra_files
                         )
-                        zipfile.writestr(relpath, manifest)
+                        zipf.writestr(relpath, manifest)
                     else:
-                        zipfile.write(fullpath, relpath)
+                        zipf.write(fullpath, relpath)
 
         return bundle.getvalue()
 
@@ -613,10 +764,10 @@ class Factories:
     @assume_test_silo_mode(SiloMode.REGION)
     def create_release_archive(cls, org, release: str, project=None, dist=None):
         bundle = cls.create_artifact_bundle_zip(org, release, project)
-        file_ = File.objects.create(name="release-artifacts.zip")
-        file_.putfile(ContentFile(bundle))
-        release = Release.objects.get(organization__slug=org, version=release)
-        return update_artifact_index(release, dist, file_)
+        file = File.objects.create(name="release-artifacts.zip")
+        file.putfile(ContentFile(bundle))
+        release_obj = Release.objects.get(organization__slug=org, version=release)
+        return update_artifact_index(release_obj, dist, file)
 
     @classmethod
     @assume_test_silo_mode(SiloMode.REGION)
@@ -667,7 +818,9 @@ class Factories:
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
-    def create_repo(project, name=None, provider=None, integration_id=None, url=None):
+    def create_repo(
+        project, name=None, provider=None, integration_id=None, url=None, external_id=None
+    ):
         repo, _ = Repository.objects.get_or_create(
             organization_id=project.organization_id,
             name=name
@@ -675,6 +828,7 @@ class Factories:
             provider=provider,
             integration_id=integration_id,
             url=url,
+            external_id=external_id,
         )
         return repo
 
@@ -733,16 +887,17 @@ class Factories:
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
-    def create_user(email=None, **kwargs):
+    def create_user(
+        email=None, is_superuser=False, is_staff=False, is_active=True, **kwargs
+    ) -> User:
         if email is None:
             email = uuid4().hex + "@example.com"
 
         kwargs.setdefault("username", email)
-        kwargs.setdefault("is_staff", True)
-        kwargs.setdefault("is_active", True)
-        kwargs.setdefault("is_superuser", False)
 
-        user = User(email=email, **kwargs)
+        user = User(
+            email=email, is_superuser=is_superuser, is_staff=is_staff, is_active=is_active, **kwargs
+        )
         if kwargs.get("password") is None:
             user.set_password("admin")
         user.save()
@@ -754,7 +909,7 @@ class Factories:
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
-    def create_useremail(user, email, **kwargs):
+    def create_useremail(user, email=None, **kwargs):
         if not email:
             email = uuid4().hex + "@example.com"
 
@@ -767,11 +922,21 @@ class Factories:
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_user_avatar(*args, **kwargs):
+        return UserAvatar.objects.create(*args, **kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_user_role(*args, **kwargs):
+        return UserRole.objects.create(*args, **kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
     def create_usersocialauth(
         user: User,
         provider: str | None = None,
         uid: str | None = None,
-        extra_data: Mapping[str, Any] | None = None,
+        extra_data: dict[str, Any] | None = None,
     ):
         if not provider:
             provider = "asana"
@@ -802,16 +967,34 @@ class Factories:
                         type=group_type,
                         parent_span_ids=None,
                         cause_span_ids=None,
-                        offender_span_ids=None,
+                        offender_span_ids=[],
                         evidence_data={},
                         evidence_display=[],
                     )
                 )
 
     @staticmethod
-    def store_event(data, project_id, assert_no_errors=True, sent_at=None):
-        # Like `create_event`, but closer to how events are actually
-        # ingested. Prefer to use this method over `create_event`
+    @assume_test_silo_mode(SiloMode.REGION)
+    def store_event(
+        data,
+        project_id: int,
+        assert_no_errors: bool = True,
+        default_event_type: EventType | None = None,
+        sent_at: datetime | None = None,
+    ) -> Event:
+        """
+        Like `create_event`, but closer to how events are actually
+        ingested. Prefer to use this method over `create_event`
+        """
+
+        # this creates a basic message event
+        if default_event_type == EventType.DEFAULT:
+            data.update({"stacktrace": copy.deepcopy(DEFAULT_EVENT_DATA["stacktrace"])})
+
+        # this creates an error event
+        elif default_event_type == EventType.ERROR:
+            data.update({"exception": [{"value": "BadError"}]})
+
         manager = EventManager(data, sent_at=sent_at)
         manager.normalize()
         if assert_no_errors:
@@ -847,12 +1030,22 @@ class Factories:
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
     def create_group(project, **kwargs):
+        from sentry.models.group import GroupStatus
+        from sentry.types.group import GroupSubStatus
+
         kwargs.setdefault("message", "Hello world")
         kwargs.setdefault("data", {})
         if "type" not in kwargs["data"]:
             kwargs["data"].update({"type": "default", "metadata": {"title": kwargs["message"]}})
         if "short_id" not in kwargs:
             kwargs["short_id"] = project.next_short_id()
+        if "metadata" in kwargs:
+            metadata = kwargs.pop("metadata")
+            kwargs["data"].setdefault("metadata", {}).update(metadata)
+        if "status" not in kwargs:
+            kwargs["status"] = GroupStatus.UNRESOLVED
+            kwargs["substatus"] = GroupSubStatus.NEW
+
         return Group.objects.create(project=project, **kwargs)
 
     @staticmethod
@@ -964,35 +1157,46 @@ class Factories:
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
-    def create_internal_integration(**kwargs):
+    def create_sentry_app_avatar(*args, **kwargs):
+        return SentryAppAvatar.objects.create(*args, **kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_internal_integration(**kwargs) -> SentryApp:
         args = Factories._sentry_app_kwargs(**kwargs)
         args["verify_install"] = False
         user = args.pop("user", None)
-        app = SentryAppCreator(is_internal=True, **args).run(user=user, request=None)
+        app = SentryAppCreator(is_internal=True, **args).run(
+            user=user, request=None, skip_default_auth_token=True
+        )
         return app
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
-    def create_internal_integration_token(install, **kwargs):
-        user = kwargs.pop("user")
-        request = kwargs.pop("request", None)
-        return SentryAppInstallationTokenCreator(sentry_app_installation=install, **kwargs).run(
+    def create_internal_integration_token(
+        user,
+        internal_integration: SentryApp | None = None,
+        install: SentryAppInstallation | None = None,
+        request=None,
+    ) -> ApiToken:
+        if internal_integration and install:
+            raise ValueError("Only one of internal_integration or install arg can be provided")
+        elif internal_integration is None and install is None:
+            raise ValueError("Must pass in either internal_integration or install arg")
+
+        if internal_integration is not None and install is None:
+            # Fetch install from provided or created internal integration
+            with assume_test_silo_mode(SiloMode.CONTROL):
+                install = SentryAppInstallation.objects.get(
+                    sentry_app=internal_integration.id,
+                    organization_id=internal_integration.owner_id,
+                )
+        elif install is None:
+            raise AssertionError("unreachable")
+
+        return SentryAppInstallationTokenCreator(sentry_app_installation=install).run(
             user=user, request=request
         )
-
-    @staticmethod
-    @assume_test_silo_mode(SiloMode.CONTROL)
-    def create_org_auth_token(organization, user, scopes, **kwargs):
-        sentry_app = Factories.create_sentry_app(
-            name="Org Token",
-            organization=organization,
-            scopes=scopes,
-        )
-
-        install = Factories.create_sentry_app_installation(
-            organization=organization, slug=sentry_app.slug, user=user
-        )
-        return Factories.create_internal_integration_token(install=install, user=user)
 
     @staticmethod
     def _sentry_app_kwargs(**kwargs):
@@ -1016,7 +1220,11 @@ class Factories:
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
     def create_sentry_app_installation(
-        organization=None, slug=None, user=None, status=None, prevent_token_exchange=False
+        organization=None,
+        slug=None,
+        user=None,
+        status=None,
+        prevent_token_exchange=False,
     ):
         if not organization:
             organization = Factories.create_organization()
@@ -1038,15 +1246,33 @@ class Factories:
             if not prevent_token_exchange and (
                 install.sentry_app.status != SentryAppStatus.INTERNAL
             ):
-
-                token_exchange.GrantExchanger.run(
+                assert install.api_grant is not None
+                assert install.sentry_app.application is not None
+                assert install.sentry_app.proxy_user is not None
+                GrantExchanger(
                     install=rpc_install,
                     code=install.api_grant.code,
                     client_id=install.sentry_app.application.client_id,
                     user=install.sentry_app.proxy_user,
-                )
+                ).run()
                 install = SentryAppInstallation.objects.get(id=install.id)
         return install
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_sentry_app_installation_for_provider(
+        sentry_app_id: int,
+        organization_id: int,
+        provider: str,
+    ) -> SentryAppInstallationForProvider:
+        installation = SentryAppInstallation.objects.get(
+            sentry_app_id=sentry_app_id, organization_id=organization_id
+        )
+        return SentryAppInstallationForProvider.objects.create(
+            organization_id=organization_id,
+            provider=provider,
+            sentry_app_installation=installation,
+        )
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
@@ -1200,7 +1426,7 @@ class Factories:
     @assume_test_silo_mode(SiloMode.CONTROL)
     def create_doc_integration_features(
         features=None, doc_integration=None
-    ) -> List[IntegrationFeature]:
+    ) -> list[IntegrationFeature]:
         if not features:
             features = [Feature.API]
         if not doc_integration:
@@ -1217,25 +1443,36 @@ class Factories:
         )
 
     @staticmethod
-    @assume_test_silo_mode(SiloMode.REGION)
+    @assume_test_silo_mode(SiloMode.CONTROL)
     def create_doc_integration_avatar(doc_integration=None, **kwargs) -> DocIntegrationAvatar:
         if not doc_integration:
             doc_integration = Factories.create_doc_integration()
-        photo = File.objects.create(name="test.png", type="avatar.file")
+        photo = ControlFile.objects.create(name="test.png", type="avatar.file")
         photo.putfile(io.BytesIO(b"imaginethiswasphotobytes"))
 
-        with assume_test_silo_mode(SiloMode.CONTROL):
-            return DocIntegrationAvatar.objects.create(
-                doc_integration=doc_integration, avatar_type=0, file_id=photo.id
-            )
+        return DocIntegrationAvatar.objects.create(
+            doc_integration=doc_integration, avatar_type=0, control_file_id=photo.id
+        )
 
     @staticmethod
-    @assume_test_silo_mode(SiloMode.CONTROL)
-    def create_userreport(group, project=None, event_id=None, **kwargs):
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_userreport(
+        project: Project, event_id: str | None = None, **kwargs: Any
+    ) -> UserReport:
+        event = Factories.store_event(
+            data={
+                "timestamp": datetime.now(UTC).isoformat(),
+                "event_id": event_id or "a" * 32,
+                "message": "testing",
+            },
+            project_id=project.id,
+        )
+        assert event.group is not None
+
         return UserReport.objects.create(
-            group_id=group.id,
-            event_id=event_id or "a" * 32,
-            project_id=project.id if project is not None else group.project.id,
+            group_id=event.group.id,
+            event_id=event.event_id,
+            project_id=project.id,
             name="Jane Bloggs",
             email="jane@example.com",
             comments="the application crashed",
@@ -1281,6 +1518,18 @@ class Factories:
         return external_issue
 
     @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_integration_external_project(
+        organization_id: int, integration_id: int, *args: Any, **kwargs: Any
+    ) -> IntegrationExternalProject:
+        oi = OrganizationIntegration.objects.get(
+            organization_id=organization_id, integration_id=integration_id
+        )
+        return IntegrationExternalProject.objects.create(
+            organization_integration_id=oi.id, *args, **kwargs
+        )
+
+    @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
     def create_incident(
         organization,
@@ -1292,8 +1541,8 @@ class Factories:
         date_started=None,
         date_detected=None,
         date_closed=None,
-        seen_by=None,
         alert_rule=None,
+        subscription=None,
     ):
         if not title:
             title = petname.generate(2, " ", letters=10).title()
@@ -1312,14 +1561,11 @@ class Factories:
             date_detected=date_detected or timezone.now(),
             date_closed=timezone.now() if date_closed is not None else date_closed,
             type=IncidentType.ALERT_TRIGGERED.value,
+            subscription=subscription,
         )
         for project in projects:
             IncidentProject.objects.create(incident=incident, project=project)
-        if seen_by:
-            for user in seen_by:
-                IncidentSeen.objects.create(
-                    incident=incident, user_id=user.id, last_seen=timezone.now()
-                )
+
         return incident
 
     @staticmethod
@@ -1340,9 +1586,7 @@ class Factories:
         aggregate="count()",
         time_window=10,
         threshold_period=1,
-        include_all_projects=False,
         environment=None,
-        excluded_projects=None,
         date_added=None,
         query_type=None,
         dataset=Dataset.Events,
@@ -1351,6 +1595,10 @@ class Factories:
         user=None,
         event_types=None,
         comparison_delta=None,
+        description=None,
+        sensitivity=None,
+        seasonality=None,
+        detection_type=AlertRuleDetectionType.STATIC,
     ):
         if not name:
             name = petname.generate(2, " ", letters=10).title()
@@ -1372,11 +1620,13 @@ class Factories:
             query_type=query_type,
             dataset=dataset,
             environment=environment,
-            include_all_projects=include_all_projects,
-            excluded_projects=excluded_projects,
             user=user,
             event_types=event_types,
             comparison_delta=comparison_delta,
+            description=description,
+            sensitivity=sensitivity,
+            seasonality=seasonality,
+            detection_type=detection_type,
         )
 
         if date_added is not None:
@@ -1386,13 +1636,11 @@ class Factories:
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
-    def create_alert_rule_trigger(
-        alert_rule, label=None, alert_threshold=100, excluded_projects=None
-    ):
+    def create_alert_rule_trigger(alert_rule, label=None, alert_threshold=100):
         if not label:
             label = petname.generate(2, " ", letters=10).title()
 
-        return create_alert_rule_trigger(alert_rule, label, alert_threshold, excluded_projects)
+        return create_alert_rule_trigger(alert_rule, label, alert_threshold)
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
@@ -1478,23 +1726,82 @@ class Factories:
         integration = Integration.objects.create(external_id=external_id, **integration_params)
         with outbox_runner():
             organization_integration = integration.add_organization(organization)
+            assert organization_integration is not None
         organization_integration.update(**(oi_params or {}))
 
         return integration
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
-    def create_identity_provider(integration: Integration, **kwargs: Any) -> IdentityProvider:
-        return IdentityProvider.objects.create(
-            type=integration.provider,
-            external_id=integration.external_id,
-            config={},
+    def create_provider_integration(**integration_params: Any) -> Integration:
+        return Integration.objects.create(**integration_params)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_provider_integration_for(
+        organization: Organization | RpcOrganization,
+        user: User | RpcUser | None,
+        **integration_params: Any,
+    ) -> tuple[Integration, OrganizationIntegration]:
+        integration = Integration.objects.create(**integration_params)
+        org_integration = integration.add_organization(organization, user)
+        assert org_integration is not None
+        return integration, org_integration
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_identity_integration(
+        user: User | RpcUser,
+        organization: Organization | RpcOrganization,
+        integration_params: Mapping[Any, Any],
+        identity_params: Mapping[Any, Any],
+    ) -> tuple[Integration, OrganizationIntegration, Identity, IdentityProvider]:
+        # Avoid common pitfalls in tests
+        assert "provider" in integration_params
+        assert "external_id" in integration_params
+        assert "external_id" in identity_params
+
+        integration = Factories.create_provider_integration(**integration_params)
+        identity_provider = Factories.create_identity_provider(integration=integration)
+        identity = Factories.create_identity(
+            user=user, identity_provider=identity_provider, **identity_params
         )
+        organization_integration = integration.add_organization(
+            organization_id=organization.id, user=user, default_auth_id=identity.id
+        )
+        assert organization_integration is not None
+        return integration, organization_integration, identity, identity_provider
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_organization_integration(**integration_params: Any) -> OrganizationIntegration:
+        return OrganizationIntegration.objects.create(**integration_params)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_identity_provider(
+        integration: Integration | None = None,
+        config: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> IdentityProvider:
+        if integration is not None:
+            integration_values = dict(
+                type=integration.provider,
+                external_id=integration.external_id,
+            )
+            if any((key in kwargs) for key in integration_values):
+                raise ValueError(
+                    "Values from integration should not be in kwargs: "
+                    + repr(list(integration_values.keys()))
+                )
+            kwargs.update(integration_values)
+
+        return IdentityProvider.objects.create(config=config or {}, **kwargs)
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.CONTROL)
     def create_identity(
-        user: Any, identity_provider: IdentityProvider, external_id: str, **kwargs: Any
+        user: User | RpcUser, identity_provider: IdentityProvider, external_id: str, **kwargs: Any
     ) -> Identity:
         return Identity.objects.create(
             external_id=external_id,
@@ -1510,10 +1817,11 @@ class Factories:
     def create_group_history(
         group: Group,
         status: int,
-        release: Optional[Release] = None,
-        actor: Optional[Actor] = None,
-        prev_history: Optional[GroupHistory] = None,
-        date_added: Optional[datetime] = None,
+        release: Release | None = None,
+        user_id: int | None = None,
+        team_id: int | None = None,
+        prev_history: GroupHistory | None = None,
+        date_added: datetime | None = None,
     ) -> GroupHistory:
         prev_history_date = None
         if prev_history:
@@ -1527,7 +1835,8 @@ class Factories:
             group=group,
             project=group.project,
             release=release,
-            actor=actor,
+            user_id=user_id,
+            team_id=team_id,
             status=status,
             prev_history=prev_history,
             prev_history_date=prev_history_date,
@@ -1548,17 +1857,6 @@ class Factories:
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
-    def create_sentry_function(name, code, **kwargs):
-        return SentryFunction.objects.create(
-            name=name,
-            code=code,
-            slug=slugify(name),
-            external_id=slugify(name) + "-" + uuid4().hex,
-            **kwargs,
-        )
-
-    @staticmethod
-    @assume_test_silo_mode(SiloMode.REGION)
     def create_saved_search(name: str, **kwargs):
         if "owner" in kwargs:
             owner = kwargs.pop("owner")
@@ -1568,8 +1866,8 @@ class Factories:
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
     def create_notification_action(
-        organization: Optional[Organization] = None,
-        projects: Optional[List[Project]] = None,
+        organization: Organization | None = None,
+        projects: list[Project] | None = None,
         **kwargs,
     ):
         if not organization:
@@ -1595,10 +1893,327 @@ class Factories:
         return action
 
     @staticmethod
-    def create_basic_auth_header(username: str, password: str = "") -> str:
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_notification_settings_provider(*args, **kwargs) -> NotificationSettingProvider:
+        return NotificationSettingProvider.objects.create(*args, **kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_user_option(*args, **kwargs) -> UserOption:
+        return UserOption.objects.create(*args, **kwargs)
+
+    @staticmethod
+    def create_basic_auth_header(username: str, password: str = "") -> bytes:
         return b"Basic " + b64encode(f"{username}:{password}".encode())
 
     @staticmethod
     @assume_test_silo_mode(SiloMode.REGION)
     def snooze_rule(**kwargs):
         return RuleSnooze.objects.create(**kwargs)
+
+    @staticmethod
+    def create_request_access(
+        sso_state: RpcMemberSsoState | None = None,
+        permissions: list | None = None,
+        org_context: RpcUserOrganizationContext | None = None,
+        scopes_upper_bound: frozenset | None = frozenset(),
+    ) -> RpcBackedAccess:
+        if not sso_state:
+            sso_state = RpcMemberSsoState()
+        if not permissions:
+            permissions = []
+        if not org_context:
+            org_context = RpcUserOrganizationContext()
+
+        auth_state = RpcAuthState(sso_state=sso_state, permissions=permissions)
+        return RpcBackedAccess(
+            rpc_user_organization_context=org_context,
+            auth_state=auth_state,
+            scopes_upper_bound=scopes_upper_bound,
+        )
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_webhook_payload(mailbox_name: str, region_name: str, **kwargs) -> WebhookPayload:
+        payload_kwargs = {
+            "request_method": "POST",
+            "request_path": "/extensions/github/webhook/",
+            "request_headers": '{"Content-Type": "application/json"}',
+            "request_body": "{}",
+            **kwargs,
+        }
+        return WebhookPayload.objects.create(
+            mailbox_name=mailbox_name, region_name=region_name, **payload_kwargs
+        )
+
+    @staticmethod
+    def create_uptime_subscription(
+        type: str,
+        subscription_id: str | None,
+        status: UptimeSubscription.Status,
+        url: str | None,
+        url_domain: str,
+        url_domain_suffix: str,
+        host_provider_id: str,
+        host_provider_name: str,
+        interval_seconds: IntervalSecondsLiteral,
+        timeout_ms: int,
+        method,
+        headers,
+        body,
+        date_updated: datetime,
+        trace_sampling: bool = False,
+    ):
+        if url is None:
+            url = petname.generate().title()
+            url = f"http://{url}.com"
+
+        return UptimeSubscription.objects.create(
+            type=type,
+            subscription_id=subscription_id,
+            status=status.value,
+            url=url,
+            url_domain=url_domain,
+            url_domain_suffix=url_domain_suffix,
+            host_provider_id=host_provider_id,
+            host_provider_name=host_provider_name,
+            interval_seconds=interval_seconds,
+            timeout_ms=timeout_ms,
+            date_updated=date_updated,
+            method=method,
+            headers=headers,
+            body=body,
+            trace_sampling=trace_sampling,
+        )
+
+    @staticmethod
+    def create_project_uptime_subscription(
+        project: Project,
+        env: Environment | None,
+        uptime_subscription: UptimeSubscription,
+        status: int,
+        mode: ProjectUptimeSubscriptionMode,
+        name: str | None,
+        owner: Actor | None,
+        uptime_status: UptimeStatus,
+    ):
+        if name is None:
+            name = petname.generate().title()
+        owner_team_id = None
+        owner_user_id = None
+        if owner:
+            if owner.is_team:
+                owner_team_id = owner.id
+            elif owner.is_user:
+                owner_user_id = owner.id
+
+        return ProjectUptimeSubscription.objects.create(
+            uptime_subscription=uptime_subscription,
+            project=project,
+            environment=env,
+            status=status,
+            mode=mode,
+            name=name,
+            owner_team_id=owner_team_id,
+            owner_user_id=owner_user_id,
+            uptime_status=uptime_status,
+        )
+
+    @staticmethod
+    def create_uptime_subscription_region(
+        subscription: UptimeSubscription, region_slug: str
+    ) -> UptimeSubscriptionRegion:
+        return UptimeSubscriptionRegion.objects.create(
+            uptime_subscription=subscription, region_slug=region_slug
+        )
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_dashboard(
+        organization: Organization | None = None,
+        title: str | None = None,
+        created_by: User | None = None,
+        **kwargs,
+    ):
+        if organization is None:
+            organization = Factories.create_organization()
+        if created_by is None:
+            created_by = Factories.create_user()
+            Factories.create_member(organization=organization, user=created_by, role="owner")
+        if title is None:
+            title = petname.generate(2, " ", letters=10).title()
+        return Dashboard.objects.create(
+            organization=organization, title=title, created_by_id=created_by.id, **kwargs
+        )
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_dashboard_widget(
+        order: int,
+        dashboard: Dashboard | None = None,
+        title: str | None = None,
+        display_type: int | None = None,
+        **kwargs,
+    ):
+        if dashboard is None:
+            dashboard = Factories.create_dashboard()
+        if display_type is None:
+            display_type = DashboardWidgetDisplayTypes.AREA_CHART
+        if title is None:
+            title = petname.generate(2, " ", letters=10).title()
+
+        return DashboardWidget.objects.create(
+            dashboard=dashboard, title=title, display_type=display_type, order=order, **kwargs
+        )
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_dashboard_widget_query(
+        order: int,
+        widget: DashboardWidget | None = None,
+        name: str | None = None,
+        **kwargs,
+    ):
+        if widget is None:
+            widget = Factories.create_dashboard_widget(order=order)
+        if name is None:
+            name = petname.generate(2, " ", letters=10).title()
+        return DashboardWidgetQuery.objects.create(widget=widget, name=name, order=order, **kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_workflow(
+        name: str | None = None,
+        organization: Organization | None = None,
+        config: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> Workflow:
+        if organization is None:
+            organization = Factories.create_organization()
+        if name is None:
+            name = petname.generate(2, " ", letters=10).title()
+        if config is None:
+            config = {}
+        return Workflow.objects.create(
+            organization=organization, name=name, config=config, **kwargs
+        )
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_data_condition_group(
+        **kwargs,
+    ) -> DataConditionGroup:
+        return DataConditionGroup.objects.create(**kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_workflow_data_condition_group(
+        workflow: Workflow | None = None,
+        condition_group: DataConditionGroup | None = None,
+        **kwargs,
+    ) -> WorkflowDataConditionGroup:
+        if workflow is None:
+            workflow = Factories.create_workflow()
+
+        if not condition_group:
+            condition_group = Factories.create_data_condition_group()
+
+        return WorkflowDataConditionGroup.objects.create(
+            workflow=workflow, condition_group=condition_group
+        )
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_data_condition(**kwargs) -> DataCondition:
+        return DataCondition.objects.create(**kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_data_source(
+        organization: Organization | None = None,
+        source_id: str | None = None,
+        type: str | None = None,
+        **kwargs,
+    ) -> DataSource:
+        if organization is None:
+            organization = Factories.create_organization()
+        if source_id is None:
+            source_id = str(random.randint(1, 10000))
+        if type is None:
+            type = data_source_type_registry.get_key(QuerySubscriptionDataSourceHandler)
+        return DataSource.objects.create(organization=organization, source_id=source_id, type=type)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_detector(
+        name: str | None = None,
+        config: dict | None = None,
+        **kwargs,
+    ) -> Detector:
+        if name is None:
+            name = petname.generate(2, " ", letters=10).title()
+        if config is None:
+            config = {}
+
+        return Detector.objects.create(
+            name=name,
+            config=config,
+            **kwargs,
+        )
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_detector_state(
+        detector: Detector | None = None,
+        **kwargs,
+    ) -> DetectorState:
+        if detector is None:
+            detector = Factories.create_detector()
+
+        return DetectorState.objects.create(detector=detector, **kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_data_source_detector(
+        data_source: DataSource | None = None,
+        detector: Detector | None = None,
+        **kwargs,
+    ) -> DataSourceDetector:
+        if data_source is None:
+            data_source = Factories.create_data_source()
+        if detector is None:
+            detector = Factories.create_detector()
+        return DataSourceDetector.objects.create(data_source=data_source, detector=detector)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_action(**kwargs) -> Action:
+        return Action.objects.create(**kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_detector_workflow(
+        detector: Detector | None = None,
+        workflow: Workflow | None = None,
+        **kwargs,
+    ) -> DetectorWorkflow:
+        if detector is None:
+            detector = Factories.create_detector()
+        if workflow is None:
+            workflow = Factories.create_workflow()
+        return DetectorWorkflow.objects.create(detector=detector, workflow=workflow, **kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.REGION)
+    def create_data_condition_group_action(
+        action: Action | None = None,
+        condition_group: DataConditionGroup | None = None,
+        **kwargs,
+    ) -> DataConditionGroupAction:
+        if action is None:
+            action = Factories.create_action()
+        if condition_group is None:
+            condition_group = Factories.create_data_condition_group()
+        return DataConditionGroupAction.objects.create(
+            action=action, condition_group=condition_group, **kwargs
+        )

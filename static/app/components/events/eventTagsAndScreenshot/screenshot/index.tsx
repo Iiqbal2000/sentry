@@ -1,7 +1,8 @@
-import {Fragment, ReactEventHandler, useState} from 'react';
+import type {ReactEventHandler} from 'react';
+import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
 
-import {Role} from 'sentry/components/acl/role';
+import {useRole} from 'sentry/components/acl/useRole';
 import {Button} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import {openConfirmModal} from 'sentry/components/confirm';
@@ -14,7 +15,10 @@ import PanelHeader from 'sentry/components/panels/panelHeader';
 import {IconChevron, IconEllipsis} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Event, EventAttachment, Organization, Project} from 'sentry/types';
+import type {Event} from 'sentry/types/event';
+import type {EventAttachment} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
 
 import ImageVisualization from './imageVisualization';
@@ -48,6 +52,7 @@ function Screenshot({
 }: Props) {
   const orgSlug = organization.slug;
   const [loadingImage, setLoadingImage] = useState(true);
+  const {hasRole} = useRole({role: 'attachmentsRole'});
 
   function handleDelete(screenshotAttachmentId: string) {
     trackAnalytics('issue_details.issue_tab.screenshot_dropdown_deleted', {
@@ -67,7 +72,7 @@ function Screenshot({
               disabled={screenshotInFocus === 0}
               aria-label={t('Previous Screenshot')}
               onClick={onPrevious}
-              icon={<IconChevron direction="left" size="xs" />}
+              icon={<IconChevron direction="left" />}
               size="xs"
             />
             {tct('[currentScreenshot] of [totalScreenshots]', {
@@ -78,7 +83,7 @@ function Screenshot({
               disabled={screenshotInFocus + 1 === totalScreenshots}
               aria-label={t('Next Screenshot')}
               onClick={onNext}
-              icon={<IconChevron direction="right" size="xs" />}
+              icon={<IconChevron direction="right" />}
               size="xs"
             />
           </StyledPanelHeader>
@@ -96,7 +101,7 @@ function Screenshot({
           >
             <StyledImageVisualization
               attachment={screenshotAttachment}
-              orgId={orgSlug}
+              orgSlug={orgSlug}
               projectSlug={projectSlug}
               eventId={eventId}
               onLoad={() => setLoadingImage(false)}
@@ -123,7 +128,7 @@ function Screenshot({
                 offset={4}
                 triggerProps={{
                   showChevron: false,
-                  icon: <IconEllipsis size="xs" />,
+                  icon: <IconEllipsis />,
                   'aria-label': t('More screenshot actions'),
                 }}
                 size="xs"
@@ -160,17 +165,11 @@ function Screenshot({
     );
   }
 
-  return (
-    <Role organization={organization} role={organization.attachmentsRole}>
-      {({hasRole}) => {
-        if (!hasRole) {
-          return null;
-        }
+  if (!hasRole) {
+    return null;
+  }
 
-        return <StyledPanel>{renderContent(screenshot)}</StyledPanel>;
-      }}
-    </Role>
-  );
+  return <StyledPanel>{renderContent(screenshot)}</StyledPanel>;
 }
 
 export default Screenshot;

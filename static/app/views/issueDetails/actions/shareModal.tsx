@@ -1,9 +1,9 @@
-import {Fragment, useCallback, useEffect, useRef, useState} from 'react';
+import {Fragment, useCallback, useRef, useState} from 'react';
 import styled from '@emotion/styled';
 
 import {bulkUpdate} from 'sentry/actionCreators/group';
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
 import AutoSelectText from 'sentry/components/autoSelectText';
 import {Button} from 'sentry/components/button';
 import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
@@ -14,7 +14,8 @@ import {t} from 'sentry/locale';
 import GroupStore from 'sentry/stores/groupStore';
 import {useLegacyStore} from 'sentry/stores/useLegacyStore';
 import {space} from 'sentry/styles/space';
-import type {Group, Organization} from 'sentry/types';
+import type {Group} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
 import useApi from 'sentry/utils/useApi';
 import useCopyToClipboard from 'sentry/utils/useCopyToClipboard';
 
@@ -26,6 +27,12 @@ interface ShareIssueModalProps extends ModalRenderProps {
 }
 
 type UrlRef = React.ElementRef<typeof AutoSelectText>;
+
+export function getShareUrl(group: Group) {
+  const path = `/share/issue/${group.shareId}/`;
+  const {host, protocol} = window.location;
+  return `${protocol}//${host}${path}`;
+}
 
 function ShareIssueModal({
   Header,
@@ -73,25 +80,7 @@ function ShareIssueModal({
     [api, setLoading, onToggle, isShared, organization.slug, projectSlug, groupId]
   );
 
-  /**
-   * Share as soon as modal is opened
-   */
-  useEffect(() => {
-    if (isShared) {
-      return;
-    }
-
-    handleShare(null, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- we only want to run this on open
-  }, []);
-
-  function getShareUrl() {
-    const path = `/share/issue/${group!.shareId}/`;
-    const {host, protocol} = window.location;
-    return `${protocol}//${host}${path}`;
-  }
-
-  const shareUrl = group?.shareId ? getShareUrl() : null;
+  const shareUrl = group?.shareId ? getShareUrl(group) : null;
 
   const {onClick: handleCopy} = useCopyToClipboard({
     text: shareUrl!,

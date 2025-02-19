@@ -6,9 +6,8 @@ import codecs
 import re
 import string
 import zlib
-from typing import Any, Callable, overload
-
-from django.utils.encoding import force_str, smart_str
+from collections.abc import Callable
+from typing import overload
 
 _sprintf_placeholder_re = re.compile(
     r"%(?:\d+\$)?[+-]?(?:[ 0]|\'.{1})?-?\d*(?:\.\d+)?[bcdeEufFgGosxX]"
@@ -40,13 +39,11 @@ def strip_lone_surrogates(string: str) -> str:
 
 
 @overload
-def truncatechars(value: None, arg: int, ellipsis: str = ...) -> None:
-    ...
+def truncatechars(value: None, arg: int, ellipsis: str = ...) -> None: ...
 
 
 @overload
-def truncatechars(value: str, arg: int, ellipsis: str = ...) -> str:
-    ...
+def truncatechars(value: str, arg: int, ellipsis: str = ...) -> str: ...
 
 
 def truncatechars(value: str | None, arg: int, ellipsis: str = "...") -> str | None:
@@ -84,7 +81,7 @@ def decompress(value: str) -> bytes:
 def strip(value: str | None) -> str:
     if not value:
         return ""
-    return smart_str(value).strip()
+    return value.strip()
 
 
 def soft_hyphenate(value: str, length: int, hyphen: str = "\u00ad") -> str:
@@ -113,19 +110,6 @@ def soft_break(value: str, length: int, process: Callable[[str], str] = lambda c
         return "".join(results).rstrip("\u200b")
 
     return re.sub(rf"\S{{{length},}}", soft_break_delimiter, value)
-
-
-def to_unicode(value: Any) -> str:
-    try:
-        value = str(force_str(value))
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        value = "(Error decoding value)"
-    except Exception:  # in some cases we get a different exception
-        try:
-            value = str(repr(type(value)))
-        except Exception:
-            value = "(Error decoding value)"
-    return value
 
 
 valid_dot_atom_characters = frozenset(string.ascii_letters + string.digits + ".!#$%&'*+-/=?^_`{|}~")
@@ -169,7 +153,7 @@ def codec_lookup(encoding: str, default: str = "utf-8") -> codecs.CodecInfo:
         # with this encoding value safely. This attribute was
         # introduced into 2.7.12, so versions prior to this will
         # raise, but this is the best we can do.
-        if not info._is_text_encoding:  # type: ignore[attr-defined] # python/typeshed#10354
+        if not info._is_text_encoding:
             return _get_default()
     except AttributeError:
         pass
