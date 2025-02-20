@@ -1,4 +1,4 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {
   render,
@@ -10,23 +10,23 @@ import {
 import AccountClose from 'sentry/views/settings/account/accountClose';
 
 describe('AccountClose', function () {
-  let deleteMock;
+  let deleteMock: jest.Mock;
   const soloOrgSlug = 'solo-owner';
   const nonSingleOwnerSlug = 'non-single-owner';
 
   beforeEach(function () {
     MockApiClient.clearMockResponses();
     MockApiClient.addMockResponse({
-      url: '/organizations/?owner=1',
+      url: '/organizations/',
       body: [
         {
-          organization: Organization({
+          organization: OrganizationFixture({
             slug: soloOrgSlug,
           }),
           singleOwner: true,
         },
         {
-          organization: Organization({
+          organization: OrganizationFixture({
             id: '4',
             slug: nonSingleOwnerSlug,
           }),
@@ -46,7 +46,7 @@ describe('AccountClose', function () {
     renderGlobalModal();
 
     // Input for single owner org
-    const singleOwner = screen.getByRole('checkbox', {name: soloOrgSlug});
+    const singleOwner = await screen.findByRole('checkbox', {name: soloOrgSlug});
     expect(singleOwner).toBeChecked();
     expect(singleOwner).toBeDisabled();
 
@@ -64,7 +64,7 @@ describe('AccountClose', function () {
 
     expect(
       screen.getByText(
-        'This is permanent and cannot be undone, are you really sure you want to do this?'
+        'WARNING! This is permanent and cannot be undone, are you really sure you want to do this?'
       )
     ).toBeInTheDocument();
     await userEvent.click(screen.getByText('Confirm'));

@@ -2,13 +2,11 @@ import SelectControl from 'sentry/components/forms/controls/selectControl';
 import Input from 'sentry/components/input';
 import SelectMembers from 'sentry/components/selectMembers';
 import TeamSelector from 'sentry/components/teamSelector';
-import {Organization, Project, SelectValue} from 'sentry/types';
-import {
-  Action,
-  ActionType,
-  MetricActionTemplate,
-  TargetType,
-} from 'sentry/views/alerts/rules/metric/types';
+import type {SelectValue} from 'sentry/types/core';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type {Action, MetricActionTemplate} from 'sentry/views/alerts/rules/metric/types';
+import {ActionType, TargetType} from 'sentry/views/alerts/rules/metric/types';
 
 const getPlaceholderForType = (type: ActionType) => {
   switch (type) {
@@ -54,7 +52,7 @@ export default function ActionTargetSelector(props: Props) {
 
   switch (action.targetType) {
     case TargetType.TEAM:
-    case TargetType.USER:
+    case TargetType.USER: {
       const isTeam = action.targetType === TargetType.TEAM;
 
       return isTeam ? (
@@ -70,13 +68,12 @@ export default function ActionTargetSelector(props: Props) {
         <SelectMembers
           disabled={disabled}
           key="member"
-          project={project}
           organization={organization}
           value={action.targetIdentifier}
           onChange={handleChangeTargetIdentifier}
         />
       );
-
+    }
     case TargetType.SPECIFIC:
       return availableAction?.options ? (
         <SelectControl

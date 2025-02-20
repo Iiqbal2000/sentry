@@ -1,11 +1,8 @@
-import styled from '@emotion/styled';
-
-import {space} from 'sentry/styles/space';
+import {SecondaryNav} from 'sentry/components/nav/secondary';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import replaceRouterParams from 'sentry/utils/replaceRouterParams';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import SettingsNavItem from 'sentry/views/settings/components/settingsNavItem';
-import {NavigationGroupProps} from 'sentry/views/settings/types';
+import type {NavigationGroupProps} from 'sentry/views/settings/types';
 
 function SettingsNavigationGroup(props: NavigationGroupProps) {
   const {organization, project, name, items} = props;
@@ -28,7 +25,7 @@ function SettingsNavigationGroup(props: NavigationGroupProps) {
       if (recordAnalytics && to !== window.location.pathname && organization) {
         trackAnalytics('sidebar.item_clicked', {
           organization,
-          project_id: project && project.id,
+          project_id: project?.id,
           sidebar_item_id: id,
           dest: path,
         });
@@ -38,7 +35,7 @@ function SettingsNavigationGroup(props: NavigationGroupProps) {
     return (
       <SettingsNavItem
         key={title}
-        to={normalizeUrl(to)}
+        to={to}
         label={title}
         index={index}
         badge={badgeResult}
@@ -52,24 +49,7 @@ function SettingsNavigationGroup(props: NavigationGroupProps) {
     return null;
   }
 
-  return (
-    <NavSection data-test-id={name}>
-      <SettingsHeading role="heading">{name}</SettingsHeading>
-      {navLinks}
-    </NavSection>
-  );
+  return <SecondaryNav.Section title={name}>{navLinks}</SecondaryNav.Section>;
 }
-
-const NavSection = styled('div')`
-  margin-bottom: 20px;
-`;
-
-const SettingsHeading = styled('div')`
-  color: ${p => p.theme.text};
-  font-size: ${p => p.theme.fontSizeSmall};
-  font-weight: 600;
-  text-transform: uppercase;
-  margin-bottom: ${space(0.5)};
-`;
 
 export default SettingsNavigationGroup;

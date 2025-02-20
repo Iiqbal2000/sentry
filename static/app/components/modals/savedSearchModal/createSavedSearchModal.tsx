@@ -1,13 +1,14 @@
 import {useState} from 'react';
 
 import {addLoadingMessage, clearIndicators} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import {Alert} from 'sentry/components/alert';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import {Alert} from 'sentry/components/core/alert';
 import Form from 'sentry/components/forms/form';
-import {OnSubmitCallback} from 'sentry/components/forms/types';
+import type {OnSubmitCallback} from 'sentry/components/forms/types';
 import {SavedSearchModalContent} from 'sentry/components/modals/savedSearchModal/savedSearchModalContent';
 import {t} from 'sentry/locale';
-import {Organization, SavedSearchType, SavedSearchVisibility} from 'sentry/types';
+import {SavedSearchType, SavedSearchVisibility} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import {useCreateSavedSearch} from 'sentry/views/issueList/mutations/useCreateSavedSearch';
 import {IssueSortOptions} from 'sentry/views/issueList/utils';
@@ -22,7 +23,7 @@ function validateSortOption({sort}: {sort?: string}) {
   const sortOptions = [
     IssueSortOptions.DATE,
     IssueSortOptions.NEW,
-    IssueSortOptions.PRIORITY,
+    IssueSortOptions.TRENDS,
     IssueSortOptions.FREQ,
     IssueSortOptions.USER,
   ];
@@ -109,7 +110,11 @@ export function CreateSavedSearchModal({
       </Header>
 
       <Body>
-        {error && <Alert type="error">{error}</Alert>}
+        {error && (
+          <Alert.Container>
+            <Alert type="error">{error}</Alert>
+          </Alert.Container>
+        )}
         <SavedSearchModalContent organization={organization} />
       </Body>
     </Form>

@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from typing import List, Tuple
-
 import sentry_sdk
 from snuba_sdk import AliasedExpression, Function
 
 from sentry.discover.models import TeamKeyTransaction
 from sentry.exceptions import IncompatibleMetricsQuery
 from sentry.models.projectteam import ProjectTeam
-from sentry.search.events import builder, constants, fields
+from sentry.search.events import constants, fields
+from sentry.search.events.builder.base import BaseQueryBuilder
 from sentry.search.events.types import SelectType
+from sentry.search.utils import DEVICE_CLASS
 from sentry.utils.numbers import format_grouped_length
 
 
 def resolve_team_key_transaction_alias(
-    builder: builder.QueryBuilder, resolve_metric_index: bool = False
+    builder: BaseQueryBuilder, resolve_metric_index: bool = False
 ) -> SelectType:
     team_key_transactions = get_team_transactions(builder, resolve_metric_index)
     if len(team_key_transactions) == 0:
@@ -31,8 +31,8 @@ def resolve_team_key_transaction_alias(
 
 
 def get_team_transactions(
-    builder: builder.QueryBuilder, resolve_metric_index: bool = False
-) -> List[Tuple[int, str]]:
+    builder: BaseQueryBuilder, resolve_metric_index: bool = False
+) -> list[tuple[int, str]]:
     org_id = builder.params.organization.id if builder.params.organization is not None else None
     project_ids = builder.params.project_ids
     team_ids = builder.params.team_ids
@@ -59,7 +59,7 @@ def get_team_transactions(
         # Its completely possible that a team_key_transaction never existed in the metrics dataset
         for project, transaction in team_key_transactions:
             try:
-                resolved_transaction = builder.resolve_tag_value(transaction)  # type: ignore
+                resolved_transaction = builder.resolve_tag_value(transaction)  # type: ignore[attr-defined]
             except IncompatibleMetricsQuery:
                 continue
             if resolved_transaction:
@@ -77,7 +77,7 @@ def get_team_transactions(
     return team_key_transactions
 
 
-def resolve_project_slug_alias(builder: builder.QueryBuilder, alias: str) -> SelectType:
+def resolve_project_slug_alias(builder: BaseQueryBuilder, alias: str) -> SelectType:
     builder.value_resolver_map[alias] = lambda project_id: builder.params.project_id_map.get(
         project_id, ""
     )
@@ -85,7 +85,7 @@ def resolve_project_slug_alias(builder: builder.QueryBuilder, alias: str) -> Sel
     return AliasedExpression(exp=builder.column("project_id"), alias=alias)
 
 
-def resolve_span_module(builder, alias: str) -> SelectType:
+def resolve_span_module(builder: BaseQueryBuilder, alias: str) -> SelectType:
     OP_MAPPING = {
         "db.redis": "cache",
         "db.sql.room": "other",
@@ -93,11 +93,11 @@ def resolve_span_module(builder, alias: str) -> SelectType:
     return Function(
         "if",
         [
-            Function("in", [builder.column("span.op"), list(OP_MAPPING.keys())]),
+            Function("in", [builder.resolve_field("span.op"), list(OP_MAPPING.keys())]),
             Function(
                 "transform",
                 [
-                    builder.column("span.op"),
+                    builder.resolve_field("span.op"),
                     list(OP_MAPPING.keys()),
                     list(OP_MAPPING.values()),
                     "other",
@@ -106,20 +106,55 @@ def resolve_span_module(builder, alias: str) -> SelectType:
             Function(
                 "transform",
                 [
-                    builder.column("span.category"),
-                    [
-                        "cache",
-                        "db",
-                        "http",
-                    ],
-                    [
-                        "cache",
-                        "db",
-                        "http",
-                    ],
+                    builder.resolve_field("span.category"),
+                    constants.SPAN_MODULE_CATEGORY_VALUES,
+                    constants.SPAN_MODULE_CATEGORY_VALUES,
                     "other",
                 ],
             ),
         ],
+        alias,
+    )
+
+
+def resolve_device_class(builder: BaseQueryBuilder, alias: str) -> SelectType:
+    values: list[str] = []
+    keys: list[str] = []
+    for device_key, device_values in DEVICE_CLASS.items():
+        values.extend(device_values)
+        keys.extend([device_key] * len(device_values))
+    return Function(
+        "transform",
+        [builder.column("device.class"), values, keys, "Unknown"],
+        alias,
+    )
+
+
+def resolve_precise_timestamp(timestamp_column: str, ms_column: str, alias: str) -> SelectType:
+    return Function(
+        "plus",
+        [
+            Function("toUnixTimestamp", [timestamp_column]),
+            Function("divide", [ms_column, 1000]),
+        ],
+        alias,
+    )
+
+
+def resolve_user_display_alias(builder: BaseQueryBuilder, alias: str) -> SelectType:
+    columns = ["user.email", "user.username", "user.id", "user.ip"]
+    return Function(
+        "coalesce",
+        [Function("nullif", [builder.column(column), ""]) for column in columns],
+        alias,
+    )
+
+
+def resolve_replay_alias(builder: BaseQueryBuilder, alias: str) -> SelectType:
+    # pageload spans have `replayId` while standalone spans have `replay.id`
+    columns = ["replay.id", "replayId"]
+    return Function(
+        "coalesce",
+        [Function("nullif", [builder.column(column), ""]) for column in columns],
         alias,
     )

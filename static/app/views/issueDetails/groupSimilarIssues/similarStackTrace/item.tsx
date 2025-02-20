@@ -2,6 +2,7 @@ import {Component} from 'react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 import classNames from 'classnames';
+import type {Location} from 'history';
 
 import {openDiffModal} from 'sentry/actionCreators/modal';
 import {Button} from 'sentry/components/button';
@@ -16,16 +17,20 @@ import SimilarScoreCard from 'sentry/components/similarScoreCard';
 import {t} from 'sentry/locale';
 import GroupingStore from 'sentry/stores/groupingStore';
 import {space} from 'sentry/styles/space';
-import {Group, Organization, Project} from 'sentry/types';
+import type {Group} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 
 type Props = {
   groupId: Group['id'];
+  hasSimilarityEmbeddingsFeature: boolean;
   issue: Group;
+  location: Location;
   orgId: Organization['id'];
   project: Project;
   aggregate?: {
     exception: number;
-    message: number;
+    message?: number;
   };
   score?: Record<string, any>;
   scoresByInterface?: {
@@ -36,6 +41,8 @@ type Props = {
 
 const initialState = {visible: true, checked: false, busy: false};
 
+const similarityEmbeddingScoreValues = [0.9, 0.925, 0.95, 0.975, 0.99, 1];
+
 type State = typeof initialState;
 
 class Item extends Component<Props, State> {
@@ -45,7 +52,7 @@ class Item extends Component<Props, State> {
     this.listener?.();
   }
 
-  listener = GroupingStore.listen(data => this.onGroupChange(data), undefined);
+  listener = GroupingStore.listen((data: any) => this.onGroupChange(data), undefined);
 
   handleToggle = () => {
     const {issue} = this.props;
@@ -57,10 +64,16 @@ class Item extends Component<Props, State> {
   };
 
   handleShowDiff = (event: React.MouseEvent) => {
-    const {orgId, groupId: baseIssueId, issue, project} = this.props;
+    const {orgId, groupId: baseIssueId, issue, project, location} = this.props;
     const {id: targetIssueId} = issue;
 
-    openDiffModal({baseIssueId, targetIssueId, project, orgId});
+    openDiffModal({
+      baseIssueId,
+      targetIssueId,
+      project,
+      orgId,
+      location,
+    });
     event.stopPropagation();
   };
 
@@ -69,7 +82,7 @@ class Item extends Component<Props, State> {
     // This is controlled via row click instead of only Checkbox
   };
 
-  onGroupChange = ({mergeState}) => {
+  onGroupChange = ({mergeState}: any) => {
     if (!mergeState) {
       return;
     }
@@ -83,6 +96,7 @@ class Item extends Component<Props, State> {
     }
 
     Object.keys(stateForId).forEach(key => {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       if (stateForId[key] === this.state[key]) {
         return;
       }
@@ -94,9 +108,12 @@ class Item extends Component<Props, State> {
   };
 
   render() {
-    const {aggregate, scoresByInterface, issue} = this.props;
+    const {aggregate, scoresByInterface, issue, hasSimilarityEmbeddingsFeature} =
+      this.props;
     const {visible, busy} = this.state;
-    const similarInterfaces = ['exception', 'message'];
+    const similarInterfaces = hasSimilarityEmbeddingsFeature
+      ? ['exception']
+      : ['exception', 'message'];
 
     if (!visible) {
       return null;
@@ -121,7 +138,7 @@ class Item extends Component<Props, State> {
             onChange={this.handleCheckClick}
           />
           <EventDetails>
-            <EventOrGroupHeader data={issue} size="normal" source="similar-issues" />
+            <EventOrGroupHeader data={issue} source="similar-issues" />
             <EventOrGroupExtraDetails data={{...issue, lastSeen: ''}} showAssignee />
           </EventDetails>
 
@@ -134,21 +151,37 @@ class Item extends Component<Props, State> {
 
         <Columns>
           <StyledCount value={issue.count} />
-
           {similarInterfaces.map(interfaceName => {
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             const avgScore = aggregate?.[interfaceName];
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             const scoreList = scoresByInterface?.[interfaceName] || [];
+
             // Check for valid number (and not NaN)
-            const scoreValue =
+            let scoreValue =
               typeof avgScore === 'number' && !Number.isNaN(avgScore) ? avgScore : 0;
+            // If hasSimilarityEmbeddingsFeature is on, translate similarity score in range 0.9-1 to score between 1-5
+            if (hasSimilarityEmbeddingsFeature) {
+              for (let i = 0; i <= similarityEmbeddingScoreValues.length; i++) {
+                if (scoreValue <= similarityEmbeddingScoreValues[i]!) {
+                  scoreValue = i;
+                  break;
+                }
+              }
+            }
 
             return (
               <Column key={interfaceName}>
-                <Hovercard
-                  body={scoreList.length && <SimilarScoreCard scoreList={scoreList} />}
-                >
-                  <ScoreBar vertical score={Math.round(scoreValue * 5)} />
-                </Hovercard>
+                {!hasSimilarityEmbeddingsFeature && (
+                  <Hovercard
+                    body={scoreList.length && <SimilarScoreCard scoreList={scoreList} />}
+                  >
+                    <ScoreBar vertical score={Math.round(scoreValue * 5)} />
+                  </Hovercard>
+                )}
+                {hasSimilarityEmbeddingsFeature && (
+                  <ScoreBar vertical score={scoreValue} />
+                )}
               </Column>
             );
           })}
@@ -162,6 +195,7 @@ const Details = styled('div')`
   ${p => p.theme.overflowEllipsis};
 
   display: grid;
+  align-items: start;
   gap: ${space(1)};
   grid-template-columns: max-content auto max-content;
   margin-left: ${space(2)};
@@ -175,8 +209,8 @@ const Columns = styled('div')`
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  min-width: 300px;
-  width: 300px;
+  min-width: 350px;
+  width: 350px;
 `;
 
 const columnStyle = css`
@@ -197,6 +231,7 @@ const StyledCount = styled(Count)`
 `;
 
 const Diff = styled('div')`
+  height: 100%;
   display: flex;
   align-items: center;
   margin-right: ${space(0.25)};

@@ -113,7 +113,7 @@ describe('dropdownMenuDeprecated', function () {
     await userEvent.click(screen.getByTestId('menu'));
     expect(menuClick).toHaveBeenCalled();
 
-    expect(screen.queryByRole('listbox')).toBeInTheDocument();
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
   });
 
   it('always rendered menus should attach document event listeners only when opened', async function () {
@@ -134,10 +134,10 @@ describe('dropdownMenuDeprecated', function () {
     );
 
     // Make sure this is only called when menu is open
-    expect(addSpy).not.toHaveBeenCalled();
+    expect(addSpy).not.toHaveBeenCalledWith('click', expect.anything(), true);
 
     await userEvent.click(screen.getByRole('button'));
-    expect(addSpy).toHaveBeenCalled();
+    expect(addSpy).toHaveBeenCalledWith('click', expect.anything(), true);
     expect(removeSpy).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole('button'));

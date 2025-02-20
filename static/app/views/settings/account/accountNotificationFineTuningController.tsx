@@ -1,28 +1,25 @@
-import {RouteComponentProps} from 'react-router';
-
-import {Organization} from 'sentry/types';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
 import withOrganizations from 'sentry/utils/withOrganizations';
 
 import AccountNotificationFineTuning from './accountNotificationFineTuning';
-import AccountNotificationFineTuningV2 from './accountNotificationFineTuningV2';
 
-type Props = RouteComponentProps<{fineTuneType: string}, {}> & {
+interface AccountNotificationFineTuningControllerProps
+  extends RouteComponentProps<{fineTuneType: string}> {
   organizations: Organization[];
-};
+  organizationsLoading?: boolean;
+}
 
 export function AccountNotificationFineTuningController({
-  organizations,
+  organizationsLoading,
   ...props
-}: Props) {
-  // check if feature is enabled for any organization
-  const hasFeature = organizations.some(org =>
-    org.features.includes('notification-settings-v2')
-  );
-  return hasFeature ? (
-    <AccountNotificationFineTuningV2 {...props} />
-  ) : (
-    <AccountNotificationFineTuning {...props} />
-  );
+}: AccountNotificationFineTuningControllerProps) {
+  if (organizationsLoading) {
+    return <LoadingIndicator />;
+  }
+
+  return <AccountNotificationFineTuning {...props} />;
 }
 
 export default withOrganizations(AccountNotificationFineTuningController);

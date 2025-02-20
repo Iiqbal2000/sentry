@@ -1,141 +1,97 @@
-import {Replayer} from '@sentry-internal/rrweb';
 import type {Mirror} from '@sentry-internal/rrweb-snapshot';
 
-import type {RecordingFrame, ReplayFrame} from 'sentry/utils/replays/types';
+import type {ReplayFrame} from 'sentry/utils/replays/types';
+import {getNodeIds} from 'sentry/utils/replays/types';
+import constructSelector from 'sentry/views/replays/deadRageClick/constructSelector';
 
 export type Extraction = {
   frame: ReplayFrame;
-  html: string | null;
+  html: string[];
+  selectors: Map<number, string>;
   timestamp: number;
 };
 
-type Args = {
-  frames: ReplayFrame[] | undefined;
-  rrwebEvents: RecordingFrame[] | undefined;
+const extractDomNodes = {
+  shouldVisitFrame: (frame: any) => {
+    const nodeIds = getNodeIds(frame);
+    return nodeIds.filter((nodeId: any) => nodeId !== -1).length > 0;
+  },
+  onVisitFrame: (frame: any, collection: any, replayer: any) => {
+    const mirror = replayer.getMirror();
+    const nodeIds = getNodeIds(frame);
+    const {html, selectors} = extractHtmlAndSelector((nodeIds ?? []) as number[], mirror);
+    collection.set(frame as ReplayFrame, {
+      frame,
+      html,
+      selectors,
+      timestamp: frame.timestampMs,
+    });
+  },
 };
 
-export default function extractDomNodes({
-  frames = [],
-  rrwebEvents,
-}: Args): Promise<Extraction[]> {
-  return new Promise(resolve => {
-    if (!frames.length) {
-      resolve([]);
-      return;
+export default extractDomNodes;
+
+function extractHtmlAndSelector(
+  nodeIds: number[],
+  mirror: Mirror
+): {html: string[]; selectors: Map<number, string>} {
+  const htmlStrings: string[] = [];
+  const selectors = new Map<number, string>();
+  for (const nodeId of nodeIds) {
+    const node = mirror.getNode(nodeId);
+    if (node) {
+      const html = extractHtml(node);
+      if (html) {
+        htmlStrings.push(html);
+      }
+
+      const selector = extractSelector(node);
+      if (selector) {
+        selectors.set(nodeId, selector);
+      }
     }
-
-    const extractions = new Map<ReplayFrame, Extraction>();
-
-    const player = createPlayer(rrwebEvents);
-    const mirror = player.getMirror();
-
-    const nextFrame = (function () {
-      let i = 0;
-      return () => frames[i++];
-    })();
-
-    const onDone = () => {
-      resolve(Array.from(extractions.values()));
-    };
-
-    const nextOrDone = () => {
-      const next = nextFrame();
-      if (next) {
-        matchFrame(next);
-      } else {
-        onDone();
-      }
-    };
-
-    type FrameRef = {
-      frame: undefined | ReplayFrame;
-      nodeId: undefined | number;
-    };
-
-    const nodeIdRef: FrameRef = {
-      frame: undefined,
-      nodeId: undefined,
-    };
-
-    const handlePause = () => {
-      if (!nodeIdRef.nodeId && !nodeIdRef.frame) {
-        return;
-      }
-      const frame = nodeIdRef.frame as ReplayFrame;
-      const nodeId = nodeIdRef.nodeId as number;
-
-      const html = extractHtml(nodeId as number, mirror);
-      extractions.set(frame as ReplayFrame, {
-        frame,
-        html,
-        timestamp: frame.timestampMs,
-      });
-      nextOrDone();
-    };
-
-    const matchFrame = frame => {
-      nodeIdRef.frame = frame;
-      nodeIdRef.nodeId =
-        frame.data && 'nodeId' in frame.data ? frame.data.nodeId : undefined;
-
-      if (nodeIdRef.nodeId === undefined || nodeIdRef.nodeId === -1) {
-        nextOrDone();
-        return;
-      }
-
-      window.setTimeout(() => {
-        player.pause(frame.offsetMs);
-      }, 0);
-    };
-
-    player.on('pause', handlePause);
-    matchFrame(nextFrame());
-  });
+  }
+  return {html: htmlStrings, selectors};
 }
 
-function createPlayer(rrwebEvents): Replayer {
-  const domRoot = document.createElement('div');
-  domRoot.className = 'sentry-block';
-  const {style} = domRoot;
-
-  style.position = 'fixed';
-  style.inset = '0';
-  style.width = '0';
-  style.height = '0';
-  style.overflow = 'hidden';
-
-  document.body.appendChild(domRoot);
-
-  const replayerRef = new Replayer(rrwebEvents, {
-    root: domRoot,
-    loadTimeout: 1,
-    showWarning: false,
-    blockClass: 'sentry-block',
-    speed: 99999,
-    skipInactive: true,
-    triggerFocus: false,
-    mouseTail: false,
-  });
-  return replayerRef;
-}
-
-function extractHtml(nodeId: number, mirror: Mirror): string | null {
-  const node = mirror.getNode(nodeId);
-
+function extractHtml(node: Node): string | null {
   const html =
-    (node && 'outerHTML' in node ? (node.outerHTML as string) : node?.textContent) || '';
+    ('outerHTML' in node ? (node.outerHTML as string) : node.textContent) || '';
   // Limit document node depth to 2
   let truncated = removeNodesAtLevel(html, 2);
   // If still very long and/or removeNodesAtLevel failed, truncate
   if (truncated.length > 1500) {
     truncated = truncated.substring(0, 1500);
   }
-  return truncated ? truncated : null;
+  if (truncated) {
+    return truncated;
+  }
+  return null;
 }
 
-function removeChildLevel(max: number, collection: HTMLCollection, current: number = 0) {
-  for (let i = 0; i < collection.length; i++) {
-    const child = collection[i];
+function extractSelector(node: Node): string | null {
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : null;
+
+  if (element) {
+    return constructSelector({
+      alt: element.attributes.getNamedItem('alt')?.nodeValue ?? '',
+      aria_label: element.attributes.getNamedItem('aria-label')?.nodeValue ?? '',
+      class: element.attributes.getNamedItem('class')?.nodeValue?.split(' ') ?? [],
+      component_name:
+        element.attributes.getNamedItem('data-sentry-component')?.nodeValue ?? '',
+      id: element.id,
+      role: element.attributes.getNamedItem('role')?.nodeValue ?? '',
+      tag: element.tagName.toLowerCase(),
+      testid: element.attributes.getNamedItem('data-test-id')?.nodeValue ?? '',
+      title: element.attributes.getNamedItem('title')?.nodeValue ?? '',
+    }).selector;
+  }
+
+  return null;
+}
+
+function removeChildLevel(max: number, collection: HTMLCollection, current = 0) {
+  for (const child of collection) {
     if (child.nodeName === 'STYLE') {
       child.textContent = '/* Inline CSS */';
     }

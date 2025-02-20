@@ -14,18 +14,18 @@ from sentry.models.authprovider import AuthProvider
 from sentry.models.options.organization_option import OrganizationOption
 from sentry.models.organization import OrganizationStatus
 from sentry.models.organizationmember import OrganizationMember
-from sentry.models.useremail import UserEmail
-from sentry.services.hybrid_cloud.organization.serial import serialize_rpc_organization
-from sentry.silo import SiloMode
+from sentry.organizations.services.organization.serial import serialize_rpc_organization
+from sentry.silo.base import SiloMode
 from sentry.testutils.cases import AuthProviderTestCase
 from sentry.testutils.helpers import with_feature
 from sentry.testutils.silo import assume_test_silo_mode, control_silo_test
+from sentry.users.models.useremail import UserEmail
 from sentry.utils import json
 
 
 # TODO(dcramer): this is an integration test and repeats tests from
 # core auth_login
-@control_silo_test(stable=True)
+@control_silo_test
 class OrganizationAuthLoginTest(AuthProviderTestCase):
     @cached_property
     def organization(self):
@@ -223,7 +223,7 @@ class OrganizationAuthLoginTest(AuthProviderTestCase):
             (next, 302),
         ]
 
-    @with_feature("organizations:customer-domains")
+    @with_feature("sytem:multi-region")
     def test_org_redirects_to_next_url_customer_domain(self):
         user = self.create_user("bar@example.com")
         auth_provider = AuthProvider.objects.create(
@@ -880,9 +880,8 @@ class OrganizationAuthLoginTest(AuthProviderTestCase):
 
     @override_settings(SENTRY_SINGLE_ORGANIZATION=True)
     @with_feature({"organizations:create": False})
-    def test_basic_auth_flow_as_invited_user(self):
+    def test_basic_auth_flow_as_not_invited_user(self):
         user = self.create_user("foor@example.com")
-        self.create_member(organization=self.organization, email="foor@example.com")
 
         self.session["_next"] = reverse(
             "sentry-organization-settings", args=[self.organization.slug]
@@ -896,9 +895,8 @@ class OrganizationAuthLoginTest(AuthProviderTestCase):
         assert resp.status_code == 403
         self.assertTemplateUsed(resp, "sentry/no-organization-access.html")
 
-    def test_basic_auth_flow_as_invited_user_not_single_org_mode(self):
+    def test_basic_auth_flow_as_not_invited_user_not_single_org_mode(self):
         user = self.create_user("u2@example.com")
-        self.create_member(organization=self.organization, email="u2@example.com")
         resp = self.client.post(
             self.path, {"username": user, "password": "admin", "op": "login"}, follow=True
         )
@@ -993,7 +991,8 @@ class OrganizationAuthLoginTest(AuthProviderTestCase):
             self.path, {"username": user, "password": "admin", "op": "login"}, follow=True
         )
 
-        assert resp.redirect_chain == [("/auth/2fa/", 302)]
+        invitation_link = "/" + member.get_invite_link().split("/", 3)[-1]
+        assert resp.redirect_chain == [(invitation_link, 302)]
 
     def test_correct_redirect_as_2fa_user_invited(self):
         user = self.create_user("foor@example.com")
@@ -1012,7 +1011,8 @@ class OrganizationAuthLoginTest(AuthProviderTestCase):
             self.path, {"username": user, "password": "admin", "op": "login"}, follow=True
         )
 
-        assert resp.redirect_chain == [("/auth/2fa/", 302)]
+        invitation_link = "/" + member.get_invite_link().split("/", 3)[-1]
+        assert resp.redirect_chain == [(invitation_link, 302)]
 
     @override_settings(SENTRY_SINGLE_ORGANIZATION=True)
     @with_feature({"organizations:create": False})
@@ -1091,7 +1091,7 @@ class OrganizationAuthLoginTest(AuthProviderTestCase):
         self.assertTemplateUsed(resp, "sentry/login.html")
 
 
-@control_silo_test(stable=True)
+@control_silo_test
 class OrganizationAuthLoginNoPasswordTest(AuthProviderTestCase):
     def setUp(self):
         self.owner = self.create_user()

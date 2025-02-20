@@ -2,7 +2,7 @@ import {useEffect, useState} from 'react';
 import styled from '@emotion/styled';
 import debounce from 'lodash/debounce';
 
-import Badge from 'sentry/components/badge';
+import Badge from 'sentry/components/badge/badge';
 import {CompactSelect} from 'sentry/components/compactSelect';
 import TextOverflow from 'sentry/components/textOverflow';
 import {DEFAULT_DEBOUNCE_DURATION} from 'sentry/constants';
@@ -11,7 +11,8 @@ import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {useReleases} from 'sentry/utils/releases/releasesProvider';
 
-import {DashboardFilterKeys, DashboardFilters} from './types';
+import type {DashboardFilters} from './types';
+import {DashboardFilterKeys} from './types';
 
 type Props = {
   selectedReleases: string[];
@@ -24,6 +25,9 @@ const ALIASED_RELEASES = [
   {
     label: t('Latest Release(s)'),
     value: 'latest',
+    tooltip: t(
+      'The highest version number for Semantic Versioning or the most recent release for commit SHA.'
+    ),
   },
 ];
 

@@ -1,68 +1,39 @@
-import styled from '@emotion/styled';
-
-import {useReplayContext} from 'sentry/components/replays/replayContext';
-import {space} from 'sentry/styles/space';
 import useActiveReplayTab, {TabKey} from 'sentry/utils/replays/hooks/useActiveReplayTab';
-import A11y from 'sentry/views/replays/detail/accessibility/index';
 import Breadcrumbs from 'sentry/views/replays/detail/breadcrumbs';
 import Console from 'sentry/views/replays/detail/console';
-import DomMutations from 'sentry/views/replays/detail/domMutations';
-import DomNodesChart from 'sentry/views/replays/detail/domNodesChart';
 import ErrorList from 'sentry/views/replays/detail/errorList/index';
-import FluidHeight from 'sentry/views/replays/detail/layout/fluidHeight';
-import MemoryChart from 'sentry/views/replays/detail/memoryChart';
+import MemoryPanel from 'sentry/views/replays/detail/memoryPanel/index';
 import NetworkList from 'sentry/views/replays/detail/network';
-import PerfTable from 'sentry/views/replays/detail/perfTable/index';
 import TagPanel from 'sentry/views/replays/detail/tagPanel';
 import Trace from 'sentry/views/replays/detail/trace/index';
 
-type Props = {};
+import type {ReplayRecord} from '../../types';
 
-function FocusArea({}: Props) {
-  const {getActiveTab} = useActiveReplayTab();
-  const {replay} = useReplayContext();
+export default function FocusArea({
+  isVideoReplay,
+  replayRecord,
+}: {
+  replayRecord: ReplayRecord | undefined;
+  isVideoReplay?: boolean;
+}) {
+  const {getActiveTab} = useActiveReplayTab({isVideoReplay});
 
   switch (getActiveTab()) {
-    case TabKey.A11Y:
-      return <A11y />;
     case TabKey.NETWORK:
       return <NetworkList />;
     case TabKey.TRACE:
-      return <Trace />;
-    case TabKey.PERF:
-      return <PerfTable />;
+      return <Trace replayRecord={replayRecord} />;
     case TabKey.ERRORS:
       return <ErrorList />;
-    case TabKey.DOM:
-      return <DomMutations />;
     case TabKey.MEMORY:
-      return (
-        <MemoryTabWrapper>
-          <MemoryChart />
-          <DomNodesChart />
-        </MemoryTabWrapper>
-      );
+      return <MemoryPanel />;
     case TabKey.CONSOLE:
       return <Console />;
     case TabKey.TAGS:
       return <TagPanel />;
     case TabKey.BREADCRUMBS:
     default: {
-      return (
-        <Breadcrumbs
-          frames={replay?.getChapterFrames()}
-          startTimestampMs={replay?.getReplay()?.started_at?.getTime() || 0}
-        />
-      );
+      return <Breadcrumbs />;
     }
   }
 }
-
-const MemoryTabWrapper = styled(FluidHeight)`
-  justify-content: center;
-  gap: ${space(1)};
-  height: 100%;
-  display: flex;
-`;
-
-export default FocusArea;

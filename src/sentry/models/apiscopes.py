@@ -1,10 +1,23 @@
 from collections.abc import Sequence
-from typing import List, TypedDict
+from typing import TypedDict
 
 from django.db import models
 
 from bitfield import typed_dict_bitfield
+from sentry.conf.server import SENTRY_SCOPE_HIERARCHY_MAPPING, SENTRY_SCOPES
 from sentry.db.models import ArrayField
+
+
+def add_scope_hierarchy(curr_scopes: Sequence[str]) -> list[str]:
+    """
+    Adds missing hierarchy scopes to the list of scopes. Returns an
+    alphabetically sorted list of final scopes.
+    """
+    new_scopes = set(curr_scopes)
+    for scope in curr_scopes:
+        if scope in SENTRY_SCOPES:
+            new_scopes = new_scopes.union(SENTRY_SCOPE_HIERARCHY_MAPPING[scope])
+    return sorted(new_scopes)
 
 
 class ApiScopes(Sequence):
@@ -14,9 +27,11 @@ class ApiScopes(Sequence):
 
     event = (("event:read"), ("event:write"), ("event:admin"))
 
-    org = (("org:read"), ("org:write"), ("org:admin"))
+    org = (("org:read"), ("org:write"), ("org:integrations"), ("org:admin"))
 
-    member = (("member:read"), ("member:write"), ("member:admin"))
+    member = (("member:read"), ("member:write"), ("member:admin"), ("member:invite"))
+
+    alerts = (("alerts:read"), ("alerts:write"))
 
     def __init__(self):
         self.scopes = (
@@ -25,6 +40,7 @@ class ApiScopes(Sequence):
             + self.__class__.event
             + self.__class__.org
             + self.__class__.member
+            + self.__class__.alerts
         )
 
     def __getitem__(self, value):
@@ -65,6 +81,10 @@ class HasApiScopes(models.Model):
             "member:read": bool,
             "member:write": bool,
             "member:admin": bool,
+            "org:integrations": bool,
+            "alerts:read": bool,
+            "alerts:write": bool,
+            "member:invite": bool,
         },
     )
     assert set(ScopesDict.__annotations__) == set(ApiScopes())
@@ -73,7 +93,7 @@ class HasApiScopes(models.Model):
     # Human readable list of scopes
     scope_list = ArrayField(of=models.TextField)
 
-    def get_scopes(self) -> List[str]:
+    def get_scopes(self) -> list[str]:
         """
         Returns a list of the token's scopes in alphabetical order.
         """

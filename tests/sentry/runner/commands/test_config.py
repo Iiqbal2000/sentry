@@ -1,4 +1,4 @@
-from typing import Generator
+from collections.abc import Generator
 
 import pytest
 
@@ -14,7 +14,7 @@ class ConfigOptionsTest(CliTestCase):
     command = config
 
     @pytest.fixture(autouse=True, scope="class")
-    def register_options(self) -> Generator[None, None, None]:
+    def register_options(self) -> Generator[None]:
         options.register("readonly_option", default=10, flags=FLAG_IMMUTABLE)
         options.register("int_option", default=20, flags=FLAG_AUTOMATOR_MODIFIABLE)
         options.register("str_option", default="blabla", flags=FLAG_AUTOMATOR_MODIFIABLE)

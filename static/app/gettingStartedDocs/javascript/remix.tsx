@@ -1,284 +1,298 @@
+import {Fragment} from 'react';
+
 import ExternalLink from 'sentry/components/links/externalLink';
-import {Layout, LayoutProps} from 'sentry/components/onboarding/gettingStartedDoc/layout';
-import {ModuleProps} from 'sentry/components/onboarding/gettingStartedDoc/sdkDocumentation';
+import List from 'sentry/components/list';
+import ListItem from 'sentry/components/list/listItem';
+import {CopyDsnField} from 'sentry/components/onboarding/gettingStartedDoc/copyDsnField';
+import crashReportCallout from 'sentry/components/onboarding/gettingStartedDoc/feedback/crashReportCallout';
+import widgetCallout from 'sentry/components/onboarding/gettingStartedDoc/feedback/widgetCallout';
+import TracePropagationMessage from 'sentry/components/onboarding/gettingStartedDoc/replay/tracePropagationMessage';
 import {StepType} from 'sentry/components/onboarding/gettingStartedDoc/step';
-import {ProductSolution} from 'sentry/components/onboarding/productSelection';
+import type {
+  Docs,
+  DocsParams,
+  OnboardingConfig,
+} from 'sentry/components/onboarding/gettingStartedDoc/types';
+import {
+  getCrashReportJavaScriptInstallStep,
+  getCrashReportModalConfigDescription,
+  getCrashReportModalIntroduction,
+  getFeedbackConfigureDescription,
+  getFeedbackSDKSetupSnippet,
+} from 'sentry/components/onboarding/gettingStartedDoc/utils/feedbackOnboarding';
+import {
+  getReplayConfigureDescription,
+  getReplaySDKSetupSnippet,
+  getReplayVerifyStep,
+} from 'sentry/components/onboarding/gettingStartedDoc/utils/replayOnboarding';
+import {featureFlagOnboarding} from 'sentry/gettingStartedDocs/javascript/javascript';
 import {t, tct} from 'sentry/locale';
 
-// Configuration Start
-const replayIntegration = `
-new Sentry.Replay(),
-`;
+type Params = DocsParams;
 
-const replayOtherConfig = `
-// Session Replay
-replaysSessionSampleRate: 0.1, // This sets the sample rate at 10%. You may want to change it to 100% while in development and then sample at a lower rate in production.
-replaysOnErrorSampleRate: 1.0, // If you're not already sampling the entire session, change the sample rate to 100% when sampling sessions where errors occur.
-`;
+const getConfigStep = ({isSelfHosted, organization, projectSlug}: Params) => {
+  const urlParam = isSelfHosted ? '' : '--saas';
 
-const performanceIntegration = `
-new Sentry.BrowserTracing({
-  // Set 'tracePropagationTargets' to control for which URLs distributed tracing should be enabled
-  tracePropagationTargets: ["localhost", /^https:\\/\\/yourserver\\.io\\/api/],
-  routingInstrumentation: Sentry.remixRouterInstrumentation(
-    useEffect,
-    useLocation,
-    useMatches
-  ),
-}),
-`;
+  return [
+    {
+      description: tct(
+        'Configure your app automatically by running the [wizardLink:Sentry wizard] in the root of your project.',
+        {
+          wizardLink: (
+            <ExternalLink href="https://docs.sentry.io/platforms/javascript/guides/remix/#install" />
+          ),
+        }
+      ),
+      language: 'bash',
+      code: `npx @sentry/wizard@latest -i remix ${urlParam}  --org ${organization.slug} --project ${projectSlug}`,
+    },
+  ];
+};
 
-const performanceOtherConfig = `
-// Performance Monitoring
-tracesSampleRate: 1.0, // Capture 100% of the transactions, reduce in production!
-`;
-
-const prismaIntegration = `new Sentry.Integrations.Prisma({ client: prisma }),`;
-
-export const steps = ({
-  sentryInitContent,
-  sentryInitContentServer,
-}: {
-  sentryInitContent?: string;
-  sentryInitContentServer?: string[];
-} = {}): LayoutProps['steps'] => [
+const getInstallConfig = (params: Params) => [
   {
     type: StepType.INSTALL,
-    description: (
-      <p>
-        {tct(
-          'Add the Sentry SDK as a dependency using [codeNpm:npm] or [codeYarn:yarn]:',
-          {
-            codeYarn: <code />,
-            codeNpm: <code />,
-          }
-        )}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'bash',
-        code: [
-          {
-            label: 'npm',
-            value: 'npm',
-            language: 'bash',
-            code: 'npm install --save @sentry/remix',
-          },
-          {
-            label: 'yarn',
-            value: 'yarn',
-            language: 'bash',
-            code: 'yarn add @sentry/remix',
-          },
-        ],
-      },
-    ],
+    configurations: getConfigStep(params),
   },
-  {
-    type: StepType.CONFIGURE,
-    description: (
-      <p>
-        {tct(
-          'Import and initialize Sentry in your Remix entry points for the client ([clientFile:entry.client.tsx]):',
-          {
-            clientFile: <code />,
-          }
-        )}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'javascript',
-        code: `
-        import { useLocation, useMatches } from "@remix-run/react";
-        import * as Sentry from "@sentry/remix";
-        import { useEffect } from "react";
+];
 
-        Sentry.init({
-          ${sentryInitContent}
-        });
-        `,
-      },
-      {
-        language: 'javascript',
-        description: (
+const onboarding: OnboardingConfig = {
+  introduction: () => (
+    <p>
+      {tct(
+        "Sentry's integration with [remixLink:Remix] supports Remix 1.0.0 and above.",
+        {
+          remixLink: <ExternalLink href="https://remix.run/" />,
+        }
+      )}
+    </p>
+  ),
+  install: (params: Params) => [
+    {
+      title: t('Automatic Configuration (Recommended)'),
+      configurations: getConfigStep(params),
+    },
+  ],
+  configure: params => [
+    {
+      collapsible: true,
+      title: t('Manual Configuration'),
+      description: tct(
+        'Alternatively, you can also [manualSetupLink:set up the SDK manually], by following these steps:',
+        {
+          manualSetupLink: (
+            <ExternalLink href="https://docs.sentry.io/platforms/javascript/guides/remix/manual-setup/" />
+          ),
+        }
+      ),
+      configurations: [
+        {
+          description: (
+            <List symbol="bullet">
+              <ListItem>
+                {tct(
+                  "Create two files in the root directory of your project, [code:entry.client.tsx] and [code:entry.server.tsx] (if they don't already exist).",
+                  {
+                    code: <code />,
+                  }
+                )}
+              </ListItem>
+              <ListItem>
+                {tct(
+                  'Add the default [sentryInitCode:Sentry.init] call to both, client and server entry files.',
+                  {
+                    sentryInitCode: <code />,
+                  }
+                )}
+              </ListItem>
+              <ListItem>
+                {tct(
+                  'Create a [code:.sentryclirc] with an auth token to upload source maps (this file is automatically added to your [code:.gitignore]).',
+                  {
+                    code: <code />,
+                  }
+                )}
+              </ListItem>
+              <ListItem>
+                {tct(
+                  'Adjust your [code:build] script in your [code:package.json] to automatically upload source maps to Sentry when you build your application.',
+                  {
+                    code: <code />,
+                  }
+                )}
+              </ListItem>
+            </List>
+          ),
+        },
+        {
+          description: <CopyDsnField params={params} />,
+        },
+      ],
+    },
+  ],
+  verify: () => [
+    {
+      type: StepType.VERIFY,
+      description: (
+        <Fragment>
           <p>
             {tct(
-              `Initialize Sentry in your entry point for the server ([serverFile:entry.server.tsx]) to capture exceptions and get performance metrics for your [action] and [loader] functions. You can also initialize Sentry's database integrations, such as Prisma, to get spans for your database calls:`,
+              'Start your development server and visit [code:/sentry-example-page] if you have set it up. Click the button to trigger a test error.',
               {
-                action: (
-                  <ExternalLink href="https://remix.run/docs/en/v1/api/conventions#action" />
-                ),
-                loader: (
-                  <ExternalLink href="https://remix.run/docs/en/1.18.1/api/conventions#loader" />
-                ),
-                serverFile: <code />,
+                code: <code />,
               }
             )}
           </p>
-        ),
-        code: `
-        ${
-          (sentryInitContentServer ?? []).length > 1
-            ? `import { prisma } from "~/db.server";`
-            : ''
+          <p>
+            {t(
+              'Or, trigger a sample error by calling a function that does not exist somewhere in your application.'
+            )}
+          </p>
+        </Fragment>
+      ),
+      configurations: [
+        {
+          code: [
+            {
+              label: 'Javascript',
+              value: 'javascript',
+              language: 'javascript',
+              code: `myUndefinedFunction();`,
+            },
+          ],
+        },
+      ],
+      additionalInfo: t(
+        'If you see an issue in your Sentry dashboard, you have successfully set up Sentry.'
+      ),
+    },
+  ],
+  nextSteps: () => [],
+};
+
+const replayOnboarding: OnboardingConfig = {
+  install: (params: Params) => getInstallConfig(params),
+  configure: (params: Params) => [
+    {
+      type: StepType.CONFIGURE,
+      description: getReplayConfigureDescription({
+        link: 'https://docs.sentry.io/platforms/javascript/guides/remix/session-replay/',
+      }),
+      configurations: [
+        {
+          code: [
+            {
+              label: 'entry.client.tsx',
+              value: 'javascript',
+              language: 'javascript',
+              code: getReplaySDKSetupSnippet({
+                importStatement: `import * as Sentry from "@sentry/remix";`,
+                dsn: params.dsn.public,
+                mask: params.replayOptions?.mask,
+                block: params.replayOptions?.block,
+              }),
+            },
+          ],
+        },
+      ],
+      additionalInfo: (
+        <Fragment>
+          <TracePropagationMessage />
+          {tct(
+            'Note: The Replay integration only needs to be added to your [code:entry.client.tsx] file. It will not run if it is added into [code:sentry.server.config.js].',
+            {code: <code />}
+          )}
+        </Fragment>
+      ),
+    },
+  ],
+  verify: getReplayVerifyStep(),
+  nextSteps: () => [],
+};
+
+const feedbackOnboarding: OnboardingConfig = {
+  install: (params: Params) => [
+    {
+      type: StepType.INSTALL,
+      description: tct(
+        'For the User Feedback integration to work, you must have the Sentry browser SDK package, or an equivalent framework SDK (e.g. [code:@sentry/remix]) installed, minimum version 7.85.0.',
+        {
+          code: <code />,
         }
+      ),
+      configurations: getConfigStep(params),
+    },
+  ],
+  configure: (params: Params) => [
+    {
+      type: StepType.CONFIGURE,
+      description: getFeedbackConfigureDescription({
+        linkConfig:
+          'https://docs.sentry.io/platforms/javascript/guides/remix/user-feedback/configuration/',
+        linkButton:
+          'https://docs.sentry.io/platforms/javascript/guides/remix/user-feedback/configuration/#bring-your-own-button',
+      }),
+      configurations: [
+        {
+          code: [
+            {
+              label: 'entry.client.tsx',
+              value: 'javascript',
+              language: 'javascript',
+              code: getFeedbackSDKSetupSnippet({
+                importStatement: `import * as Sentry from "@sentry/remix";`,
+                dsn: params.dsn.public,
+                feedbackOptions: params.feedbackOptions,
+              }),
+            },
+          ],
+        },
+      ],
+      additionalInfo: (
+        <Fragment>
+          <p>
+            {tct(
+              'Note: The Feedback integration only needs to be added to your [code:entry.client.tsx] file.',
+              {code: <code />}
+            )}
+          </p>
 
-        import * as Sentry from "@sentry/remix";
+          {crashReportCallout({
+            link: 'https://docs.sentry.io/platforms/javascript/guides/remix/user-feedback/#user-feedback-api',
+          })}
+        </Fragment>
+      ),
+    },
+  ],
+  verify: () => [],
+  nextSteps: () => [],
+};
 
-        Sentry.init({
-          ${sentryInitContentServer?.join('\n')}
-        });
-        `,
-      },
-      {
-        description: t(
-          'Lastly, wrap your Remix root with "withSentry" to catch React component errors and to get parameterized router transactions:'
-        ),
-        language: 'javascript',
-        code: `
-import {
-  Links,
-  LiveReload,
-  Meta,
-  Outlet,
-  Scripts,
-  ScrollRestoration,
-} from "@remix-run/react";
+const crashReportOnboarding: OnboardingConfig = {
+  introduction: () => getCrashReportModalIntroduction(),
+  install: (params: Params) => getCrashReportJavaScriptInstallStep(params),
+  configure: () => [
+    {
+      type: StepType.CONFIGURE,
+      description: getCrashReportModalConfigDescription({
+        link: 'https://docs.sentry.io/platforms/javascript/guides/remix/user-feedback/configuration/#crash-report-modal',
+      }),
+      additionalInfo: widgetCallout({
+        link: 'https://docs.sentry.io/platforms/javascript/guides/remix/user-feedback/#user-feedback-widget',
+      }),
+    },
+  ],
+  verify: () => [],
+  nextSteps: () => [],
+};
 
-import { withSentry } from "@sentry/remix";
+const docs: Docs = {
+  onboarding,
+  feedbackOnboardingNpm: feedbackOnboarding,
+  replayOnboarding,
 
-function App() {
-  return (
-    <html>
-      <head>
-        <Meta />
-        <Links />
-      </head>
-      <body>
-        <Outlet />
-        <ScrollRestoration />
-        <Scripts />
-        <LiveReload />
-      </body>
-    </html>
-  );
-}
+  crashReportOnboarding,
+  featureFlagOnboarding,
+};
 
-export default withSentry(App);
-        `,
-      },
-    ],
-  },
-  {
-    type: StepType.VERIFY,
-    description: t(
-      "This snippet contains an intentional error and can be used as a test to make sure that everything's working as expected."
-    ),
-    configurations: [
-      {
-        language: 'jsx',
-        code: `
-<button type="button" onClick={() => { throw new Error("Sentry Frontend Error") }}>
-  Throw Test Error
-</button>
-        `,
-      },
-    ],
-  },
-];
-
-export const nextSteps = [
-  {
-    id: 'source-maps',
-    name: t('Source Maps'),
-    description: t('Learn how to enable readable stack traces in your Sentry errors.'),
-    link: 'https://docs.sentry.io/platforms/javascript/guides/remix/sourcemaps/',
-  },
-  {
-    id: 'performance-monitoring',
-    name: t('Performance Monitoring'),
-    description: t(
-      'Track down transactions to connect the dots between 10-second page loads and poor-performing API calls or slow database queries.'
-    ),
-    link: 'https://docs.sentry.io/platforms/javascript/guides/remix/performance/',
-  },
-  {
-    id: 'session-replay',
-    name: t('Session Replay'),
-    description: t(
-      'Get to the root cause of an error or latency issue faster by seeing all the technical details related to that issue in one visual replay on your web application.'
-    ),
-    link: 'https://docs.sentry.io/platforms/javascript/guides/remix/session-replay/',
-  },
-];
-// Configuration End
-
-export function GettingStartedWithRemix({
-  dsn,
-  activeProductSelection = [],
-  ...props
-}: ModuleProps) {
-  const integrations: string[] = [];
-  const otherConfigs: string[] = [];
-
-  const serverIntegrations: string[] = [];
-  const otherConfigsServer: string[] = [];
-
-  let nextStepDocs = [...nextSteps];
-
-  if (activeProductSelection.includes(ProductSolution.PERFORMANCE_MONITORING)) {
-    integrations.push(performanceIntegration.trim());
-    otherConfigs.push(performanceOtherConfig.trim());
-    serverIntegrations.push(prismaIntegration.trim());
-    otherConfigsServer.push(performanceOtherConfig.trim());
-    nextStepDocs = nextStepDocs.filter(
-      step => step.id !== ProductSolution.PERFORMANCE_MONITORING
-    );
-  }
-
-  if (activeProductSelection.includes(ProductSolution.SESSION_REPLAY)) {
-    integrations.push(replayIntegration.trim());
-    otherConfigs.push(replayOtherConfig.trim());
-    nextStepDocs = nextStepDocs.filter(
-      step => step.id !== ProductSolution.SESSION_REPLAY
-    );
-  }
-
-  let sentryInitContent: string[] = [`dsn: "${dsn}",`];
-  let sentryInitContentServer: string[] = [`dsn: "${dsn}",`];
-
-  if (integrations.length > 0) {
-    sentryInitContent = sentryInitContent.concat('integrations: [', integrations, '],');
-  }
-
-  if (serverIntegrations.length) {
-    sentryInitContentServer = sentryInitContentServer.concat(
-      'integrations: [',
-      serverIntegrations,
-      '],'
-    );
-  }
-
-  if (otherConfigs.length > 0) {
-    sentryInitContent = sentryInitContent.concat(otherConfigs);
-  }
-
-  if (otherConfigsServer.length) {
-    sentryInitContentServer = sentryInitContentServer.concat(otherConfigsServer);
-  }
-
-  return (
-    <Layout
-      steps={steps({
-        sentryInitContent: sentryInitContent.join('\n'),
-        sentryInitContentServer,
-      })}
-      nextSteps={nextStepDocs}
-      {...props}
-    />
-  );
-}
-
-export default GettingStartedWithRemix;
+export default docs;

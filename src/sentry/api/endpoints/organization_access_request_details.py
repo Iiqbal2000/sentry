@@ -1,16 +1,22 @@
+import logging
+
 from django.db import IntegrityError, router, transaction
 from rest_framework import serializers
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry import audit_log
+from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.organization import OrganizationEndpoint, OrganizationPermission
 from sentry.api.exceptions import ResourceDoesNotExist
 from sentry.api.serializers import serialize
 from sentry.models.organizationaccessrequest import OrganizationAccessRequest
+from sentry.models.organizationmember import OrganizationMember
 from sentry.models.organizationmemberteam import OrganizationMemberTeam
+
+logger = logging.getLogger(__name__)
 
 
 class AccessRequestPermission(OrganizationPermission):
@@ -46,10 +52,11 @@ class AccessRequestSerializer(serializers.Serializer):
 @region_silo_endpoint
 class OrganizationAccessRequestDetailsEndpoint(OrganizationEndpoint):
     publish_status = {
-        "GET": ApiPublishStatus.UNKNOWN,
-        "PUT": ApiPublishStatus.UNKNOWN,
+        "GET": ApiPublishStatus.PRIVATE,
+        "PUT": ApiPublishStatus.PRIVATE,
     }
-    permission_classes = [AccessRequestPermission]
+    owner = ApiOwner.ENTERPRISE
+    permission_classes = (AccessRequestPermission,)
 
     # TODO(dcramer): this should go onto AccessRequestPermission
     def _can_access(self, request: Request, access_request):
@@ -69,8 +76,8 @@ class OrganizationAccessRequestDetailsEndpoint(OrganizationEndpoint):
 
     def get(self, request: Request, organization) -> Response:
         """
-        Get list of requests to join org/team
-
+        Get a list of requests to join org/team.
+        If any requests are redundant (user already joined the team), they are not returned.
         """
         if request.access.has_scope("org:write"):
             access_requests = list(
@@ -78,7 +85,7 @@ class OrganizationAccessRequestDetailsEndpoint(OrganizationEndpoint):
                     team__organization=organization,
                     member__user_is_active=True,
                     member__user_id__isnull=False,
-                ).select_related("team")
+                ).select_related("team", "member")
             )
 
         elif request.access.has_scope("team:write") and request.access.team_ids_with_membership:
@@ -87,19 +94,27 @@ class OrganizationAccessRequestDetailsEndpoint(OrganizationEndpoint):
                     member__user_is_active=True,
                     member__user_id__isnull=False,
                     team__id__in=request.access.team_ids_with_membership,
-                ).select_related("team")
+                ).select_related("team", "member")
             )
         else:
             # Return empty response if user does not have access
             return Response([])
 
-        return Response(serialize(access_requests, request.user))
+        teams_by_user = OrganizationMember.objects.get_teams_by_user(organization=organization)
+
+        # We omit any requests which are now redundant (i.e. the user joined that team some other way)
+        valid_access_requests = [
+            access_request
+            for access_request in access_requests
+            if access_request.member.user_id is not None
+            and access_request.team_id not in teams_by_user[access_request.member.user_id]
+        ]
+
+        return Response(serialize(valid_access_requests, request.user))
 
     def put(self, request: Request, organization, request_id) -> Response:
         """
         Approve or deny a request
-
-        Approve or deny a request.
 
             {method} {path}
 

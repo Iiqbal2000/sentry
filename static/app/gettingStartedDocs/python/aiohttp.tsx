@@ -1,117 +1,137 @@
 import ExternalLink from 'sentry/components/links/externalLink';
-import {Layout, LayoutProps} from 'sentry/components/onboarding/gettingStartedDoc/layout';
-import {ModuleProps} from 'sentry/components/onboarding/gettingStartedDoc/sdkDocumentation';
 import {StepType} from 'sentry/components/onboarding/gettingStartedDoc/step';
-import {ProductSolution} from 'sentry/components/onboarding/productSelection';
+import {
+  type Docs,
+  DocsPageLocation,
+  type DocsParams,
+  type OnboardingConfig,
+} from 'sentry/components/onboarding/gettingStartedDoc/types';
+import {
+  feedbackOnboardingJsLoader,
+  replayOnboardingJsLoader,
+} from 'sentry/gettingStartedDocs/javascript/jsLoader/jsLoader';
+import {
+  AlternativeConfiguration,
+  crashReportOnboardingPython,
+  featureFlagOnboarding,
+} from 'sentry/gettingStartedDocs/python/python';
 import {t, tct} from 'sentry/locale';
 
-// Configuration Start
-const performanceConfiguration = `    # Set traces_sample_rate to 1.0 to capture 100%
-    # of transactions for performance monitoring.
-    traces_sample_rate=1.0,`;
+type Params = DocsParams;
 
-const profilingConfiguration = `    # Set profiles_sample_rate to 1.0 to profile 100%
-    # of sampled transactions.
-    # We recommend adjusting this value in production.
-    profiles_sample_rate=1.0,`;
+const getInstallSnippet = () => `pip install --upgrade sentry-sdk`;
 
-const introduction = (
-  <p>
-    {tct(
-      'The AIOHTTP integration adds support for the [link:AIOHTTP-Server Web Framework].',
-      {
-        link: <ExternalLink href="https://docs.aiohttp.org/en/stable/web.html" />,
-      }
-    )}
-  </p>
-);
-
-export const steps = ({
-  sentryInitContent,
-}: {
-  sentryInitContent: string;
-}): LayoutProps['steps'] => [
-  {
-    type: StepType.INSTALL,
-    description: (
-      <p>
-        {tct('Install [code:sentry-sdk] from PyPI:', {
-          code: <code />,
-        })}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'bash',
-        code: '$ pip install --upgrade sentry-sdk',
-      },
-      {
-        description: (
-          <p>
-            {tct(
-              "If you're on Python 3.6, you also need the [code:aiocontextvars] package:",
-              {
-                code: <code />,
-              }
-            )}
-          </p>
-        ),
-        language: 'bash',
-        code: '$ pip install --upgrade aiocontextvars',
-      },
-    ],
-  },
-  {
-    type: StepType.CONFIGURE,
-    description: (
-      <p>
-        {tct(
-          'If you have the [code:aiohttp] package in your dependencies, the AIOHTTO integration will be enabled automatically. There is nothing to do for you except initializing the Sentry SDK before initializing your application:',
-          {
-            code: <code />,
-          }
-        )}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'python',
-        code: `
+const getSdkSetupSnippet = (params: Params) => `
 from aiohttp import web
 
 import sentry_sdk
 
 sentry_sdk.init(
-${sentryInitContent}
+    dsn="${params.dsn.public}",
+    # Add data like request headers and IP for users,
+    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+    send_default_pii=True,${
+      params.isPerformanceSelected
+        ? `
+    # Set traces_sample_rate to 1.0 to capture 100%
+    # of transactions for tracing.
+    traces_sample_rate=1.0,`
+        : ''
+    }${
+      params.isProfilingSelected &&
+      params.profilingOptions?.defaultProfilingMode !== 'continuous'
+        ? `
+    # Set profiles_sample_rate to 1.0 to profile 100%
+    # of sampled transactions.
+    # We recommend adjusting this value in production.
+    profiles_sample_rate=1.0,`
+        : params.isProfilingSelected &&
+            params.profilingOptions?.defaultProfilingMode === 'continuous'
+          ? `
+    _experiments={
+        # Set continuous_profiling_auto_start to True
+        # to automatically start the profiler when
+        # possible.
+        "continuous_profiling_auto_start": True,
+    },`
+          : ''
+    }
 )
+`;
 
-async def hello(request):
-    return web.Response(text="Hello, world")
-
-app = web.Application()
-app.add_routes([web.get('/', hello)])
-
-web.run_app(app)
-      `,
-      },
-    ],
-  },
-  {
-    type: StepType.VERIFY,
-    description: t(
-      'You can easily verify your Sentry installation by creating a route that triggers an error:'
-    ),
-    configurations: [
+const onboarding: OnboardingConfig = {
+  introduction: () =>
+    tct(
+      'The AIOHTTP integration adds support for the [link:AIOHTTP-Server Web Framework].',
       {
-        language: 'python',
+        link: <ExternalLink href="https://docs.aiohttp.org/en/stable/web.html" />,
+      }
+    ),
+  install: (params: Params) => [
+    {
+      type: StepType.INSTALL,
+      description: tct('Install [code:sentry-sdk] from PyPI:', {
+        code: <code />,
+      }),
+      configurations: [
+        {
+          description:
+            params.docsLocation === DocsPageLocation.PROFILING_PAGE
+              ? tct(
+                  'You need a minimum version [code:1.18.0] of the [code:sentry-python] SDK for the profiling feature.',
+                  {
+                    code: <code />,
+                  }
+                )
+              : undefined,
+          language: 'bash',
+          code: getInstallSnippet(),
+        },
+        {
+          description: tct(
+            "If you're on Python 3.6, you also need the [code:aiocontextvars] package:",
+            {
+              code: <code />,
+            }
+          ),
+          language: 'bash',
+          code: 'pip install --upgrade aiocontextvars',
+        },
+      ],
+    },
+  ],
+  configure: (params: Params) => [
+    {
+      type: StepType.CONFIGURE,
+      description: tct(
+        'If you have the [code:aiohttp] package in your dependencies, the AIOHTTO integration will be enabled automatically. There is nothing to do for you except initializing the Sentry SDK before initializing your application:',
+        {
+          code: <code />,
+        }
+      ),
+      configurations: [
+        {
+          language: 'python',
+          code: getSdkSetupSnippet(params),
+        },
+      ],
+      additionalInfo: params.isProfilingSelected &&
+        params.profilingOptions?.defaultProfilingMode === 'continuous' && (
+          <AlternativeConfiguration />
+        ),
+    },
+  ],
+  verify: () => [
+    {
+      type: StepType.VERIFY,
+      description: t(
+        'You can easily verify your Sentry installation by creating a route that triggers an error:'
+      ),
+      configurations: [
+        {
+          language: 'python',
 
-        code: `
-from aiohttp import web
-
-sentry_sdk.init(
-${sentryInitContent}
-)
-
+          code: `
 async def hello(request):
     1/0  # raises an error
     return web.Response(text="Hello, world")
@@ -119,59 +139,40 @@ async def hello(request):
 app = web.Application()
 app.add_routes([web.get('/', hello)])
 
-web.run_app(app)`,
-      },
-    ],
-    additionalInfo: (
-      <span>
-        <p>
-          {tct(
-            `When you point your browser to [localhostLInk:http://localhost:8080/] a transaction in the Performance section of Sentry will be created.`,
-            {
-              localhostLInk: <ExternalLink href="http://localhost:8080/" />,
-            }
-          )}
-        </p>
-        <p>
-          {t(
-            'Additionally, an error event will be sent to Sentry and will be connected to the transaction.'
-          )}
-        </p>
-        <p>{t('It takes a couple of moments for the data to appear in Sentry.')}</p>
-      </span>
-    ),
-  },
-];
-// Configuration End
+web.run_app(app)
+`,
+        },
+      ],
+      additionalInfo: (
+        <span>
+          <p>
+            {tct(
+              `When you point your browser to [localhostLInk:http://localhost:8080/] a transaction in the Performance section of Sentry will be created.`,
+              {
+                localhostLInk: <ExternalLink href="http://localhost:8080/" />,
+              }
+            )}
+          </p>
+          <p>
+            {t(
+              'Additionally, an error event will be sent to Sentry and will be connected to the transaction.'
+            )}
+          </p>
+          <p>{t('It takes a couple of moments for the data to appear in Sentry.')}</p>
+        </span>
+      ),
+    },
+  ],
+  nextSteps: () => [],
+};
 
-export function GettingStartedWithAIOHTTP({
-  dsn,
-  activeProductSelection = [],
-  ...props
-}: ModuleProps) {
-  const otherConfigs: string[] = [];
+const docs: Docs = {
+  onboarding,
+  replayOnboardingJsLoader,
 
-  let sentryInitContent: string[] = [`    dsn="${dsn}",`];
+  crashReportOnboarding: crashReportOnboardingPython,
+  featureFlagOnboarding,
+  feedbackOnboardingJsLoader,
+};
 
-  if (activeProductSelection.includes(ProductSolution.PERFORMANCE_MONITORING)) {
-    otherConfigs.push(performanceConfiguration);
-  }
-
-  if (activeProductSelection.includes(ProductSolution.PROFILING)) {
-    otherConfigs.push(profilingConfiguration);
-  }
-
-  sentryInitContent = sentryInitContent.concat(otherConfigs);
-
-  return (
-    <Layout
-      introduction={introduction}
-      steps={steps({
-        sentryInitContent: sentryInitContent.join('\n'),
-      })}
-      {...props}
-    />
-  );
-}
-
-export default GettingStartedWithAIOHTTP;
+export default docs;

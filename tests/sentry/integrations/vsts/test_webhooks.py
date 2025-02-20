@@ -11,21 +11,20 @@ from fixtures.vsts import (
     WORK_ITEM_UPDATED,
     WORK_ITEM_UPDATED_STATUS,
 )
+from sentry.integrations.models.external_issue import ExternalIssue
+from sentry.integrations.services.integration import RpcIntegration
 from sentry.integrations.vsts.integration import VstsIntegration
 from sentry.models.activity import Activity
 from sentry.models.group import Group, GroupStatus
 from sentry.models.grouplink import GroupLink
-from sentry.models.identity import Identity, IdentityProvider
-from sentry.models.integrations.external_issue import ExternalIssue
-from sentry.models.integrations.integration import Integration
-from sentry.services.hybrid_cloud.integration import RpcIntegration
-from sentry.silo import SiloMode
+from sentry.silo.base import SiloMode
+from sentry.testutils.asserts import assert_failure_metric, assert_success_metric
 from sentry.testutils.cases import APITestCase
-from sentry.testutils.silo import assume_test_silo_mode, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode
+from sentry.users.models.identity import Identity
 from sentry.utils.http import absolute_uri
 
 
-@region_silo_test(stable=True)
 class VstsWebhookWorkItemTest(APITestCase):
     def setUp(self):
         self.access_token = "1234567890"
@@ -33,7 +32,7 @@ class VstsWebhookWorkItemTest(APITestCase):
         self.instance = "https://instance.visualstudio.com/"
         self.shared_secret = "1234567890"
         with assume_test_silo_mode(SiloMode.CONTROL):
-            self.model = Integration.objects.create(
+            self.model = self.create_provider_integration(
                 provider="vsts",
                 external_id=self.account_id,
                 name="vsts_name",
@@ -42,7 +41,7 @@ class VstsWebhookWorkItemTest(APITestCase):
                     "subscription": {"id": 1234, "secret": self.shared_secret},
                 },
             )
-            self.identity_provider = IdentityProvider.objects.create(type="vsts")
+            self.identity_provider = self.create_identity_provider(type="vsts")
             self.identity = Identity.objects.create(
                 idp=self.identity_provider,
                 user=self.user,
@@ -56,6 +55,7 @@ class VstsWebhookWorkItemTest(APITestCase):
             self.org_integration = self.model.add_organization(
                 self.organization, self.user, self.identity.id
             )
+            assert self.org_integration is not None
             self.org_integration.config = {
                 "sync_status_reverse": True,
                 "sync_status_forward": True,
@@ -95,7 +95,8 @@ class VstsWebhookWorkItemTest(APITestCase):
         return work_item
 
     @responses.activate
-    def test_workitem_change_assignee(self):
+    @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def test_workitem_change_assignee(self, mock_record):
         work_item_id = 31
 
         external_issue = ExternalIssue.objects.create(
@@ -117,6 +118,24 @@ class VstsWebhookWorkItemTest(APITestCase):
             assert args["email"] == "lauryn@sentry.io"
             assert args["external_issue_key"] == work_item_id
             assert args["assign"] is True
+
+        assert_success_metric(mock_record)  # multiple success metrics being recorded
+
+    @patch("sentry.integrations.vsts.webhooks.handle_updated_workitem")
+    @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def test_workitem_change_assignee_error_metric(self, mock_record, mock_handle):
+        error = Exception("oops")
+        mock_handle.side_effect = error
+
+        resp = self.client.post(
+            absolute_uri("/extensions/vsts/issue-updated/"),
+            data=WORK_ITEM_UPDATED,
+            HTTP_SHARED_SECRET=self.shared_secret,
+        )
+
+        assert resp.status_code == 500
+
+        assert_failure_metric(mock_record, error)
 
     @responses.activate
     def test_workitem_unassign(self):
@@ -142,7 +161,8 @@ class VstsWebhookWorkItemTest(APITestCase):
             assert args["assign"] is False
 
     @responses.activate
-    def test_inbound_status_sync_resolve(self):
+    @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def test_inbound_status_sync_resolve(self, mock_record):
 
         header_validation = []
         if SiloMode.get_current_mode() != SiloMode.REGION:
@@ -189,6 +209,27 @@ class VstsWebhookWorkItemTest(APITestCase):
             len(Group.objects.filter(id__in=group_ids, status=GroupStatus.RESOLVED)) == num_groups
         )
         assert len(Activity.objects.filter(group_id__in=group_ids)) == num_groups
+
+        assert_success_metric(mock_record)  # multiple success metrics being recorded
+
+    @patch("sentry.integrations.vsts.webhooks.handle_updated_workitem")
+    @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def test_inbound_status_sync_error_metric(self, mock_record, mock_handle):
+        error = Exception("oops")
+        mock_handle.side_effect = error
+
+        # Change so that state is changing from unresolved to resolved
+        work_item = self.set_workitem_state("Active", "Resolved")
+
+        with self.feature("organizations:integrations-issue-sync"), self.tasks():
+            resp = self.client.post(
+                absolute_uri("/extensions/vsts/issue-updated/"),
+                data=work_item,
+                HTTP_SHARED_SECRET=self.shared_secret,
+            )
+        assert resp.status_code == 500
+
+        assert_failure_metric(mock_record, error)  # multiple success metrics being recorded
 
     @responses.activate
     def test_inbound_status_sync_unresolve(self):

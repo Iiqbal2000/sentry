@@ -1,16 +1,19 @@
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 import isEqual from 'lodash/isEqual';
 
-import Alert from 'sentry/components/alert';
-import {Button} from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
+import {Alert} from 'sentry/components/core/alert';
 import Form from 'sentry/components/deprecatedforms/form';
 import FormState from 'sentry/components/forms/state';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {t, tct} from 'sentry/locale';
 import PluginComponentBase from 'sentry/plugins/pluginComponentBase';
-import {Organization, Plugin, Project} from 'sentry/types';
-import {parseRepo} from 'sentry/utils';
-import {IntegrationAnalyticsKey} from 'sentry/utils/analytics/integrations';
+import type {Plugin} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type {IntegrationAnalyticsKey} from 'sentry/utils/analytics/integrations';
+import {parseRepo} from 'sentry/utils/git/parseRepo';
 import {trackIntegrationAnalytics} from 'sentry/utils/integrationUtil';
 
 type Props = {
@@ -94,11 +97,13 @@ class PluginSettings<
     this.api.request(this.getPluginEndpoint(), {
       data: parsedFormData,
       method: 'PUT',
-      success: this.onSaveSuccess.bind(this, data => {
+      success: this.onSaveSuccess.bind(this, (data: any) => {
         const formData = {};
         const initialData = {};
-        data.config.forEach(field => {
+        data.config.forEach((field: any) => {
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           formData[field.name] = field.value || field.defaultValue;
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           initialData[field.name] = field.value;
         });
         this.setState({
@@ -113,9 +118,9 @@ class PluginSettings<
           this.trackPluginEvent('integrations.installation_complete');
         }
       }),
-      error: this.onSaveError.bind(this, error => {
+      error: this.onSaveError.bind(this, (error: any) => {
         this.setState({
-          errors: (error.responseJSON || {}).errors || {},
+          errors: error.responseJSON?.errors || {},
         });
       }),
       complete: this.onSaveComplete,
@@ -138,7 +143,9 @@ class PluginSettings<
         const formData = {};
         const initialData = {};
         data.config.forEach((field: BackendField) => {
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           formData[field.name] = field.value || field.defaultValue;
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           initialData[field.name] = field.value;
           // for simplicity sake, we will consider a plugin was configured if we have any value that is stored in the DB
           wasConfiguredOnPageLoad = wasConfiguredOnPageLoad || !!field.value;
@@ -176,21 +183,28 @@ class PluginSettings<
       }
       return (
         <div className="m-b-1">
-          <Alert type="warning">{data.config_error}</Alert>
-          <Button priority="primary" href={authUrl}>
+          <Alert.Container>
+            <Alert type="warning">{data.config_error}</Alert>
+          </Alert.Container>
+          <LinkButton priority="primary" href={authUrl}>
             {t('Associate Identity')}
-          </Button>
+          </LinkButton>
         </div>
       );
     }
 
     if (this.state.state === FormState.ERROR && !this.state.fieldList) {
       return (
-        <Alert type="error">
-          {tct('An unknown error occurred. Need help with this? [link:Contact support]', {
-            link: <a href="https://sentry.io/support/" />,
-          })}
-        </Alert>
+        <Alert.Container>
+          <Alert type="error">
+            {tct(
+              'An unknown error occurred. Need help with this? [link:Contact support]',
+              {
+                link: <a href="https://sentry.io/support/" />,
+              }
+            )}
+          </Alert>
+        </Alert.Container>
       );
     }
 
@@ -201,7 +215,9 @@ class PluginSettings<
     }
     return (
       <Form
-        css={{width: '100%'}}
+        css={css`
+          width: 100%;
+        `}
         onSubmit={this.onSubmit}
         submitDisabled={isSaving || !hasChanges}
       >

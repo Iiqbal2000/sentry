@@ -1,25 +1,34 @@
 import {Component, useContext} from 'react';
 import {useQuery} from '@tanstack/react-query';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {EventQuery} from 'sentry/actionCreators/events';
-import {Client, ResponseMeta} from 'sentry/api';
+import type {EventQuery} from 'sentry/actionCreators/events';
+import type {ResponseMeta} from 'sentry/api';
+import {Client} from 'sentry/api';
 import {t} from 'sentry/locale';
-import EventView, {
-  ImmutableEventView,
-  isAPIPayloadSimilar,
-  LocationQuery,
-} from 'sentry/utils/discover/eventView';
-import {QueryBatching} from 'sentry/utils/performance/contexts/genericQueryBatcher';
+import type {ImmutableEventView, LocationQuery} from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
+import {isAPIPayloadSimilar} from 'sentry/utils/discover/eventView';
+import type {QueryBatching} from 'sentry/utils/performance/contexts/genericQueryBatcher';
 import {PerformanceEventViewContext} from 'sentry/utils/performance/contexts/performanceEventViewContext';
+import type {UseQueryOptions} from 'sentry/utils/queryClient';
 
 import useApi from '../useApi';
 import useOrganization from '../useOrganization';
 
-export class QueryError {
+export interface DiscoverQueryExtras {
+  useOnDemandMetrics?: boolean;
+}
+
+interface _DiscoverQueryExtras {
+  queryExtras?: DiscoverQueryExtras;
+}
+export class QueryError extends Error {
   message: string;
   private originalError: any; // For debugging in case parseError picks a value that doesn't make sense.
   constructor(errorMessage: string, originalError?: any) {
+    super(errorMessage);
+
     this.message = errorMessage;
     this.originalError = originalError;
   }
@@ -77,7 +86,10 @@ type BaseDiscoverQueryProps = {
    * passed, but cursor will be ignored.
    */
   noPagination?: boolean;
-  options?: Omit<Parameters<typeof useQuery>[2], 'initialData'>;
+  options?: Omit<
+    UseQueryOptions<[any, string | undefined, ResponseMeta<any> | undefined], QueryError>,
+    'queryKey' | 'queryFn'
+  >;
   /**
    * A container for query batching data and functions.
    */
@@ -95,6 +107,11 @@ type BaseDiscoverQueryProps = {
    * A callback to set an error so that the error can be rendered in parent components
    */
   setError?: (errObject: QueryError | undefined) => void;
+  /**
+   * A flag to skip aborting the request when api.clear() is called, which happens
+   * frequently on component unmounts.
+   */
+  skipAbort?: boolean;
 };
 
 export type DiscoverQueryPropsWithContext = BaseDiscoverQueryProps & OptionalContextProps;
@@ -131,7 +148,7 @@ type ComponentProps<T, P> = {
    * Allows components to modify the payload before it is set.
    */
   getRequestPayload?: (props: Props<T, P>) => any;
-  options?: Omit<Parameters<typeof useQuery>[2], 'initialData'>;
+  options?: BaseDiscoverQueryProps['options'];
   /**
    * An external hook to parse errors in case there are differences for a specific api.
    */
@@ -303,10 +320,13 @@ export function GenericDiscoverQuery<T, P>(props: OuterProps<T, P>) {
     orgSlug,
     eventView,
   };
-  return <_GenericDiscoverQuery<T, P> {..._props} />;
+  // TODO(any): HoC prop types not working w/ emotion https://github.com/emotion-js/emotion/issues/3261
+  return <_GenericDiscoverQuery<T, P> {...(_props as any)} />;
 }
 
-export type DiscoverQueryRequestParams = Partial<EventQuery & LocationQuery>;
+export type DiscoverQueryRequestParams = Partial<
+  EventQuery & LocationQuery & _DiscoverQueryExtras
+>;
 
 type RetryOptions = {
   statusCodes: number[];
@@ -317,7 +337,7 @@ type RetryOptions = {
 
 const BASE_TIMEOUT = 200;
 const TIMEOUT_MULTIPLIER = 2;
-const wait = duration => new Promise(resolve => setTimeout(resolve, duration));
+const wait = (duration: any) => new Promise(resolve => setTimeout(resolve, duration));
 
 export async function doDiscoverQuery<T>(
   api: Client,
@@ -326,9 +346,10 @@ export async function doDiscoverQuery<T>(
   options: {
     queryBatching?: QueryBatching;
     retry?: RetryOptions;
+    skipAbort?: boolean;
   } = {}
 ): Promise<[T, string | undefined, ResponseMeta<T> | undefined]> {
-  const {queryBatching, retry} = options;
+  const {queryBatching, retry, skipAbort} = options;
   if (queryBatching?.batchRequest) {
     return queryBatching.batchRequest(api, url, {
       query: params,
@@ -342,7 +363,7 @@ export async function doDiscoverQuery<T>(
   const maxTries = retry?.tries ?? 1;
   let tries = 0;
   let timeout = 0;
-  let error;
+  let error: any;
 
   while (tries < maxTries && (!error || statusCodes.includes(error.status))) {
     if (timeout > 0) {
@@ -357,6 +378,7 @@ export async function doDiscoverQuery<T>(
           // marking params as any so as to not cause typescript errors
           ...(params as any),
         },
+        skipAbort,
       });
     } catch (err) {
       error = err;
@@ -405,14 +427,15 @@ export function useGenericDiscoverQuery<T, P>(props: Props<T, P>) {
   const url = `/organizations/${orgSlug}/${route}/`;
   const apiPayload = getPayload<T, P>(props);
 
-  const res = useQuery<[T, string | undefined, ResponseMeta<T> | undefined], QueryError>(
-    [route, apiPayload],
-    () =>
+  const res = useQuery<[T, string | undefined, ResponseMeta<T> | undefined], QueryError>({
+    queryKey: [route, apiPayload],
+    queryFn: ({signal: _signal}) =>
       doDiscoverQuery<T>(api, url, apiPayload, {
         queryBatching: props.queryBatching,
+        skipAbort: props.skipAbort,
       }),
-    options
-  );
+    ...options,
+  });
 
   return {
     ...res,
@@ -423,7 +446,7 @@ export function useGenericDiscoverQuery<T, P>(props: Props<T, P>) {
   };
 }
 
-const parseError = (error: any): QueryError | null => {
+export const parseError = (error: any): QueryError | null => {
   if (!error) {
     return null;
   }

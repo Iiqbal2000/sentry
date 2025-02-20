@@ -1,9 +1,9 @@
-import {Fragment, useState} from 'react';
-import type {RouteComponentProps} from 'react-router';
+import {Fragment, useMemo, useState} from 'react';
 import styled from '@emotion/styled';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
 import {hasEveryAccess} from 'sentry/components/acl/access';
+import ProjectAvatar from 'sentry/components/avatar/projectAvatar';
 import {Button} from 'sentry/components/button';
 import DropdownAutoComplete from 'sentry/components/dropdownAutoComplete';
 import DropdownButton from 'sentry/components/dropdownButton';
@@ -15,21 +15,23 @@ import Panel from 'sentry/components/panels/panel';
 import PanelBody from 'sentry/components/panels/panelBody';
 import PanelHeader from 'sentry/components/panels/panelHeader';
 import PanelItem from 'sentry/components/panels/panelItem';
+import TextOverflow from 'sentry/components/textOverflow';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconFlag, IconSubtract} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import {space} from 'sentry/styles/space';
-import type {Project, Team} from 'sentry/types';
-import {sortProjects} from 'sentry/utils';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Team} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {sortProjects} from 'sentry/utils/project/sortProjects';
 import {useApiQuery} from 'sentry/utils/queryClient';
 import useApi from 'sentry/utils/useApi';
 import useOrganization from 'sentry/utils/useOrganization';
 import ProjectListItem from 'sentry/views/settings/components/settingsProjectItem';
 import TextBlock from 'sentry/views/settings/components/text/textBlock';
-import PermissionAlert from 'sentry/views/settings/project/permissionAlert';
 
-interface TeamProjectsProps extends RouteComponentProps<{teamId: string}, {}> {
+interface TeamProjectsProps extends RouteComponentProps<{teamId: string}> {
   team: Team;
 }
 
@@ -41,7 +43,7 @@ function TeamProjects({team, location, params}: TeamProjectsProps) {
   const {
     data: linkedProjects,
     isError: linkedProjectsError,
-    isLoading: linkedProjectsLoading,
+    isPending: linkedProjectsLoading,
     getResponseHeader: linkedProjectsHeaders,
     refetch: refetchLinkedProjects,
   } = useApiQuery<Project[]>(
@@ -58,7 +60,7 @@ function TeamProjects({team, location, params}: TeamProjectsProps) {
   );
   const {
     data: unlinkedProjects = [],
-    isLoading: loadingUnlinkedProjects,
+    isPending: loadingUnlinkedProjects,
     refetch: refetchUnlinkedProjects,
   } = useApiQuery<Project[]>(
     [
@@ -91,13 +93,20 @@ function TeamProjects({team, location, params}: TeamProjectsProps) {
 
   const linkedProjectsPageLinks = linkedProjectsHeaders?.('Link');
   const hasWriteAccess = hasEveryAccess(['team:write'], {organization, team});
-  const otherProjects = unlinkedProjects
-    .filter(p => p.access.includes('project:write'))
-    .map(p => ({
-      value: p.id,
-      searchKey: p.slug,
-      label: <ProjectListElement>{p.slug}</ProjectListElement>,
-    }));
+  const otherProjects = useMemo(() => {
+    return unlinkedProjects
+      .filter(p => p.access.includes('project:write'))
+      .map(p => ({
+        value: p.id,
+        searchKey: p.slug,
+        label: (
+          <ProjectListElement>
+            <ProjectAvatar project={p} size={16} />
+            <TextOverflow>{p.slug}</TextOverflow>
+          </ProjectListElement>
+        ),
+      }));
+  }, [unlinkedProjects]);
 
   return (
     <Fragment>
@@ -106,41 +115,31 @@ function TeamProjects({team, location, params}: TeamProjectsProps) {
           'If you have Team Admin permissions for other projects, you can associate them with this team.'
         )}
       </TextBlock>
-      <PermissionAlert access={['team:write']} team={team} />
       <Panel>
         <PanelHeader hasButtons>
           <div>{t('Projects')}</div>
           <div style={{textTransform: 'none', fontWeight: 'normal'}}>
-            {!hasWriteAccess ? (
-              <DropdownButton
-                disabled
-                title={t('You do not have enough permission to associate a project.')}
-                size="xs"
-              >
-                {t('Add Project')}
-              </DropdownButton>
-            ) : (
-              <DropdownAutoComplete
-                items={otherProjects}
-                onChange={evt => setQuery(evt.target.value)}
-                onSelect={selection => {
-                  const project = unlinkedProjects.find(p => p.id === selection.value);
-                  if (project) {
-                    handleLinkProject(project, 'add');
-                  }
-                }}
-                onClose={() => setQuery('')}
-                busy={loadingUnlinkedProjects}
-                emptyMessage={t('You are not an admin for any other projects')}
-                alignMenu="right"
-              >
-                {({isOpen}) => (
-                  <DropdownButton isOpen={isOpen} size="xs">
-                    {t('Add Project')}
-                  </DropdownButton>
-                )}
-              </DropdownAutoComplete>
-            )}
+            <DropdownAutoComplete
+              items={otherProjects}
+              minWidth={300}
+              onChange={evt => setQuery(evt.target.value)}
+              onSelect={selection => {
+                const project = unlinkedProjects.find(p => p.id === selection.value);
+                if (project) {
+                  handleLinkProject(project, 'add');
+                }
+              }}
+              onClose={() => setQuery('')}
+              busy={loadingUnlinkedProjects}
+              emptyMessage={t('You are not an admin for any other projects')}
+              alignMenu="right"
+            >
+              {({isOpen}) => (
+                <DropdownButton isOpen={isOpen} size="xs">
+                  {t('Add Project')}
+                </DropdownButton>
+              )}
+            </DropdownAutoComplete>
           </div>
         </PanelHeader>
 
@@ -162,7 +161,7 @@ function TeamProjects({team, location, params}: TeamProjectsProps) {
                   <Button
                     size="sm"
                     disabled={!hasWriteAccess}
-                    icon={<IconSubtract isCircled size="xs" />}
+                    icon={<IconSubtract isCircled />}
                     aria-label={t('Remove')}
                     onClick={() => {
                       handleLinkProject(project, 'remove');
@@ -194,6 +193,9 @@ const StyledPanelItem = styled(PanelItem)`
 `;
 
 const ProjectListElement = styled('div')`
+  display: flex;
+  align-items: center;
+  gap: ${space(0.5)};
   padding: ${space(0.25)} 0;
 `;
 

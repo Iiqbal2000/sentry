@@ -47,11 +47,11 @@ describe('Tabs', () => {
     });
 
     // The first tab item is selected and its content visible
-    expect(screen.getByRole('tab', {name: TABS[0].label})).toHaveAttribute(
+    expect(screen.getByRole('tab', {name: TABS[0]!.label})).toHaveAttribute(
       'aria-selected',
       'true'
     );
-    expect(screen.getByText(TABS[0].content)).toBeInTheDocument();
+    expect(screen.getByText(TABS[0]!.content)).toBeInTheDocument();
   });
 
   it('renders tabs list when disabled', () => {
@@ -71,11 +71,11 @@ describe('Tabs', () => {
     );
 
     // The first tab item is selected and its content visible
-    expect(screen.getByRole('tab', {name: TABS[0].label})).toHaveAttribute(
+    expect(screen.getByRole('tab', {name: TABS[0]!.label})).toHaveAttribute(
       'aria-selected',
       'true'
     );
-    expect(screen.getByText(TABS[0].content)).toBeInTheDocument();
+    expect(screen.getByText(TABS[0]!.content)).toBeInTheDocument();
 
     // All tabs are marked as disabled
     TABS.forEach(tab => {
@@ -110,7 +110,7 @@ describe('Tabs', () => {
       'aria-selected',
       'true'
     );
-    expect(screen.getByText(TABS[1].content)).toBeInTheDocument();
+    expect(screen.getByText(TABS[1]!.content)).toBeInTheDocument();
   });
 
   it('changes tabs using keyboard navigation', async () => {
@@ -141,7 +141,7 @@ describe('Tabs', () => {
       'aria-selected',
       'true'
     );
-    expect(screen.getByText(TABS[1].content)).toBeInTheDocument();
+    expect(screen.getByText(TABS[1]!.content)).toBeInTheDocument();
   });
 
   it('changes tabs on key press in vertical orientation', async () => {
@@ -172,7 +172,7 @@ describe('Tabs', () => {
       'aria-selected',
       'true'
     );
-    expect(screen.getByText(TABS[1].content)).toBeInTheDocument();
+    expect(screen.getByText(TABS[1]!.content)).toBeInTheDocument();
   });
 
   it('renders disabled tabs', () => {
@@ -202,12 +202,11 @@ describe('Tabs', () => {
   });
 
   it('renders tab links', async () => {
-    const routerContext = TestStubs.routerContext();
     render(
       <Tabs>
         <TabList>
           {TABS.map(tab => (
-            <TabList.Item key={tab.key} to="#some-link">
+            <TabList.Item key={tab.key} to="/#some-link">
               {tab.label}
             </TabList.Item>
           ))}
@@ -217,22 +216,21 @@ describe('Tabs', () => {
             <TabPanels.Item key={tab.key}>{tab.content}</TabPanels.Item>
           ))}
         </TabPanels>
-      </Tabs>,
-      {context: routerContext}
+      </Tabs>
     );
 
     TABS.forEach(tab => {
       const tabEl = screen.getByRole('tab', {name: tab.label});
       expect(within(tabEl).getByRole('link', {hidden: true})).toHaveAttribute(
         'href',
-        '#some-link'
+        '/#some-link'
       );
     });
 
     // Command/ctrl/shift-clicking on a tab link doesn't change the tab selection.
     // The expected behavior is that clicking on a tab link will open a new browser
     // tab/window. The current view shouldn't update.
-    const secondTabEl = screen.getByRole('tab', {name: TABS[1].label});
+    const secondTabEl = screen.getByRole('tab', {name: TABS[1]!.label});
     const secondTabLink = within(secondTabEl).getByRole('link', {hidden: true});
 
     const user = userEvent.setup();
@@ -249,7 +247,7 @@ describe('Tabs', () => {
     await user.click(secondTabLink);
     await user.keyboard('[/ShiftLeft]');
 
-    expect(screen.getByRole('tab', {name: TABS[0].label})).toHaveAttribute(
+    expect(screen.getByRole('tab', {name: TABS[0]!.label})).toHaveAttribute(
       'aria-selected',
       'true'
     );

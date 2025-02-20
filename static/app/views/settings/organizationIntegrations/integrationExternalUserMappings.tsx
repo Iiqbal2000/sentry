@@ -1,18 +1,17 @@
 import {Fragment} from 'react';
-import {WithRouterProps} from 'react-router';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
 import {openModal} from 'sentry/actionCreators/modal';
 import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import {t} from 'sentry/locale';
-import {
+import type {
   ExternalActorMapping,
   ExternalActorMappingOrSuggestion,
   ExternalUser,
   Integration,
-  Member,
-  Organization,
-} from 'sentry/types';
+} from 'sentry/types/integrations';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
+import type {Member, Organization} from 'sentry/types/organization';
 import {sentryNameToOption} from 'sentry/utils/integrationUtil';
 import withOrganization from 'sentry/utils/withOrganization';
 // eslint-disable-next-line no-restricted-imports
@@ -29,7 +28,7 @@ type Props = DeprecatedAsyncComponent['props'] &
 
 type State = DeprecatedAsyncComponent['state'] & {
   initialResults: Member[];
-  members: (Member & {externalUsers: ExternalUser[]})[];
+  members: Array<Member & {externalUsers: ExternalUser[]}>;
 };
 
 class IntegrationExternalUserMappings extends DeprecatedAsyncComponent<Props, State> {
@@ -137,14 +136,13 @@ class IntegrationExternalUserMappings extends DeprecatedAsyncComponent<Props, St
   };
 
   renderBody() {
-    const {integration, organization} = this.props;
+    const {integration} = this.props;
     const {membersPageLinks} = this.state;
     return (
       <Fragment>
         <IntegrationExternalMappings
           type="user"
           integration={integration}
-          organization={organization}
           mappings={this.mappings}
           dataEndpoint={this.dataEndpoint}
           getBaseFormEndpoint={() => this.baseFormEndpoint}

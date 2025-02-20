@@ -1,6 +1,5 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
-from dateutil.parser import parse as parse_datetime
 from django.utils import timezone
 
 from sentry.models.activity import Activity
@@ -8,7 +7,6 @@ from sentry.models.group import Group
 from sentry.models.groupinbox import GroupInbox, GroupInboxReason
 from sentry.testutils.cases import APITestCase
 from sentry.testutils.helpers.datetime import freeze_time
-from sentry.testutils.silo import region_silo_test
 from sentry.testutils.skips import requires_snuba
 from sentry.types.activity import ActivityType
 
@@ -16,7 +14,6 @@ pytestmark = [requires_snuba]
 
 
 @freeze_time()
-@region_silo_test
 class ProjectRulePreviewEndpointTest(APITestCase):
     endpoint = "sentry-api-0-project-rule-preview"
     method = "post"
@@ -90,7 +87,7 @@ class ProjectRulePreviewEndpointTest(APITestCase):
                 endpoint=None,
             )
 
-            result = parse_datetime(resp["endpoint"])
+            result = datetime.fromisoformat(resp["endpoint"])
             endpoint = time_to_freeze.replace(tzinfo=result.tzinfo)
             assert result == endpoint
             frozen_time.shift(1)
@@ -108,7 +105,7 @@ class ProjectRulePreviewEndpointTest(APITestCase):
                 endpoint=endpoint,
             )
 
-            assert parse_datetime(resp["endpoint"]) == endpoint
+            assert datetime.fromisoformat(resp["endpoint"]) == endpoint
 
     def test_inbox_reason(self):
         prev_hour = timezone.now() - timedelta(hours=1)
@@ -130,7 +127,7 @@ class ProjectRulePreviewEndpointTest(APITestCase):
             frequency=10,
         )
 
-        for (group, reason) in group_reason:
+        for group, reason in group_reason:
             assert any([int(g["id"]) == group.id for g in resp.data])
 
             for preview_group in resp.data:

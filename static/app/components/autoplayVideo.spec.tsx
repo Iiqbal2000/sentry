@@ -1,4 +1,3 @@
-// eslint-disable-next-line no-restricted-imports
 import * as React from 'react';
 
 import {render, screen} from 'sentry-test/reactTestingLibrary';
@@ -11,6 +10,13 @@ jest.mock('react', () => {
     useRef: jest.fn(),
   };
 });
+// XXX: Mocking useRef throws an error for AnimatePrecense, so it must be mocked as well
+jest.mock('framer-motion', () => {
+  return {
+    ...jest.requireActual('framer-motion'),
+    AnimatePresence: jest.fn().mockImplementation(({children}) => <div>{children}</div>),
+  };
+});
 
 // Use a proxy to prevent <video ref={ref}/> from overriding our ref.current
 const makeProxyMock = (video: Partial<HTMLVideoElement>) => {
@@ -18,12 +24,9 @@ const makeProxyMock = (video: Partial<HTMLVideoElement>) => {
     {current: video},
     {
       get(obj, prop) {
-        return obj[prop];
+        return obj[prop as never];
       },
-      set(obj, prop) {
-        if (prop === 'current') {
-          obj.current = obj.current;
-        }
+      set(_obj, _prop) {
         return true;
       },
     }

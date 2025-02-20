@@ -1,4 +1,8 @@
-import {render, screen} from 'sentry-test/reactTestingLibrary';
+// The pipeline view renders a Router inside of it and
+// does not need the providers provided by our wrapped render function.
+// Use the original to avoid doubling up.
+// eslint-disable-next-line no-restricted-imports
+import {render, screen} from '@testing-library/react';
 
 import PipelineView from 'sentry/views/integrationPipeline/pipelineView';
 

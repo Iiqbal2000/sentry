@@ -1,19 +1,35 @@
-import {browserHistory} from 'react-router';
+import type {Location} from 'history';
+import {EventFixture} from 'sentry-fixture/event';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {RouterFixture} from 'sentry-fixture/routerFixture';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 
+import {openAddToDashboardModal} from 'sentry/actionCreators/modal';
 import {COL_WIDTH_UNDEFINED} from 'sentry/components/gridEditable';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
 import type {EventViewOptions} from 'sentry/utils/discover/eventView';
 import EventView from 'sentry/utils/discover/eventView';
-import {DisplayType} from 'sentry/views/dashboards/types';
+import {DisplayModes} from 'sentry/utils/discover/types';
 import {
+  DashboardWidgetSource,
+  DisplayType,
+  WidgetType,
+} from 'sentry/views/dashboards/types';
+import {
+  constructAddQueryToDashboardLink,
   decodeColumnOrder,
   downloadAsCsv,
   eventViewToWidgetQuery,
   generateFieldOptions,
   getExpandedResults,
+  handleAddQueryToDashboard,
   pushEventViewToLocation,
 } from 'sentry/views/discover/utils';
+
+jest.mock('sentry/actionCreators/modal');
 
 const baseView: EventViewOptions = {
   display: undefined,
@@ -111,10 +127,10 @@ describe('decodeColumnOrder', function () {
     });
 
     results = decodeColumnOrder([{field: 'p75()', width: 123}]);
-    expect(results[0].type).toEqual('duration');
+    expect(results[0]!.type).toBe('duration');
 
     results = decodeColumnOrder([{field: 'p99()', width: 123}]);
-    expect(results[0].type).toEqual('duration');
+    expect(results[0]!.type).toBe('duration');
   });
 
   it('can decode elements with aggregate functions with arguments', function () {
@@ -243,34 +259,36 @@ describe('pushEventViewToLocation', function () {
     environment: ['staging'],
   };
 
-  const location = TestStubs.location({
+  const location = LocationFixture({
     query: {
       bestCountry: 'canada',
     },
   });
 
   it('correct query string object pushed to history', function () {
+    const navigate = jest.fn();
     const eventView = new EventView({...baseView, ...state});
 
     pushEventViewToLocation({
+      navigate,
       location,
       nextEventView: eventView,
     });
 
-    expect(browserHistory.push).toHaveBeenCalledWith(
+    expect(navigate).toHaveBeenCalledWith(
       expect.objectContaining({
         query: expect.objectContaining({
           id: '1234',
           name: 'best query',
           field: ['count()', 'project.id'],
-          widths: [420],
-          sort: ['-count'],
+          widths: '420',
+          sort: '-count',
           query: 'event.type:error',
-          project: [42],
+          project: '42',
           start: '2019-10-01T00:00:00',
           end: '2019-10-02T00:00:00',
           statsPeriod: '14d',
-          environment: ['staging'],
+          environment: 'staging',
           yAxis: 'count()',
         }),
       })
@@ -278,9 +296,11 @@ describe('pushEventViewToLocation', function () {
   });
 
   it('extra query params', function () {
+    const navigate = jest.fn();
     const eventView = new EventView({...baseView, ...state});
 
     pushEventViewToLocation({
+      navigate,
       location,
       nextEventView: eventView,
       extraQuery: {
@@ -288,20 +308,20 @@ describe('pushEventViewToLocation', function () {
       },
     });
 
-    expect(browserHistory.push).toHaveBeenCalledWith(
+    expect(navigate).toHaveBeenCalledWith(
       expect.objectContaining({
         query: expect.objectContaining({
           id: '1234',
           name: 'best query',
           field: ['count()', 'project.id'],
-          widths: [420],
-          sort: ['-count'],
+          widths: '420',
+          sort: '-count',
           query: 'event.type:error',
-          project: [42],
+          project: '42',
           start: '2019-10-01T00:00:00',
           end: '2019-10-02T00:00:00',
           statsPeriod: '14d',
-          environment: ['staging'],
+          environment: 'staging',
           cursor: 'some cursor',
           yAxis: 'count()',
         }),
@@ -337,7 +357,7 @@ describe('getExpandedResults()', function () {
       fields: [{field: 'count()'}, {field: 'epm()'}, {field: 'eps()'}],
     });
 
-    const result = getExpandedResults(view, {}, TestStubs.Event());
+    const result = getExpandedResults(view, {}, EventFixture());
 
     expect(result.fields).toEqual([{field: 'id', width: -1}]);
   });
@@ -345,14 +365,14 @@ describe('getExpandedResults()', function () {
   it('preserves aggregated fields', () => {
     let view = new EventView(state);
 
-    let result = getExpandedResults(view, {}, TestStubs.Event());
+    let result = getExpandedResults(view, {}, EventFixture());
     // id should be omitted as it is an implicit property on unaggregated results.
     expect(result.fields).toEqual([
       {field: 'timestamp', width: -1},
       {field: 'title'},
       {field: 'custom_tag'},
     ]);
-    expect(result.query).toEqual('event.type:error title:ApiException');
+    expect(result.query).toBe('event.type:error title:ApiException');
 
     // de-duplicate transformed columns
     view = new EventView({
@@ -367,7 +387,7 @@ describe('getExpandedResults()', function () {
       ],
     });
 
-    result = getExpandedResults(view, {}, TestStubs.Event());
+    result = getExpandedResults(view, {}, EventFixture());
     // id should be omitted as it is an implicit property on unaggregated results.
     expect(result.fields).toEqual([
       {field: 'timestamp', width: -1},
@@ -400,7 +420,7 @@ describe('getExpandedResults()', function () {
       ],
     });
 
-    result = getExpandedResults(view, {}, TestStubs.Event());
+    result = getExpandedResults(view, {}, EventFixture());
     expect(result.fields).toEqual([
       {field: 'timestamp', width: -1},
       {field: 'title'},
@@ -422,7 +442,7 @@ describe('getExpandedResults()', function () {
       ],
     });
 
-    result = getExpandedResults(view, {}, TestStubs.Event());
+    result = getExpandedResults(view, {}, EventFixture());
     expect(result.fields).toEqual([
       {field: 'transaction.duration', width: -1},
       {field: 'measurements.foo', width: -1},
@@ -438,51 +458,50 @@ describe('getExpandedResults()', function () {
       ...state,
       fields: [...state.fields, {field: 'measurements.lcp'}, {field: 'measurements.fcp'}],
     });
-    let result = getExpandedResults(view, {extra: 'condition'}, TestStubs.Event());
-    expect(result.query).toEqual('event.type:error extra:condition title:ApiException');
+    let result = getExpandedResults(view, {extra: 'condition'}, EventFixture());
+    expect(result.query).toBe('event.type:error extra:condition title:ApiException');
 
     // handles user tag values.
-    result = getExpandedResults(view, {user: 'id:12735'}, TestStubs.Event());
-    expect(result.query).toEqual('event.type:error user:id:12735 title:ApiException');
-    result = getExpandedResults(view, {user: 'name:uhoh'}, TestStubs.Event());
-    expect(result.query).toEqual('event.type:error user:name:uhoh title:ApiException');
+    result = getExpandedResults(view, {user: 'id:12735'}, EventFixture());
+    expect(result.query).toBe('event.type:error user:id:12735 title:ApiException');
+    result = getExpandedResults(view, {user: 'name:uhoh'}, EventFixture());
+    expect(result.query).toBe('event.type:error user:name:uhoh title:ApiException');
 
     // quotes value
-    result = getExpandedResults(view, {extra: 'has space'}, TestStubs.Event());
-    expect(result.query).toEqual('event.type:error extra:"has space" title:ApiException');
+    result = getExpandedResults(view, {extra: 'has space'}, EventFixture());
+    expect(result.query).toBe('event.type:error extra:"has space" title:ApiException');
 
     // appends to existing conditions
-    result = getExpandedResults(view, {'event.type': 'csp'}, TestStubs.Event());
-    expect(result.query).toEqual('event.type:csp title:ApiException');
+    result = getExpandedResults(view, {'event.type': 'csp'}, EventFixture());
+    expect(result.query).toBe('event.type:csp title:ApiException');
 
     // Includes empty strings
-    result = getExpandedResults(view, {}, TestStubs.Event({id: '0', custom_tag: ''}));
-    expect(result.query).toEqual('event.type:error title:ApiException custom_tag:""');
+    result = getExpandedResults(view, {}, EventFixture({id: '0', custom_tag: ''}));
+    expect(result.query).toBe('event.type:error title:ApiException custom_tag:""');
 
     // Includes 0
-    result = getExpandedResults(view, {}, TestStubs.Event({id: '0', custom_tag: 0}));
-    expect(result.query).toEqual('event.type:error title:ApiException custom_tag:0');
+    result = getExpandedResults(view, {}, EventFixture({id: '0', custom_tag: 0}));
+    expect(result.query).toBe('event.type:error title:ApiException custom_tag:0');
 
     // Includes null
-    result = getExpandedResults(view, {}, TestStubs.Event({id: '0', custom_tag: null}));
-    expect(result.query).toEqual('event.type:error title:ApiException custom_tag:""');
+    result = getExpandedResults(view, {}, EventFixture({id: '0', custom_tag: null}));
+    expect(result.query).toBe('event.type:error title:ApiException custom_tag:""');
 
     // Handles measurements while ignoring null values
     result = getExpandedResults(
       view,
       {},
-      // The type on this is wrong, the actual type is ReactText which is just string|number
+      // @ts-expect-error The type on this is wrong, the actual type is ReactText which is just string|number
       // however we seem to have tests that test for null values as well, hence the expect error
-      // @ts-expect-error
       {'measurements.lcp': 2, 'measurements.fcp': null}
     );
-    expect(result.query).toEqual('event.type:error measurements.lcp:2');
+    expect(result.query).toBe('event.type:error measurements.lcp:2');
   });
 
   it('removes any aggregates in either search conditions or extra conditions', () => {
     const view = new EventView({...state, query: 'event.type:error count(id):<10'});
-    const result = getExpandedResults(view, {'count(id)': '>2'}, TestStubs.Event());
-    expect(result.query).toEqual('event.type:error title:ApiException');
+    const result = getExpandedResults(view, {'count(id)': '>2'}, EventFixture());
+    expect(result.query).toBe('event.type:error title:ApiException');
   });
 
   it('applies conditions from dataRow map structure based on fields', () => {
@@ -490,14 +509,14 @@ describe('getExpandedResults()', function () {
     const result = getExpandedResults(
       view,
       {extra: 'condition'},
-      TestStubs.Event({title: 'Event title'})
+      EventFixture({title: 'Event title'})
     );
-    expect(result.query).toEqual('event.type:error extra:condition title:"Event title"');
+    expect(result.query).toBe('event.type:error extra:condition title:"Event title"');
   });
 
   it('applies tag key conditions from event data', () => {
     const view = new EventView(state);
-    const event = TestStubs.Event({
+    const event = EventFixture({
       type: 'error',
       tags: [
         {key: 'nope', value: 'nope'},
@@ -505,16 +524,14 @@ describe('getExpandedResults()', function () {
       ],
     });
     const result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual(
-      'event.type:error title:ApiException custom_tag:tag_value'
-    );
+    expect(result.query).toBe('event.type:error title:ApiException custom_tag:tag_value');
   });
 
   it('generate eventview from an empty eventview', () => {
-    const view = EventView.fromLocation(TestStubs.location());
-    const result = getExpandedResults(view, {some_tag: 'value'}, TestStubs.Event());
+    const view = EventView.fromLocation(LocationFixture());
+    const result = getExpandedResults(view, {some_tag: 'value'}, EventFixture());
     expect(result.fields).toEqual([]);
-    expect(result.query).toEqual('some_tag:value');
+    expect(result.query).toBe('some_tag:value');
   });
 
   it('removes equations on aggregates', () => {
@@ -557,7 +574,7 @@ describe('getExpandedResults()', function () {
       ...state,
       fields: [...state.fields, {field: 'error.type'}],
     });
-    const event = TestStubs.Event({
+    const event = EventFixture({
       type: 'error',
       tags: [
         {key: 'nope', value: 'nope'},
@@ -566,7 +583,7 @@ describe('getExpandedResults()', function () {
       'error.type': ['DeadSystem Exception', 'RuntimeException', 'RuntimeException'],
     });
     const result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual(
+    expect(result.query).toBe(
       'event.type:error title:ApiException custom_tag:tag_value error.type:"DeadSystem Exception" error.type:RuntimeException error.type:RuntimeException'
     );
   });
@@ -582,7 +599,7 @@ describe('getExpandedResults()', function () {
   it('applies environment condition to environment property', () => {
     const view = new EventView(state);
     const result = getExpandedResults(view, {environment: 'dev'});
-    expect(result.query).toEqual('event.type:error');
+    expect(result.query).toBe('event.type:error');
     expect(result.environment).toEqual(['staging', 'dev']);
   });
 
@@ -592,7 +609,7 @@ describe('getExpandedResults()', function () {
       ...state,
       fields: [{field: 'project'}, {field: 'environment'}, {field: 'title'}],
     });
-    const event = TestStubs.Event({
+    const event = EventFixture({
       title: 'something bad',
       timestamp: '2020-02-13T17:05:46+00:00',
       tags: [
@@ -601,7 +618,7 @@ describe('getExpandedResults()', function () {
       ],
     });
     const result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual(
+    expect(result.query).toBe(
       'event.type:error tags[project]:12345 tags[environment]:earth title:"something bad"'
     );
     expect(result.project).toEqual([42]);
@@ -614,7 +631,7 @@ describe('getExpandedResults()', function () {
       ...state,
       fields: [{field: 'user'}, {field: 'title'}],
     });
-    let event = TestStubs.Event({
+    let event = EventFixture({
       title: 'something bad',
       // user context should be ignored.
       user: {
@@ -624,14 +641,14 @@ describe('getExpandedResults()', function () {
       tags: [{key: 'user', value: 'id:1234'}],
     });
     let result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual('event.type:error user:id:1234 title:"something bad"');
+    expect(result.query).toBe('event.type:error user:id:1234 title:"something bad"');
 
-    event = TestStubs.Event({
+    event = EventFixture({
       title: 'something bad',
       tags: [{key: 'user', value: '1234'}],
     });
     result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual('event.type:error user:1234 title:"something bad"');
+    expect(result.query).toBe('event.type:error user:1234 title:"something bad"');
   });
 
   it('applies the user field in a table row', function () {
@@ -639,12 +656,12 @@ describe('getExpandedResults()', function () {
       ...state,
       fields: [{field: 'user'}, {field: 'title'}],
     });
-    const event = TestStubs.Event({
+    const event = EventFixture({
       title: 'something bad',
       user: 'id:1234',
     });
     const result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual('event.type:error user:id:1234 title:"something bad"');
+    expect(result.query).toBe('event.type:error user:id:1234 title:"something bad"');
   });
 
   it('normalizes the timestamp field', () => {
@@ -653,12 +670,12 @@ describe('getExpandedResults()', function () {
       fields: [{field: 'timestamp'}],
       sorts: [{field: 'timestamp', kind: 'desc'}],
     });
-    const event = TestStubs.Event({
+    const event = EventFixture({
       type: 'error',
       timestamp: '2020-02-13T17:05:46+00:00',
     });
     const result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual('event.type:error timestamp:2020-02-13T17:05:46');
+    expect(result.query).toBe('event.type:error timestamp:2020-02-13T17:05:46');
   });
 
   it('does not duplicate conditions', () => {
@@ -667,11 +684,11 @@ describe('getExpandedResults()', function () {
       ...state,
       query: 'event.type:error title:bogus',
     });
-    const event = TestStubs.Event({
+    const event = EventFixture({
       title: 'bogus',
     });
     const result = getExpandedResults(view, {trace: 'abc123'}, event);
-    expect(result.query).toEqual('event.type:error trace:abc123 title:bogus');
+    expect(result.query).toBe('event.type:error trace:abc123 title:bogus');
   });
 
   it('applies project as condition if present', () => {
@@ -681,9 +698,9 @@ describe('getExpandedResults()', function () {
       query: '',
       fields: [{field: 'project'}],
     });
-    const event = TestStubs.Event({project: 'whoosh'});
+    const event = EventFixture({project: 'whoosh'});
     const result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual('project:whoosh');
+    expect(result.query).toBe('project:whoosh');
   });
 
   it('applies project name as condition if present', () => {
@@ -693,9 +710,9 @@ describe('getExpandedResults()', function () {
       query: '',
       fields: [{field: 'project.name'}],
     });
-    const event = TestStubs.Event({'project.name': 'whoosh'});
+    const event = EventFixture({'project.name': 'whoosh'});
     const result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual('project.name:whoosh');
+    expect(result.query).toBe('project.name:whoosh');
   });
 
   it('should not trim values that need to be quoted', () => {
@@ -706,9 +723,9 @@ describe('getExpandedResults()', function () {
       fields: [{field: 'title'}],
     });
     // needs to be quoted because of whitespace in middle
-    const event = TestStubs.Event({title: 'hello there '});
+    const event = EventFixture({title: 'hello there '});
     const result = getExpandedResults(view, {}, event);
-    expect(result.query).toEqual('title:"hello there "');
+    expect(result.query).toBe('title:"hello there "');
   });
 
   it('should add environment from the data row', () => {
@@ -720,7 +737,7 @@ describe('getExpandedResults()', function () {
       fields: [{field: 'environment'}],
     });
     expect(view.environment).toEqual([]);
-    const event = TestStubs.Event({environment: 'staging'});
+    const event = EventFixture({environment: 'staging'});
     const result = getExpandedResults(view, {}, event);
     expect(result.environment).toEqual(['staging']);
   });
@@ -733,7 +750,7 @@ describe('getExpandedResults()', function () {
       fields: [{field: 'environment'}],
     });
     expect(view.environment).toEqual(['staging']);
-    const event = TestStubs.Event({environment: 'staging'});
+    const event = EventFixture({environment: 'staging'});
     const result = getExpandedResults(view, {}, event);
     expect(result.environment).toEqual(['staging']);
   });
@@ -819,7 +836,7 @@ describe('eventViewToWidgetQuery', function () {
       displayType: DisplayType.TOP_N,
       yAxis: ['count()'],
     });
-    expect(widgetQuery.orderby).toEqual('-count()');
+    expect(widgetQuery.orderby).toBe('-count()');
   });
 
   it('updates orderby to function format for complex function', function () {
@@ -833,7 +850,7 @@ describe('eventViewToWidgetQuery', function () {
       eventView: view,
       displayType: DisplayType.TABLE,
     });
-    expect(widgetQuery.orderby).toEqual('-count_unique(device.locale)');
+    expect(widgetQuery.orderby).toBe('-count_unique(device.locale)');
   });
 
   it('updates orderby to field', function () {
@@ -846,7 +863,7 @@ describe('eventViewToWidgetQuery', function () {
       eventView: view,
       displayType: DisplayType.TABLE,
     });
-    expect(widgetQuery.orderby).toEqual('-project.id');
+    expect(widgetQuery.orderby).toBe('-project.id');
   });
 });
 
@@ -869,6 +886,406 @@ describe('generateFieldOptions', function () {
           name: 'measurements.custom.measurement',
         },
       },
+    });
+  });
+
+  it('disambiguates tags that are also fields', function () {
+    expect(
+      generateFieldOptions({
+        organization: initializeOrg().organization,
+        tagKeys: ['environment'],
+        fieldKeys: ['environment'],
+        aggregations: {},
+      })
+    ).toEqual({
+      'field:environment': {
+        label: 'environment',
+        value: {
+          kind: 'field',
+          meta: {
+            dataType: 'string',
+            name: 'environment',
+          },
+        },
+      },
+      'tag:environment': {
+        label: 'environment',
+        value: {
+          kind: 'tag',
+          meta: {
+            dataType: 'string',
+            name: 'tags[environment]',
+          },
+        },
+      },
+    });
+  });
+});
+
+describe('constructAddQueryToDashboardLink', function () {
+  let organization: Organization;
+  let location: Location;
+  describe('new widget builder', function () {
+    beforeEach(() => {
+      organization = OrganizationFixture({
+        features: ['dashboards-widget-builder-redesign'],
+      });
+      location = LocationFixture();
+    });
+
+    it('should construct a link with the correct params - total period', function () {
+      const eventView = new EventView({
+        ...baseView,
+        display: DisplayModes.DEFAULT,
+        name: 'best query',
+      });
+      const {query} = constructAddQueryToDashboardLink({
+        eventView,
+        organization,
+        location,
+        source: DashboardWidgetSource.DISCOVERV2,
+        yAxis: ['count()', 'count_unique(user)'],
+        widgetType: WidgetType.TRANSACTIONS,
+      });
+      expect(query).toEqual({
+        start: undefined,
+        end: undefined,
+        description: '',
+        limit: undefined,
+        query: [''],
+        sort: [''],
+        legendAlias: [''],
+        field: [],
+        title: 'best query',
+        dataset: WidgetType.TRANSACTIONS,
+        displayType: DisplayType.AREA,
+        yAxis: ['count()', 'count_unique(user)'],
+        source: DashboardWidgetSource.DISCOVERV2,
+      });
+    });
+    it('should construct a link with the correct params - topN', function () {
+      // This test assigns a grouping through the fields array in the event view
+      const eventView = new EventView({
+        ...baseView,
+        display: DisplayModes.TOP5,
+        name: 'best query',
+        fields: [{field: 'transaction', width: 420}, {field: 'project.id'}],
+      });
+      const {query} = constructAddQueryToDashboardLink({
+        eventView,
+        organization,
+        location,
+        source: DashboardWidgetSource.DISCOVERV2,
+        yAxis: ['count()'],
+        widgetType: WidgetType.TRANSACTIONS,
+      });
+      expect(query).toEqual({
+        start: undefined,
+        end: undefined,
+        description: '',
+        query: [''],
+        sort: [''],
+        legendAlias: [''],
+        field: ['transaction', 'project.id'],
+        title: 'best query',
+        dataset: WidgetType.TRANSACTIONS,
+        displayType: DisplayType.AREA,
+        yAxis: ['count()'],
+        limit: 5,
+        source: DashboardWidgetSource.DISCOVERV2,
+      });
+    });
+    it('should construct a link with the correct params - daily top N', function () {
+      // This test assigns a grouping through the fields array in the event view
+      const eventView = new EventView({
+        ...baseView,
+        display: DisplayModes.DAILYTOP5,
+        name: 'best query',
+        fields: [{field: 'transaction', width: 420}, {field: 'project.id'}],
+      });
+      const {query} = constructAddQueryToDashboardLink({
+        eventView,
+        organization,
+        location,
+        source: DashboardWidgetSource.DISCOVERV2,
+        yAxis: ['count()'],
+        widgetType: WidgetType.TRANSACTIONS,
+      });
+      expect(query).toEqual({
+        start: undefined,
+        end: undefined,
+        description: '',
+        query: [''],
+        sort: [''],
+        legendAlias: [''],
+        field: ['transaction', 'project.id'],
+        title: 'best query',
+        dataset: WidgetType.TRANSACTIONS,
+        displayType: DisplayType.BAR,
+        yAxis: ['count()'],
+        limit: 5,
+        source: DashboardWidgetSource.DISCOVERV2,
+      });
+    });
+  });
+});
+
+describe('handleAddQueryToDashboard', function () {
+  let organization: Organization;
+  let location: Location;
+  let router: InjectedRouter;
+  let mockedOpenAddToDashboardModal: jest.Mock;
+  beforeEach(() => {
+    organization = OrganizationFixture({});
+    location = LocationFixture();
+    router = RouterFixture();
+    mockedOpenAddToDashboardModal = jest.mocked(openAddToDashboardModal);
+  });
+
+  it('constructs the correct widget queries for the modal with single yAxis', function () {
+    const eventView = new EventView({
+      ...baseView,
+      display: DisplayModes.DEFAULT,
+      name: 'best query',
+    });
+    handleAddQueryToDashboard({
+      eventView,
+      organization,
+      location,
+      router,
+      widgetType: WidgetType.TRANSACTIONS,
+      yAxis: ['count()'],
+      source: DashboardWidgetSource.DISCOVERV2,
+    });
+    expect(mockedOpenAddToDashboardModal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        widget: {
+          title: 'best query',
+          displayType: DisplayType.AREA,
+          queries: [
+            {
+              name: '',
+              fields: ['count()'],
+              aggregates: ['count()'],
+              columns: [],
+              orderby: '',
+              conditions: '',
+            },
+          ],
+          interval: undefined,
+          limit: undefined,
+          widgetType: WidgetType.TRANSACTIONS,
+        },
+      })
+    );
+  });
+
+  it('constructs the correct widget queries for the modal with single yAxis top N', function () {
+    const eventView = new EventView({
+      ...baseView,
+      display: DisplayModes.TOP5,
+      name: 'best query',
+      fields: [{field: 'transaction'}],
+    });
+    handleAddQueryToDashboard({
+      eventView,
+      organization,
+      location,
+      router,
+      source: DashboardWidgetSource.DISCOVERV2,
+      widgetType: WidgetType.TRANSACTIONS,
+      yAxis: ['count()'],
+    });
+    expect(mockedOpenAddToDashboardModal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        widget: {
+          title: 'best query',
+          displayType: DisplayType.AREA,
+          queries: [
+            {
+              name: '',
+              aggregates: ['count()'],
+              columns: ['transaction'],
+              fields: ['transaction', 'count()'],
+              orderby: '',
+              conditions: '',
+            },
+          ],
+          interval: undefined,
+          limit: 5,
+          widgetType: WidgetType.TRANSACTIONS,
+        },
+      })
+    );
+  });
+
+  it('constructs the correct widget queries for the modal with multiple yAxes', function () {
+    const eventView = new EventView({
+      ...baseView,
+      display: DisplayModes.DEFAULT,
+      name: 'best query',
+    });
+    handleAddQueryToDashboard({
+      eventView,
+      organization,
+      location,
+      router,
+      source: DashboardWidgetSource.DISCOVERV2,
+      widgetType: WidgetType.TRANSACTIONS,
+      yAxis: ['count()', 'count_unique(user)'],
+    });
+    expect(mockedOpenAddToDashboardModal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        widget: {
+          title: 'best query',
+          displayType: DisplayType.AREA,
+          queries: [
+            {
+              name: '',
+              aggregates: ['count()', 'count_unique(user)'],
+              columns: [],
+              fields: ['count()', 'count_unique(user)'],
+              orderby: '',
+              conditions: '',
+            },
+          ],
+          interval: undefined,
+          limit: undefined,
+          widgetType: WidgetType.TRANSACTIONS,
+        },
+      })
+    );
+  });
+
+  describe('new widget builder', function () {
+    beforeEach(() => {
+      organization = OrganizationFixture({
+        features: ['dashboards-widget-builder-redesign'],
+      });
+    });
+
+    it('constructs the correct widget queries for the modal with single yAxis', function () {
+      const eventView = new EventView({
+        ...baseView,
+        display: DisplayModes.DEFAULT,
+        name: 'best query',
+      });
+      handleAddQueryToDashboard({
+        eventView,
+        organization,
+        location,
+        router,
+        source: DashboardWidgetSource.DISCOVERV2,
+        widgetType: WidgetType.TRANSACTIONS,
+        yAxis: ['count()'],
+      });
+      expect(mockedOpenAddToDashboardModal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          widget: {
+            title: 'best query',
+            displayType: DisplayType.AREA,
+            queries: [
+              {
+                name: '',
+                aggregates: ['count()'],
+                columns: [],
+                fields: [],
+                orderby: '',
+                conditions: '',
+              },
+            ],
+            interval: undefined,
+            limit: undefined,
+            widgetType: WidgetType.TRANSACTIONS,
+          },
+          widgetAsQueryParams: expect.objectContaining({
+            source: DashboardWidgetSource.DISCOVERV2,
+          }),
+        })
+      );
+    });
+
+    it('constructs the correct widget queries for the modal with single yAxis top N', function () {
+      const eventView = new EventView({
+        ...baseView,
+        display: DisplayModes.TOP5,
+        name: 'best query',
+        fields: [{field: 'transaction'}],
+      });
+      handleAddQueryToDashboard({
+        eventView,
+        organization,
+        location,
+        router,
+        source: DashboardWidgetSource.DISCOVERV2,
+        widgetType: WidgetType.TRANSACTIONS,
+        yAxis: ['count()'],
+      });
+      expect(mockedOpenAddToDashboardModal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          widget: {
+            title: 'best query',
+            displayType: DisplayType.AREA,
+            queries: [
+              {
+                name: '',
+                aggregates: ['count()'],
+                columns: ['transaction'],
+                fields: ['transaction'],
+                orderby: '',
+                conditions: '',
+              },
+            ],
+            interval: undefined,
+            limit: 5,
+            widgetType: WidgetType.TRANSACTIONS,
+          },
+          widgetAsQueryParams: expect.objectContaining({
+            source: DashboardWidgetSource.DISCOVERV2,
+          }),
+        })
+      );
+    });
+
+    it('constructs the correct widget queries for the modal with multiple yAxes', function () {
+      const eventView = new EventView({
+        ...baseView,
+        display: DisplayModes.DEFAULT,
+        name: 'best query',
+      });
+      handleAddQueryToDashboard({
+        eventView,
+        organization,
+        location,
+        router,
+        source: DashboardWidgetSource.DISCOVERV2,
+        widgetType: WidgetType.TRANSACTIONS,
+        yAxis: ['count()', 'count_unique(user)'],
+      });
+      expect(mockedOpenAddToDashboardModal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          widget: {
+            title: 'best query',
+            displayType: DisplayType.AREA,
+            queries: [
+              {
+                name: '',
+                aggregates: ['count()', 'count_unique(user)'],
+                columns: [],
+                fields: [],
+                orderby: '',
+                conditions: '',
+              },
+            ],
+            interval: undefined,
+            limit: undefined,
+            widgetType: WidgetType.TRANSACTIONS,
+          },
+          widgetAsQueryParams: expect.objectContaining({
+            source: DashboardWidgetSource.DISCOVERV2,
+          }),
+        })
+      );
     });
   });
 });

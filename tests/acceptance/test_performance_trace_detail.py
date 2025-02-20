@@ -1,9 +1,9 @@
-from datetime import timedelta, timezone
+from datetime import timedelta
 from unittest.mock import patch
 from uuid import uuid4
 
 from sentry.testutils.cases import AcceptanceTestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.testutils.helpers.datetime import before_now
 from sentry.testutils.silo import no_silo_test
 from sentry.utils.samples import load_data
 
@@ -14,7 +14,7 @@ def make_span_id() -> str:
     return uuid4().hex[:16]
 
 
-@no_silo_test(stable=True)
+@no_silo_test
 class PerformanceTraceDetailTest(AcceptanceTestCase, SnubaTestCase):
     def create_error(self, platform, trace_id, span_id, project_id, timestamp):
         data = load_data(platform, timestamp=timestamp)
@@ -183,13 +183,13 @@ class PerformanceTraceDetailTest(AcceptanceTestCase, SnubaTestCase):
         return "/organizations/{}/performance/trace/{}/?pageStart={}&pageEnd={}".format(
             self.org.slug,
             self.trace_id,
-            iso_format(before_now(days=1).replace(hour=9, minute=0, second=0, microsecond=0)),
-            iso_format(before_now(days=1).replace(hour=11, minute=0, second=0, microsecond=0)),
+            before_now(days=1).replace(hour=9, minute=0, second=0, microsecond=0).isoformat(),
+            before_now(days=1).replace(hour=11, minute=0, second=0, microsecond=0).isoformat(),
         )
 
     @patch("django.utils.timezone.now")
     def test_with_data(self, mock_now):
-        mock_now.return_value = before_now().replace(tzinfo=timezone.utc)
+        mock_now.return_value = before_now()
 
         with self.feature(FEATURE_NAMES):
             self.browser.get(self.path)

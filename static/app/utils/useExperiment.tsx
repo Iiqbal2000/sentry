@@ -2,7 +2,7 @@ import noop from 'lodash/noop';
 
 import {unassignedValue} from 'sentry/data/experimentConfig';
 import HookStore from 'sentry/stores/hookStore';
-import {ExperimentAssignment, ExperimentKey} from 'sentry/types/experiments';
+import type {ExperimentAssignment, ExperimentKey} from 'sentry/types/experiments';
 
 type UseExperimentOptions = {
   /**
@@ -34,13 +34,11 @@ export type UseExperiment = <E extends ExperimentKey>(
   options?: UseExperimentOptions
 ) => UseExperimentReturnValue<E>;
 
-const DEFAULT_RETURN_VALUE = {
-  experimentAssignment: unassignedValue,
-  logExperiment: noop,
-};
-
 export const useExperiment: UseExperiment = (...params) => {
   return (
-    HookStore.get('react-hook:use-experiment')[0]?.(...params) ?? DEFAULT_RETURN_VALUE
+    HookStore.get('react-hook:use-experiment')[0]?.(...params) ?? {
+      experimentAssignment: unassignedValue,
+      logExperiment: noop,
+    }
   );
 };

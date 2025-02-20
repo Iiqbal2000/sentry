@@ -6,10 +6,10 @@ from sentry.testutils.cases import AcceptanceTestCase, SnubaTestCase
 from sentry.testutils.silo import no_silo_test
 from sentry.utils.samples import load_data
 
-now = datetime.utcnow().replace(tzinfo=timezone.utc)
+now = datetime.now(timezone.utc)
 
 
-@no_silo_test(stable=True)
+@no_silo_test
 class IssueDetailsTest(AcceptanceTestCase, SnubaTestCase):
     def setUp(self):
         super().setUp()
@@ -127,13 +127,6 @@ class IssueDetailsTest(AcceptanceTestCase, SnubaTestCase):
         event = self.create_sample_event(platform="empty-stacktrace")
         self.page.visit_issue(self.org.slug, event.group.id)
 
-    def test_invalid_interfaces(self):
-        event = self.create_sample_event(platform="invalid-interfaces")
-        self.page.visit_issue(self.org.slug, event.group.id)
-
-        self.browser.click('[data-test-id="event-error-alert"]')
-        self.browser.wait_until_test_id("event-error-details")
-
     def test_activity_page(self):
         event = self.create_sample_event(platform="python")
         self.page.visit_issue(self.org.slug, event.group.id)
@@ -146,10 +139,10 @@ class IssueDetailsTest(AcceptanceTestCase, SnubaTestCase):
         self.page.visit_issue(self.org.slug, event.group.id)
         self.page.resolve_issue()
 
-    def test_ignored(self):
+    def test_archived(self):
         event = self.create_sample_event(platform="python")
         self.page.visit_issue(self.org.slug, event.group.id)
-        self.page.ignore_issue()
+        self.page.archive_issue()
 
     def test_exception_and_no_threads_event(self):
         event = self.create_sample_event(platform="exceptions-and-no-threads")

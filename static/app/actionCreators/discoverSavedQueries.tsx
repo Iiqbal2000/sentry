@@ -1,12 +1,12 @@
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
 import {Client} from 'sentry/api';
 import {t} from 'sentry/locale';
-import {NewQuery, SavedQuery} from 'sentry/types';
+import type {NewQuery, SavedQuery} from 'sentry/types/organization';
 
 export function fetchSavedQueries(
   api: Client,
   orgId: string,
-  query: string = ''
+  query = ''
 ): Promise<SavedQuery[]> {
   const promise: Promise<SavedQuery[]> = api.requestPromise(
     `/organizations/${orgId}/discover/saved/`,

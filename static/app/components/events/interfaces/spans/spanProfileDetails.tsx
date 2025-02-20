@@ -1,29 +1,34 @@
-import {Fragment, useMemo, useState} from 'react';
+import {useMemo, useState} from 'react';
 import styled from '@emotion/styled';
 
-import {Button} from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import {SectionHeading} from 'sentry/components/charts/styles';
 import {StackTraceContent} from 'sentry/components/events/interfaces/crashContent/stackTrace';
-import {Tooltip} from 'sentry/components/tooltip';
+import {StackTraceContentPanel} from 'sentry/components/events/interfaces/crashContent/stackTrace/content';
+import QuestionTooltip from 'sentry/components/questionTooltip';
 import {IconChevron, IconProfiling} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {EventTransaction, Frame, PlatformKey} from 'sentry/types';
-import {EntryType} from 'sentry/types/event';
+import {EntryType, type EventTransaction, type Frame} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
+import type {PlatformKey, Project} from 'sentry/types/project';
 import {StackView} from 'sentry/types/stacktrace';
 import {defined} from 'sentry/utils';
-import {formatPercentage} from 'sentry/utils/formatters';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
 import {CallTreeNode} from 'sentry/utils/profiling/callTreeNode';
 import {Frame as ProfilingFrame} from 'sentry/utils/profiling/frame';
-import {Profile} from 'sentry/utils/profiling/profile/profile';
-import {generateProfileFlamechartRouteWithQuery} from 'sentry/utils/profiling/routes';
+import type {Profile} from 'sentry/utils/profiling/profile/profile';
+import {
+  generateContinuousProfileFlamechartRouteWithQuery,
+  generateProfileFlamechartRouteWithQuery,
+} from 'sentry/utils/profiling/routes';
 import {formatTo} from 'sentry/utils/profiling/units/units';
 import useOrganization from 'sentry/utils/useOrganization';
 import useProjects from 'sentry/utils/useProjects';
 import {useProfileGroup} from 'sentry/views/profiling/profileGroupProvider';
 
-import {SpanType} from './types';
+import type {SpanType} from './types';
 
 const MAX_STACK_DEPTH = 8;
 const MAX_TOP_NODES = 5;
@@ -36,15 +41,12 @@ interface SpanProfileDetailsProps {
   onNoProfileFound?: () => void;
 }
 
-export function SpanProfileDetails({
-  event,
-  span,
-  onNoProfileFound,
-}: SpanProfileDetailsProps) {
-  const organization = useOrganization();
-  const {projects} = useProjects();
-  const project = projects.find(p => p.id === event.projectID);
-
+export function useSpanProfileDetails(
+  organization: Organization,
+  project: Project | undefined,
+  event: Readonly<EventTransaction>,
+  span: Readonly<SpanType>
+) {
   const profileGroup = useProfileGroup();
 
   const processedEvent = useMemo(() => {
@@ -113,8 +115,8 @@ export function SpanProfileDetails({
   const maxNodes = useMemo(() => {
     // find the number of nodes with the minimum number of samples
     let hasMinCount = 0;
-    for (let i = 0; i < nodes.length; i++) {
-      if (nodes[i].count >= TOP_NODE_MIN_COUNT) {
+    for (const node of nodes) {
+      if (node.count >= TOP_NODE_MIN_COUNT) {
         hasMinCount += 1;
       } else {
         break;
@@ -132,28 +134,83 @@ export function SpanProfileDetails({
     }
 
     return {
-      frames: extractFrames(nodes[index], event.platform || 'other'),
+      frames: extractFrames(nodes[index]!, event.platform || 'other'),
       hasPrevious: index > 0,
       hasNext: index + 1 < maxNodes,
     };
   }, [index, maxNodes, event, nodes]);
 
-  const spanTarget =
-    project &&
-    profileGroup &&
-    profileGroup.metadata.profileID &&
-    profile &&
-    generateProfileFlamechartRouteWithQuery({
-      orgSlug: organization.slug,
-      projectSlug: project.slug,
-      profileId: profileGroup.metadata.profileID,
-      query: {
-        tid: String(profile.threadId),
-        spanId: span.span_id,
-      },
-    });
+  const profileTarget = useMemo(() => {
+    if (defined(project)) {
+      const profileContext = event.contexts.profile ?? {};
 
-  if (!defined(profile) || !defined(spanTarget)) {
+      if (defined(profileContext.profile_id)) {
+        return generateProfileFlamechartRouteWithQuery({
+          organization,
+          projectSlug: project.slug,
+          profileId: profileContext.profile_id,
+          query: {
+            spanId: span.span_id,
+          },
+        });
+      }
+
+      if (defined(profileContext.profiler_id)) {
+        return generateContinuousProfileFlamechartRouteWithQuery({
+          organization,
+          projectSlug: project.slug,
+          profilerId: profileContext.profiler_id,
+          start: new Date(event.startTimestamp * 1000).toISOString(),
+          end: new Date(event.endTimestamp * 1000).toISOString(),
+          query: {
+            eventId: event.id,
+            spanId: span.span_id,
+          },
+        });
+      }
+    }
+
+    return undefined;
+  }, [organization, project, event, span]);
+
+  return {
+    processedEvent,
+    profileGroup,
+    profileTarget,
+    profile,
+    nodes,
+    index,
+    setIndex,
+    totalWeight,
+    maxNodes,
+    frames,
+    hasPrevious,
+    hasNext,
+  };
+}
+
+export function SpanProfileDetails({
+  event,
+  span,
+  onNoProfileFound,
+}: SpanProfileDetailsProps) {
+  const organization = useOrganization();
+  const {projects} = useProjects();
+  const project = projects.find(p => p.id === event.projectID);
+  const {
+    processedEvent,
+    profileTarget,
+    nodes,
+    index,
+    setIndex,
+    maxNodes,
+    hasNext,
+    hasPrevious,
+    totalWeight,
+    frames,
+  } = useSpanProfileDetails(organization, project, event, span);
+
+  if (!defined(profileTarget)) {
     return null;
   }
 
@@ -164,27 +221,37 @@ export function SpanProfileDetails({
     return null;
   }
 
+  const percentage = formatPercentage(nodes[index]!.count / totalWeight);
+
   return (
-    <Fragment>
+    <SpanContainer>
       <SpanDetails>
         <SpanDetailsItem grow>
           <SectionHeading>{t('Most Frequent Stacks in this Span')}</SectionHeading>
         </SpanDetailsItem>
         <SpanDetailsItem>
           <SectionSubtext>
-            <Tooltip title={t('%s out of %s samples', nodes[index].count, totalWeight)}>
-              {tct('Showing stacks [index] of [total] ([percentage])', {
-                index: index + 1,
-                total: maxNodes,
-                percentage: formatPercentage(nodes[index].count / totalWeight),
-              })}
-            </Tooltip>
+            {tct('Showing stacks [index] of [total] ([percentage])', {
+              index: index + 1,
+              total: maxNodes,
+              percentage,
+            })}
           </SectionSubtext>
         </SpanDetailsItem>
+        <QuestionTooltip
+          position="top"
+          size="xs"
+          title={t(
+            '%s out of %s (%s) of the call stacks collected during this span',
+            nodes[index]!.count,
+            totalWeight,
+            percentage
+          )}
+        />
         <SpanDetailsItem>
           <ButtonBar merged>
             <Button
-              icon={<IconChevron direction="left" size="xs" />}
+              icon={<IconChevron direction="left" />}
               aria-label={t('Previous')}
               size="xs"
               disabled={!hasPrevious}
@@ -193,7 +260,7 @@ export function SpanProfileDetails({
               }}
             />
             <Button
-              icon={<IconChevron direction="right" size="xs" />}
+              icon={<IconChevron direction="right" />}
               aria-label={t('Next')}
               size="xs"
               disabled={!hasNext}
@@ -204,14 +271,13 @@ export function SpanProfileDetails({
           </ButtonBar>
         </SpanDetailsItem>
         <SpanDetailsItem>
-          <Button icon={<IconProfiling />} to={spanTarget} size="xs">
-            {t('View Profile')}
-          </Button>
+          <LinkButton icon={<IconProfiling />} to={profileTarget} size="xs">
+            {t('Profile')}
+          </LinkButton>
         </SpanDetailsItem>
       </SpanDetails>
       <StackTraceContent
         event={processedEvent}
-        hasHierarchicalGrouping={false}
         newestFirst
         platform={event.platform || 'other'}
         stacktrace={{
@@ -224,21 +290,25 @@ export function SpanProfileDetails({
         inlined
         maxDepth={MAX_STACK_DEPTH}
       />
-    </Fragment>
+    </SpanContainer>
   );
 }
 
-function getTopNodes(profile: Profile, startTimestamp, stopTimestamp): CallTreeNode[] {
+function getTopNodes(
+  profile: Profile,
+  startTimestamp: any,
+  stopTimestamp: any
+): CallTreeNode[] {
   let duration = profile.startedAt;
 
   const callTree: CallTreeNode = new CallTreeNode(ProfilingFrame.Root, null);
 
   for (let i = 0; i < profile.samples.length; i++) {
-    const sample = profile.samples[i];
+    const sample = profile.samples[i]!;
     // TODO: should this take self times into consideration?
     const inRange = startTimestamp <= duration && duration < stopTimestamp;
 
-    duration += profile.weights[i];
+    duration += profile.weights[i]!;
 
     if (sample.isRoot || !inRange) {
       continue;
@@ -323,7 +393,6 @@ function extractFrames(node: CallTreeNode | null, platform: PlatformKey): Frame[
       absPath: node.frame.path ?? null,
       colNo: node.frame.column ?? null,
       context: [],
-      errors: null,
       filename: node.frame.file ?? null,
       function: node.frame.name ?? null,
       inApp: node.frame.is_application,
@@ -350,15 +419,45 @@ function extractFrames(node: CallTreeNode | null, platform: PlatformKey): Frame[
   return frames.reverse();
 }
 
+const SpanContainer = styled('div')`
+  container: profiling-container / inline-size;
+  border: 1px solid ${p => p.theme.innerBorder};
+  border-radius: ${p => p.theme.borderRadius};
+  overflow: hidden;
+
+  ${StackTraceContentPanel} {
+    margin-bottom: 0;
+    box-shadow: none;
+  }
+`;
 const SpanDetails = styled('div')`
-  padding: ${space(2)};
+  padding: ${space(0.5)} ${space(1)};
   display: flex;
   align-items: center;
   gap: ${space(1)};
 `;
 
 const SpanDetailsItem = styled('span')<{grow?: boolean}>`
-  ${p => (p.grow ? 'flex: 1 2 auto' : 'flex: 0 1 auto')}
+  flex: ${p => (p.grow ? '1 2 auto' : 'flex: 0 1 auto')};
+
+  &:nth-child(2) {
+    @container profiling-container (width < 680px) {
+      display: none;
+    }
+  }
+
+  &:first-child {
+    flex: 0 1 100%;
+    min-width: 0;
+  }
+
+  h4 {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+  }
 `;
 
 const SectionSubtext = styled('span')`

@@ -1,33 +1,8 @@
-import {t} from 'sentry/locale';
+export const SUPPORTED_PROVIDERS = ['email', 'slack', 'msteams'] as const;
+export type SupportedProviders = (typeof SUPPORTED_PROVIDERS)[number];
 
-export const ALL_PROVIDERS = {
-  email: 'default',
-  slack: 'never',
-  msteams: 'never',
-};
-export const ALL_PROVIDER_NAMES = Object.keys(ALL_PROVIDERS);
-
-/**
- * These values are stolen from the DB.
- */
-export const VALUE_MAPPING = {
-  default: 0,
-  never: 10,
-  always: 20,
-  subscribe_only: 30,
-  committed_only: 40,
-};
-
-export const MIN_PROJECTS_FOR_CONFIRMATION = 3;
-export const MIN_PROJECTS_FOR_SEARCH = 3;
-export const MIN_PROJECTS_FOR_PAGINATION = 100;
-export type SupportedProviders = 'email' | 'slack' | 'msteams';
 export type ProviderValue = 'always' | 'never';
 
-export type NotificationSettingsByProviderObject = {[key: string]: string};
-export type NotificationSettingsObject = {
-  [key: string]: {[key: string]: {[key: string]: NotificationSettingsByProviderObject}};
-};
 interface NotificationBaseObject {
   id: string;
   scopeIdentifier: string;
@@ -58,6 +33,7 @@ export const NOTIFICATION_SETTINGS_TYPES = [
   'reports',
   'email',
   'spikeProtection',
+  'brokenMonitors',
 ] as const;
 
 export const SELF_NOTIFICATION_SETTINGS_TYPES = [
@@ -66,7 +42,7 @@ export const SELF_NOTIFICATION_SETTINGS_TYPES = [
 ];
 
 // 'alerts' | 'workflow' ...
-export type NotificationSettingsType = (typeof NOTIFICATION_SETTINGS_TYPES)[number];
+type NotificationSettingsType = (typeof NOTIFICATION_SETTINGS_TYPES)[number];
 
 export const NOTIFICATION_SETTINGS_PATHNAMES: Record<NotificationSettingsType, string> = {
   alerts: 'alerts',
@@ -77,23 +53,12 @@ export const NOTIFICATION_SETTINGS_PATHNAMES: Record<NotificationSettingsType, s
   reports: 'reports',
   email: 'email',
   spikeProtection: 'spike-protection',
+  brokenMonitors: 'broken-monitors',
 };
 
-export const CONFIRMATION_MESSAGE = (
-  <div>
-    <p style={{marginBottom: '20px'}}>
-      <strong>Are you sure you want to disable these notifications?</strong>
-    </p>
-    <p>
-      {t(
-        'Turning this off will irreversibly overwrite all of your fine-tuning settings to "off".'
-      )}
-    </p>
-  </div>
-);
-
-export const NOTIFICATION_FEATURE_MAP: Partial<Record<NotificationSettingsType, string>> =
-  {
-    quota: 'slack-overage-notifications',
-    spikeProtection: 'spike-projections',
-  };
+export const NOTIFICATION_FEATURE_MAP: Partial<
+  Record<NotificationSettingsType, string | string[]>
+> = {
+  quota: ['spend-visibility-notifications', 'user-spend-notifications-settings'],
+  spikeProtection: 'spike-projections',
+};

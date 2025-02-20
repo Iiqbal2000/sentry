@@ -1,18 +1,19 @@
 ---
-created: '2023-02-01T08:22:05.694657Z'
+created: '2024-12-17T22:47:17.403904+00:00'
 creator: sentry
 source: tests/sentry/grouping/test_variants.py
 ---
 app:
   hash: null
+  contributing component: null
   component:
     app (exception of system takes precedence)
       exception (ignored because this variant does not have a contributing stacktrace, but the system variant does)
-        stacktrace
+        stacktrace (ignored because it contains no in-app frames)
           frame (non app frame)
             function*
               "application_frame"
-          frame (marked as prefix frame by stack trace rule (category:malloc +prefix))
+          frame (marked out of app by stack trace rule (family:native package:/usr/lib/** -app))
             function*
               "malloc_zone_malloc"
           frame (marked out of app by stack trace rule (family:native package:/usr/lib/** -app))
@@ -34,6 +35,7 @@ app:
 --------------------------------------------------------------------------
 system:
   hash: "3ff01ce959249abecc6bc8a8f1432b0b"
+  contributing component: exception
   component:
     system*
       exception*
@@ -41,7 +43,7 @@ system:
           frame*
             function*
               "application_frame"
-          frame* (marked as prefix frame by stack trace rule (category:malloc +prefix))
+          frame* (marked out of app by stack trace rule (family:native package:/usr/lib/** -app))
             function*
               "malloc_zone_malloc"
           frame (ignored by stack trace rule (category:internals -group))

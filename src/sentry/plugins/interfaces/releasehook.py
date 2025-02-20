@@ -1,9 +1,9 @@
 __all__ = ["ReleaseHook"]
 
 from django.db import IntegrityError, router, transaction
+from django.http.response import HttpResponseBase
 from django.utils import timezone
 from rest_framework.request import Request
-from rest_framework.response import Response
 
 from sentry.exceptions import HookValidationError
 from sentry.models.activity import Activity
@@ -14,23 +14,6 @@ from sentry.types.activity import ActivityType
 class ReleaseHook:
     def __init__(self, project):
         self.project = project
-
-    def start_release(self, version, **values):
-        if not Release.is_valid_version(version):
-            raise HookValidationError("Invalid release version: %s" % version)
-
-        try:
-            with transaction.atomic(router.db_for_write(Release)):
-                release = Release.objects.create(
-                    version=version, organization_id=self.project.organization_id, **values
-                )
-        except IntegrityError:
-            release = Release.objects.get(
-                version=version, organization_id=self.project.organization_id
-            )
-            release.update(**values)
-
-        release.add_project(self.project)
 
     # TODO(dcramer): this is being used by the release details endpoint, but
     # it'd be ideal if most if not all of this logic lived there, and this
@@ -86,5 +69,5 @@ class ReleaseHook:
         )
         self.set_refs(release=release, **values)
 
-    def handle(self, request: Request) -> Response:
+    def handle(self, request: Request) -> HttpResponseBase | None:
         raise NotImplementedError

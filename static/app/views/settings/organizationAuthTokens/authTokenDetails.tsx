@@ -1,5 +1,4 @@
 import {useCallback} from 'react';
-import {browserHistory} from 'react-router';
 
 import {
   addErrorMessage,
@@ -17,7 +16,8 @@ import PanelBody from 'sentry/components/panels/panelBody';
 import PanelHeader from 'sentry/components/panels/panelHeader';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t, tct} from 'sentry/locale';
-import {Organization, OrgAuthToken} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {OrgAuthToken} from 'sentry/types/user';
 import {handleXhrErrorResponse} from 'sentry/utils/handleXhrErrorResponse';
 import {
   getApiQueryData,
@@ -26,9 +26,9 @@ import {
   useMutation,
   useQueryClient,
 } from 'sentry/utils/queryClient';
-import RequestError from 'sentry/utils/requestError/requestError';
+import type RequestError from 'sentry/utils/requestError/requestError';
 import useApi from 'sentry/utils/useApi';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import withOrganization from 'sentry/utils/withOrganization';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import TextBlock from 'sentry/views/settings/components/text/textBlock';
@@ -69,14 +69,20 @@ function AuthTokenDetailsForm({
     tokenPreview: tokenPreview(token.tokenLastCharacters || '****'),
   };
 
+  const navigate = useNavigate();
   const api = useApi();
   const queryClient = useQueryClient();
 
-  const handleGoBack = useCallback(() => {
-    browserHistory.push(normalizeUrl(`/settings/${organization.slug}/auth-tokens/`));
-  }, [organization.slug]);
+  const handleGoBack = useCallback(
+    () => navigate(`/settings/${organization.slug}/auth-tokens/`),
+    [navigate, organization.slug]
+  );
 
-  const {mutate: submitToken} = useMutation<{}, RequestError, UpdateTokenQueryVariables>({
+  const {mutate: submitToken} = useMutation<
+    unknown,
+    RequestError,
+    UpdateTokenQueryVariables
+  >({
     mutationFn: ({name}) =>
       api.requestPromise(
         `/organizations/${organization.slug}/org-auth-tokens/${token.id}/`,
@@ -183,7 +189,7 @@ export function OrganizationAuthTokensDetails({params, organization}: Props) {
   const {tokenId} = params;
 
   const {
-    isLoading,
+    isPending,
     isError,
     data: token,
     refetch: refetchToken,
@@ -223,9 +229,9 @@ export function OrganizationAuthTokensDetails({params, organization}: Props) {
             />
           )}
 
-          {isLoading && <LoadingIndicator />}
+          {isPending && <LoadingIndicator />}
 
-          {!isLoading && !isError && token && (
+          {!isPending && !isError && token && (
             <AuthTokenDetailsForm token={token} organization={organization} />
           )}
         </PanelBody>

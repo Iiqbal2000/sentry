@@ -3,15 +3,13 @@ import isEqual from 'lodash/isEqual';
 import sortBy from 'lodash/sortBy';
 
 import {updateEnvironments} from 'sentry/actionCreators/pageFilters';
-import {
-  HybridFilter,
-  HybridFilterProps,
-} from 'sentry/components/organizations/hybridFilter';
+import type {HybridFilterProps} from 'sentry/components/organizations/hybridFilter';
+import {HybridFilter} from 'sentry/components/organizations/hybridFilter';
 import {ALL_ACCESS_PROJECTS} from 'sentry/constants/pageFilters';
 import {t} from 'sentry/locale';
-import ConfigStore from 'sentry/stores/configStore';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import getRouteStringFromRoutes from 'sentry/utils/getRouteStringFromRoutes';
+import {isActiveSuperuser} from 'sentry/utils/isActiveSuperuser';
 import useOrganization from 'sentry/utils/useOrganization';
 import usePageFilters from 'sentry/utils/usePageFilters';
 import useProjects from 'sentry/utils/useProjects';
@@ -29,6 +27,7 @@ export interface EnvironmentPageFilterProps
       | 'multiple'
       | 'options'
       | 'value'
+      | 'defaultValue'
       | 'onReplace'
       | 'onToggle'
       | 'menuBody'
@@ -50,7 +49,7 @@ export interface EnvironmentPageFilterProps
 
 export function EnvironmentPageFilter({
   onChange,
-  onClear,
+  onReset,
   disabled,
   sizeLimit,
   sizeLimitMessage,
@@ -60,6 +59,7 @@ export function EnvironmentPageFilter({
   trigger,
   resetParamsOnChange,
   footerMessage,
+  triggerProps = {},
   ...selectProps
 }: EnvironmentPageFilterProps) {
   const router = useRouter();
@@ -74,7 +74,7 @@ export function EnvironmentPageFilter({
   } = usePageFilters();
 
   const environments = useMemo<string[]>(() => {
-    const {user} = ConfigStore.getState();
+    const isSuperuser = isActiveSuperuser();
 
     const unsortedEnvironments = projects.flatMap(project => {
       const projectId = parseInt(project.id, 10);
@@ -85,7 +85,7 @@ export function EnvironmentPageFilter({
       // - all projects if -1 is the only selected project.
       if (
         (projectPageFilterValue.includes(ALL_ACCESS_PROJECTS) && project.hasAccess) ||
-        (projectPageFilterValue.length === 0 && (project.isMember || user.isSuperuser)) ||
+        (projectPageFilterValue.length === 0 && (project.isMember || isSuperuser)) ||
         projectPageFilterValue.includes(projectId)
       ) {
         return project.environments;
@@ -138,7 +138,7 @@ export function EnvironmentPageFilter({
   );
 
   const onToggle = useCallback(
-    newValue => {
+    (newValue: any) => {
       trackAnalytics('environmentselector.toggle', {
         action: newValue.length > value.length ? 'added' : 'removed',
         path: getRouteStringFromRoutes(router.routes),
@@ -189,8 +189,9 @@ export function EnvironmentPageFilter({
       multiple
       options={options}
       value={value}
+      defaultValue={[]}
       onChange={handleChange}
-      onClear={onClear}
+      onReset={onReset}
       onReplace={onReplace}
       onToggle={onToggle}
       disabled={disabled ?? (!projectsLoaded || !pageFilterIsReady)}
@@ -203,8 +204,9 @@ export function EnvironmentPageFilter({
       menuFooterMessage={footerMessage}
       trigger={
         trigger ??
-        ((triggerProps, isOpen) => (
+        ((tp, isOpen) => (
           <EnvironmentPageFilterTrigger
+            {...tp}
             {...triggerProps}
             isOpen={isOpen}
             size={selectProps.size}

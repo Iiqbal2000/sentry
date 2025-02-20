@@ -1,17 +1,12 @@
 from sentry import audit_log
-from sentry.api.base import DEFAULT_SLUG_ERROR_MESSAGE
-from sentry.models.auditlogentry import AuditLogEntry
+from sentry.audit_log.services.log.service import log_rpc_service
+from sentry.deletions.models.scheduleddeletion import RegionScheduledDeletion
 from sentry.models.deletedteam import DeletedTeam
-from sentry.models.scheduledeletion import RegionScheduledDeletion
 from sentry.models.team import Team, TeamStatus
-from sentry.services.hybrid_cloud.log.service import log_rpc_service
-from sentry.silo import SiloMode
-from sentry.testutils.asserts import assert_org_audit_log_exists
+from sentry.slug.errors import DEFAULT_SLUG_ERROR_MESSAGE
 from sentry.testutils.cases import APITestCase
 from sentry.testutils.helpers import with_feature
-from sentry.testutils.helpers.options import override_options
 from sentry.testutils.outbox import outbox_runner
-from sentry.testutils.silo import assume_test_silo_mode, region_silo_test
 
 
 class TeamDetailsTestBase(APITestCase):
@@ -65,7 +60,6 @@ class TeamDetailsTestBase(APITestCase):
         self.assert_team_status(team_id, TeamStatus.ACTIVE)
 
 
-@region_silo_test(stable=True)
 class TeamDetailsTest(TeamDetailsTestBase):
     def test_simple(self):
         team = self.team  # force creation
@@ -73,8 +67,10 @@ class TeamDetailsTest(TeamDetailsTestBase):
         response = self.get_success_response(team.organization.slug, team.slug)
         assert response.data["id"] == str(team.id)
 
+        response = self.get_success_response(team.organization.slug, team.id)
+        assert response.data["id"] == str(team.id)
 
-@region_silo_test(stable=True)
+
 class TeamUpdateTest(TeamDetailsTestBase):
     method = "put"
 
@@ -89,7 +85,6 @@ class TeamUpdateTest(TeamDetailsTestBase):
         assert team.name == "hello world"
         assert team.slug == "foobar"
 
-    @override_options({"api.prevent-numeric-slugs": True})
     def test_invalid_numeric_slug(self):
         response = self.get_error_response(self.organization.slug, self.team.slug, slug="1234")
         assert response.data["slug"][0] == DEFAULT_SLUG_ERROR_MESSAGE
@@ -114,6 +109,21 @@ class TeamUpdateTest(TeamDetailsTestBase):
         self.login_as(user)
 
         self.get_success_response(team.organization.slug, team.slug, name="foo", slug="bar")
+
+        team = Team.objects.get(id=team.id)
+        assert team.name == "foo"
+        assert team.slug == "bar"
+
+    def test_admin_with_team_membership_with_id(self):
+        """Admins can modify their teams"""
+        org = self.create_organization()
+        team = self.create_team(organization=org)
+        user = self.create_user(email="foo@example.com", is_superuser=False)
+
+        self.create_member(organization=org, user=user, role="admin", teams=[team])
+        self.login_as(user)
+
+        self.get_success_response(team.organization.slug, team.id, name="foo", slug="bar")
 
         team = Team.objects.get(id=team.id)
         assert team.name == "foo"
@@ -190,165 +200,16 @@ class TeamUpdateTest(TeamDetailsTestBase):
         assert team.name == "foo"
         assert team.slug == "bar"
 
-    @with_feature("organizations:org-roles-for-teams")
-    def test_put_team_org_role__success(self):
-        team = self.team
-        user = self.create_user("foo@example.com")
+    def test_cannot_modify_idp_provisioned_teams(self):
+        org = self.create_organization(owner=self.user)
+        idp_team = self.create_team(organization=org, idp_provisioned=True)
 
-        self.create_member(user=user, organization=self.organization, role="owner")
-        self.login_as(user)
-
-        with outbox_runner():
-            self.get_success_response(team.organization.slug, team.slug, orgRole="owner")
-
-        team = Team.objects.get(id=team.id)
-        assert team.org_role == "owner"
-
-        data = {
-            "id": team.id,
-            "slug": team.slug,
-            "name": team.name,
-            "status": team.status,
-            "org_role": "owner",
-            "old_org_role": None,
-        }
-        assert_org_audit_log_exists(
-            organization=self.organization,
-            event=audit_log.get_event_id("TEAM_EDIT"),
-            data=data,
+        self.login_as(self.user)
+        self.get_error_response(
+            idp_team.organization.slug, idp_team.slug, name="foo", slug="bar", status_code=403
         )
 
-        test_team_edit = audit_log.get(21)
-        with assume_test_silo_mode(SiloMode.CONTROL):
-            entry = AuditLogEntry.objects.get(event=21)
-        assert test_team_edit.render(entry) == f"edited team {team.slug}'s org role to owner"
 
-    def test_put_team_org_role__missing_flag(self):
-        # the put goes through but doesn't update the org role field
-        team = self.team
-        user = self.create_user("foo@example.com")
-
-        self.create_member(user=user, organization=self.organization, role="owner")
-        self.login_as(user)
-
-        with outbox_runner():
-            self.get_success_response(team.organization.slug, team.slug, orgRole="owner")
-
-        team = Team.objects.get(id=team.id)
-        assert not team.org_role
-        test_team_edit = audit_log.get(21)
-        with assume_test_silo_mode(SiloMode.CONTROL):
-            entry = AuditLogEntry.objects.get(event=21)
-        assert test_team_edit.render(entry) == f"edited team {team.slug}"
-
-    @with_feature("organizations:org-roles-for-teams")
-    def test_put_team_org_role__success_with_org_role_from_team(self):
-        team = self.team
-        user = self.create_user("foo@example.com")
-        member_team = self.create_team(org_role="owner")
-
-        self.create_member(
-            user=user, organization=self.organization, role="member", teams=[member_team]
-        )
-        self.login_as(user)
-
-        self.get_success_response(team.organization.slug, team.slug, orgRole="owner")
-
-        team = Team.objects.get(id=team.id)
-        assert team.org_role == "owner"
-
-    @with_feature("organizations:org-roles-for-teams")
-    def test_put_team_org_role__member(self):
-        team = self.team
-        user = self.create_user("foo@example.com")
-
-        self.create_member(user=user, organization=self.organization, role="member")
-        self.login_as(user)
-
-        response = self.get_error_response(
-            team.organization.slug, team.slug, orgRole="owner", status_code=403
-        )
-        assert response.data["detail"] == "You do not have permission to perform this action."
-
-        team = Team.objects.get(id=team.id)
-        assert not team.org_role
-
-    @with_feature("organizations:org-roles-for-teams")
-    def test_put_team_org_role__manager(self):
-        team = self.team
-        user = self.create_user("foo@example.com")
-
-        self.create_member(user=user, organization=self.organization, role="manager")
-        self.login_as(user)
-
-        response = self.get_error_response(
-            team.organization.slug, team.slug, orgRole="owner", status_code=403
-        )
-        assert response.data["detail"] == "You must have the role of owner to perform this action."
-
-        team = Team.objects.get(id=team.id)
-        assert not team.org_role
-
-    @with_feature("organizations:org-roles-for-teams")
-    def test_put_team_org_role__invalid_role(self):
-        team = self.team
-        user = self.create_user("foo@example.com")
-
-        self.create_member(user=user, organization=self.organization, role="owner")
-        self.login_as(user)
-
-        self.get_error_response(team.organization.slug, team.slug, orgRole="onwer", status_code=400)
-
-        team = Team.objects.get(id=team.id)
-        assert not team.org_role
-
-    @with_feature("organizations:org-roles-for-teams")
-    def test_put_team_org_role__idp_provisioned_team(self):
-        team = self.create_team(idp_provisioned=True)
-        user = self.create_user("foo@example.com")
-
-        self.create_member(user=user, organization=self.organization, role="owner")
-        self.login_as(user)
-
-        response = self.get_error_response(
-            team.organization.slug, team.slug, orgRole="owner", status_code=403
-        )
-
-        assert (
-            response.data["detail"]
-            == "This team is managed through your organization's identity provider."
-        )
-        team = Team.objects.get(id=team.id)
-        assert not team.org_role
-
-    @with_feature("organizations:org-roles-for-teams")
-    def test_put_team_org_role__remove_success(self):
-        team = self.create_team(org_role="owner")
-        user = self.create_user("foo@example.com")
-
-        self.create_member(user=user, organization=self.organization, role="owner")
-        self.login_as(user)
-
-        self.get_success_response(team.organization.slug, team.slug, orgRole="")
-
-        team = Team.objects.get(id=team.id)
-        assert not team.org_role
-
-    @with_feature("organizations:org-roles-for-teams")
-    def test_put_team_org_role__remove_error(self):
-        team = self.create_team(org_role="owner")
-        user = self.create_user("foo@example.com")
-
-        self.create_member(user=user, organization=self.organization, role="admin")
-        self.login_as(user)
-
-        self.get_error_response(team.organization.slug, team.slug, orgRole="", status_code=403)
-
-        team = Team.objects.get(id=team.id)
-        assert team.org_role == "owner"
-
-
-@region_silo_test(stable=True)
 class TeamDeleteTest(TeamDetailsTestBase):
     method = "delete"
 
@@ -410,6 +271,21 @@ class TeamDeleteTest(TeamDetailsTestBase):
         team.refresh_from_db()
         self.assert_team_deleted(team.id)
 
+    def test_admin_with_team_membership_with_id(self):
+        """Admins can delete their teams"""
+        org = self.create_organization()
+        team = self.create_team(organization=org)
+        user = self.create_user(email="foo@example.com", is_superuser=False)
+
+        self.create_member(organization=org, user=user, role="admin", teams=[team])
+        self.login_as(user)
+
+        with outbox_runner():
+            self.get_success_response(team.organization.slug, team.id, status_code=204)
+
+        team.refresh_from_db()
+        self.assert_team_deleted(team.id)
+
     def test_admin_without_team_membership(self):
         """Admins can't delete teams of which they're not inside, unless
         open membership is on."""
@@ -449,3 +325,14 @@ class TeamDeleteTest(TeamDetailsTestBase):
 
         team.refresh_from_db()
         self.assert_team_deleted(team.id)
+
+    def test_cannot_delete_idp_provisioned_teams(self):
+        org = self.create_organization(owner=self.user)
+        idp_team = self.create_team(organization=org, idp_provisioned=True)
+
+        self.login_as(self.user)
+        with outbox_runner():
+            self.get_error_response(
+                idp_team.organization.slug, idp_team.slug, name="foo", slug="bar", status_code=403
+            )
+        self.assert_team_not_deleted(idp_team.id)

@@ -7,11 +7,10 @@ import LoadingIndicator from 'sentry/components/loadingIndicator';
 import Panel from 'sentry/components/panels/panel';
 import PanelBody from 'sentry/components/panels/panelBody';
 import PanelHeader from 'sentry/components/panels/panelHeader';
-import PreviewFeature from 'sentry/components/previewFeature';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import formGroups from 'sentry/data/forms/cspReports';
 import {t, tct} from 'sentry/locale';
-import {Project, ProjectKey} from 'sentry/types';
+import type {Project, ProjectKey} from 'sentry/types/project';
 import {useApiQuery} from 'sentry/utils/queryClient';
 import routeTitleGen from 'sentry/utils/routeTitle';
 import useOrganization from 'sentry/utils/useOrganization';
@@ -51,11 +50,11 @@ function getReportOnlyInstructions(keyList: ProjectKey[]) {
 export default function ProjectCspReports() {
   const organization = useOrganization();
   const params = useParams();
-  const projectId = params.projectId;
+  const projectId = params.projectId!;
 
   const {
     data: keyList,
-    isLoading: isLoadingKeyList,
+    isPending: isLoadingKeyList,
     isError: isKeyListError,
     refetch: refetchKeyList,
   } = useApiQuery<ProjectKey[]>([`/projects/${organization.slug}/${projectId}/keys/`], {
@@ -63,7 +62,7 @@ export default function ProjectCspReports() {
   });
   const {
     data: project,
-    isLoading: isLoadingProject,
+    isPending: isLoadingProject,
     isError: isProjectError,
     refetch: refetchProject,
   } = useApiQuery<Project>([`/projects/${organization.slug}/${projectId}/`], {
@@ -92,8 +91,6 @@ export default function ProjectCspReports() {
       />
       <SettingsPageHeader title={t('Content Security Policy')} />
 
-      <PreviewFeature />
-
       <ReportUri keyList={keyList} orgId={organization.slug} projectId={projectId} />
 
       <Form
@@ -102,7 +99,7 @@ export default function ProjectCspReports() {
         initialData={project.options}
         apiEndpoint={`/projects/${organization.slug}/${projectId}/`}
       >
-        <Access access={['project:write']}>
+        <Access access={['project:write']} project={project}>
           {({hasAccess}) => <JsonForm disabled={!hasAccess} forms={formGroups} />}
         </Access>
       </Form>

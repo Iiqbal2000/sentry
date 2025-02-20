@@ -1,4 +1,5 @@
 import {CompactSelect} from 'sentry/components/compactSelect';
+import type {DropdownButtonProps} from 'sentry/components/dropdownButton';
 import {IconSort} from 'sentry/icons/iconSort';
 import {t} from 'sentry/locale';
 import {
@@ -11,6 +12,9 @@ type Props = {
   onSelect: (sort: string) => void;
   query: string;
   sort: string;
+  className?: string;
+  showIcon?: boolean;
+  triggerSize?: DropdownButtonProps['size'];
 };
 
 function getSortTooltip(key: IssueSortOptions) {
@@ -19,7 +23,7 @@ function getSortTooltip(key: IssueSortOptions) {
       return t('When issue was flagged for review.');
     case IssueSortOptions.NEW:
       return t('First time the issue occurred.');
-    case IssueSortOptions.PRIORITY:
+    case IssueSortOptions.TRENDS:
       return t('Recent issues trending upward.');
     case IssueSortOptions.FREQ:
       return t('Number of events.');
@@ -31,30 +35,39 @@ function getSortTooltip(key: IssueSortOptions) {
   }
 }
 
-function IssueListSortOptions({onSelect, sort, query}: Props) {
+function IssueListSortOptions({
+  className,
+  onSelect,
+  sort,
+  query,
+  triggerSize = 'xs',
+  showIcon = true,
+}: Props) {
   const sortKey = sort || IssueSortOptions.DATE;
   const sortKeys = [
     ...(FOR_REVIEW_QUERIES.includes(query || '') ? [IssueSortOptions.INBOX] : []),
     IssueSortOptions.DATE,
     IssueSortOptions.NEW,
-    IssueSortOptions.PRIORITY,
+    IssueSortOptions.TRENDS,
     IssueSortOptions.FREQ,
     IssueSortOptions.USER,
   ];
 
   return (
     <CompactSelect
-      size="sm"
+      className={className}
+      size="md"
       onChange={opt => onSelect(opt.value)}
       options={sortKeys.map(key => ({
         value: key,
         label: getSortLabel(key),
         details: getSortTooltip(key),
       }))}
+      menuWidth={240}
       value={sortKey}
       triggerProps={{
-        size: 'xs',
-        icon: <IconSort size="xs" />,
+        size: triggerSize,
+        icon: showIcon && <IconSort />,
       }}
     />
   );

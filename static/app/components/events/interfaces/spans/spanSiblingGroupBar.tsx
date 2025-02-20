@@ -1,32 +1,31 @@
 import {Fragment} from 'react';
 
-import {SpanBarType} from 'sentry/components/performance/waterfall/constants';
+import type {SpanBarType} from 'sentry/components/performance/waterfall/constants';
 import {
   ConnectorBar,
   TOGGLE_BORDER_BOX,
   TreeConnector,
 } from 'sentry/components/performance/waterfall/treeConnector';
 import {t} from 'sentry/locale';
-import {AggregateEventTransaction, EventTransaction} from 'sentry/types/event';
+import type {AggregateEventTransaction, EventTransaction} from 'sentry/types/event';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import useOrganization from 'sentry/utils/useOrganization';
 
 import {SpanGroupBar} from './spanGroupBar';
 import SpanRectangle from './spanRectangle';
 import {SpanRectangleOverlay} from './spanRectangleOverlay';
-import {EnhancedSpan, ProcessedSpanType, SpanType, TreeDepthType} from './types';
+import type {EnhancedSpan, ProcessedSpanType, SpanType, TreeDepthType} from './types';
+import type {SpanBoundsType, SpanGeneratedBoundsType, VerticalMark} from './utils';
 import {
   getSpanGroupBounds,
   isOrphanSpan,
   isOrphanTreeDepth,
-  SpanBoundsType,
-  SpanGeneratedBoundsType,
   unwrapTreeDepth,
 } from './utils';
 
 export type SpanSiblingGroupBarProps = {
   addContentSpanBarRef: (instance: HTMLDivElement | null) => void;
-  continuingTreeDepths: Array<TreeDepthType>;
+  continuingTreeDepths: TreeDepthType[];
   didAnchoredSpanMount: () => boolean;
   event: Readonly<EventTransaction | AggregateEventTransaction>;
   generateBounds: (bounds: SpanBoundsType) => SpanGeneratedBoundsType;
@@ -41,6 +40,7 @@ export type SpanSiblingGroupBarProps = {
   spanNumber: number;
   toggleSiblingSpanGroup: (span: SpanType, occurrence: number) => void;
   treeDepth: number;
+  measurements?: Map<number, VerticalMark>;
   spanBarType?: SpanBarType;
 };
 
@@ -62,6 +62,7 @@ export default function SpanSiblingGroupBar(props: SpanSiblingGroupBarProps) {
     isEmbeddedSpanTree,
     didAnchoredSpanMount,
     spanBarType,
+    measurements,
   } = props;
 
   const organization = useOrganization();
@@ -71,8 +72,8 @@ export default function SpanSiblingGroupBar(props: SpanSiblingGroupBarProps) {
       return '';
     }
 
-    const operation = spanGrouping[0].span.op;
-    const description = spanGrouping[0].span.description;
+    const operation = spanGrouping[0]!.span.op;
+    const description = spanGrouping[0]!.span.description;
 
     if (!description || !operation) {
       if (description) {
@@ -97,7 +98,7 @@ export default function SpanSiblingGroupBar(props: SpanSiblingGroupBarProps) {
   function renderSpanTreeConnector() {
     const {treeDepth: spanTreeDepth} = props;
 
-    const connectorBars: Array<React.ReactNode> = continuingTreeDepths.map(treeDepth => {
+    const connectorBars: React.ReactNode[] = continuingTreeDepths.map(treeDepth => {
       const depth: number = unwrapTreeDepth(treeDepth);
 
       if (depth === 0) {
@@ -131,7 +132,7 @@ export default function SpanSiblingGroupBar(props: SpanSiblingGroupBarProps) {
           <SpanRectangle
             key={index}
             spanGrouping={spanGrouping}
-            bounds={getSpanGroupBounds([spanGrouping[index]], generateBounds)}
+            bounds={getSpanGroupBounds([spanGrouping[index]!], generateBounds)}
             spanBarType={spanBarType}
           />
         ))}
@@ -147,17 +148,19 @@ export default function SpanSiblingGroupBar(props: SpanSiblingGroupBarProps) {
   return (
     <SpanGroupBar
       event={event}
+      measurements={measurements}
       span={span}
       spanGrouping={spanGrouping}
       treeDepth={props.treeDepth}
       spanNumber={spanNumber}
       generateBounds={generateBounds}
       toggleSpanGroup={() => {
-        toggleSiblingSpanGroup?.(spanGrouping[0].span, occurrence);
-        isEmbeddedSpanTree &&
+        toggleSiblingSpanGroup?.(spanGrouping[0]!.span, occurrence);
+        if (isEmbeddedSpanTree) {
           trackAnalytics('issue_details.performance.autogrouped_siblings_toggle', {
             organization,
           });
+        }
       }}
       renderSpanTreeConnector={renderSpanTreeConnector}
       renderGroupSpansTitle={renderGroupSpansTitle}

@@ -1,13 +1,14 @@
 import logging
 import time
+from collections.abc import Generator, Mapping, MutableMapping
 from dataclasses import dataclass
-from typing import Dict, Generator, List, Mapping, Union
+from typing import Union
 
 import sentry_sdk
 from django.conf import settings
 
 from sentry import options
-from sentry.processing.backpressure.health import record_consumer_health
+from sentry.processing.backpressure.health import UnhealthyReasons, record_consumer_health
 
 # from sentry import options
 from sentry.processing.backpressure.memory import (
@@ -16,7 +17,7 @@ from sentry.processing.backpressure.memory import (
     iter_cluster_memory_usage,
     query_rabbitmq_memory_usage,
 )
-from sentry.processing.backpressure.topology import PROCESSING_SERVICES
+from sentry.processing.backpressure.topology import ProcessingServices
 from sentry.utils import redis
 
 logger = logging.getLogger(__name__)
@@ -29,13 +30,13 @@ class Redis:
 
 @dataclass
 class RabbitMq:
-    servers: List[str]
+    servers: list[str]
 
 
 Service = Union[Redis, RabbitMq, None]
 
 
-def check_service_memory(service: Service) -> Generator[ServiceMemory, None, None]:
+def check_service_memory(service: Service) -> Generator[ServiceMemory]:
     """
     This queries the given [`Service`] and returns the [`ServiceMemory`]
     for each of the individual servers that comprise the service.
@@ -49,11 +50,11 @@ def check_service_memory(service: Service) -> Generator[ServiceMemory, None, Non
             yield query_rabbitmq_memory_usage(server)
 
 
-def load_service_definitions() -> Dict[str, Service]:
-    services: Dict[str, Service] = {}
+def load_service_definitions() -> dict[str, Service]:
+    services: dict[str, Service] = {}
     for name, definition in settings.SENTRY_PROCESSING_SERVICES.items():
         if cluster_id := definition.get("redis"):
-            _is_clsuter, cluster, _config = redis.get_dynamic_cluster_from_options(
+            _is_cluster, cluster, _config = redis.get_dynamic_cluster_from_options(
                 setting=f"SENTRY_PROCESSING_SERVICES[{name}]",
                 config={"cluster": cluster_id},
             )
@@ -68,41 +69,54 @@ def load_service_definitions() -> Dict[str, Service]:
     return services
 
 
-def assert_all_services_defined(services: Dict[str, Service]) -> None:
-    for name in PROCESSING_SERVICES:
-        if name not in services:
+def assert_all_services_defined(services: dict[str, Service]) -> None:
+    for name in ProcessingServices:
+        if name.value not in services:
             raise ValueError(
-                f"The `{name}` Service is missing from `settings.SENTRY_PROCESSING_SERVICES`."
+                f"The `{name.value}` Service is missing from `settings.SENTRY_PROCESSING_SERVICES`."
             )
 
 
-def check_service_health(services: Mapping[str, Service]) -> Mapping[str, bool]:
-    service_health = {}
+def check_service_health(services: Mapping[str, Service]) -> MutableMapping[str, UnhealthyReasons]:
+    unhealthy_services: MutableMapping[str, UnhealthyReasons] = {}
 
     for name, service in services.items():
         high_watermark = options.get(f"backpressure.high_watermarks.{name}")
-        is_healthy = True
+        reasons = []
 
         logger.info("Checking service `%s` (configured high watermark: %s):", name, high_watermark)
+        memory = None
         try:
             for memory in check_service_memory(service):
-                is_healthy = is_healthy and memory.percentage < high_watermark
+                if memory.percentage >= high_watermark:
+                    reasons.append(memory)
+                logger.info("Checking node: %s:%s", memory.host, memory.port)
                 logger.info(
-                    "  used: %s, available: %s, percentage: %s",
+                    "  name: %s, used: %s, available: %s, percentage: %s",
+                    memory.name,
                     memory.used,
                     memory.available,
                     memory.percentage,
                 )
         except Exception as e:
-            with sentry_sdk.push_scope() as scope:
+            with sentry_sdk.isolation_scope() as scope:
                 scope.set_tag("service", name)
                 sentry_sdk.capture_exception(e)
-            is_healthy = False
+            unhealthy_services[name] = e
+            host = memory.host if memory else "unknown"
+            port = memory.port if memory else "unknown"
+            logger.exception(
+                "Error while processing node %s:%s for service %s",
+                host,
+                port,
+                service,
+            )
+        else:
+            unhealthy_services[name] = reasons
 
-        service_health[name] = is_healthy
-        logger.info("  => healthy: %s", is_healthy)
+        logger.info("  => healthy: %s", not unhealthy_services[name])
 
-    return service_health
+    return unhealthy_services
 
 
 def start_service_monitoring() -> None:
@@ -116,11 +130,11 @@ def start_service_monitoring() -> None:
 
         with sentry_sdk.start_transaction(name="backpressure.monitoring", sampled=True):
             # first, check each base service and record its health
-            service_health = check_service_health(services)
+            unhealthy_services = check_service_health(services)
 
             # then, check the derived services and record their health
             try:
-                record_consumer_health(service_health)
+                record_consumer_health(unhealthy_services)
             except Exception as e:
                 sentry_sdk.capture_exception(e)
 

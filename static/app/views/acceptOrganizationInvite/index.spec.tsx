@@ -1,14 +1,14 @@
-import {browserHistory} from 'react-router';
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import {logout} from 'sentry/actionCreators/account';
+import ConfigStore from 'sentry/stores/configStore';
 import AcceptOrganizationInvite from 'sentry/views/acceptOrganizationInvite';
 
 jest.mock('sentry/actionCreators/account');
 
-const addMock = body =>
+const addMock = (body: any) =>
   MockApiClient.addMockResponse({
     url: '/accept-invite/org-slug/1/abc/',
     method: 'GET',
@@ -23,11 +23,18 @@ const getJoinButton = () => {
 };
 
 describe('AcceptOrganizationInvite', function () {
-  const organization = Organization({slug: 'org-slug'});
-  const initialData = window.__initialData;
+  const organization = OrganizationFixture({slug: 'org-slug'});
+  const configState = ConfigStore.getState();
+
+  const defaultRouterConfig = {
+    location: {
+      pathname: '/accept-invite/org-slug/1/abc/',
+    },
+    route: '/accept-invite/:orgId/:memberId/:token/',
+  };
 
   afterEach(() => {
-    window.__initialData = initialData;
+    ConfigStore.loadInitialData(configState);
   });
 
   it('can accept invitation', async function () {
@@ -40,36 +47,34 @@ describe('AcceptOrganizationInvite', function () {
       existingMember: false,
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{orgId: 'org-slug', memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
     const acceptMock = MockApiClient.addMockResponse({
       url: '/accept-invite/org-slug/1/abc/',
       method: 'POST',
     });
 
-    const joinButton = getJoinButton();
+    const joinButton = await screen.findByRole('button', {
+      name: 'Join the org-slug organization',
+    });
 
-    await userEvent.click(joinButton!);
+    await userEvent.click(joinButton);
     expect(acceptMock).toHaveBeenCalled();
-    expect(browserHistory.replace).toHaveBeenCalledWith('/org-slug/');
+    expect(window.location.href).toBe('/org-slug/');
   });
 
   it('can accept invitation on customer-domains', async function () {
-    window.__initialData = TestStubs.Config({
-      customerDomain: {
-        subdomain: 'org-slug',
-        organizationUrl: 'https://org-slug.sentry.io',
-        sentryUrl: 'https://sentry.io',
-      },
-      links: {
-        ...(window.__initialData?.links ?? {}),
-        sentryUrl: 'https://sentry.io',
-      },
+    ConfigStore.set('customerDomain', {
+      subdomain: 'org-slug',
+      organizationUrl: 'https://org-slug.sentry.io',
+      sentryUrl: 'https://sentry.io',
+    });
+    ConfigStore.set('links', {
+      ...configState.links,
+      sentryUrl: 'https://sentry.io',
     });
 
     addMock({
@@ -81,26 +86,49 @@ describe('AcceptOrganizationInvite', function () {
       existingMember: false,
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
     const acceptMock = MockApiClient.addMockResponse({
       url: '/accept-invite/org-slug/1/abc/',
       method: 'POST',
     });
 
-    const joinButton = getJoinButton();
+    const joinButton = await screen.findByRole('button', {
+      name: 'Join the org-slug organization',
+    });
 
-    await userEvent.click(joinButton!);
+    await userEvent.click(joinButton);
     expect(acceptMock).toHaveBeenCalled();
-    expect(browserHistory.replace).toHaveBeenCalledWith('/org-slug/');
+    expect(window.location.href).toBe('/org-slug/');
   });
 
-  it('requires authentication to join', function () {
+  it('renders error message', async function () {
+    MockApiClient.addMockResponse({
+      url: '/accept-invite/1/abc/',
+      method: 'GET',
+      statusCode: 400,
+      body: {detail: 'uh oh'},
+    });
+
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: {
+        location: {
+          pathname: '/accept-invite/1/abc/',
+        },
+        route: '/accept-invite/:memberId/:token/',
+      },
+    });
+
+    expect(
+      await screen.findByText(/This organization invite link is invalid/)
+    ).toBeInTheDocument();
+  });
+
+  it('requires authentication to join', async function () {
     addMock({
       orgSlug: organization.slug,
       needsAuthentication: true,
@@ -110,15 +138,12 @@ describe('AcceptOrganizationInvite', function () {
       existingMember: false,
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{orgId: 'org-slug', memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
-    expect(getJoinButton()).not.toBeInTheDocument();
-
+    await waitFor(() => expect(getJoinButton()).not.toBeInTheDocument());
     expect(screen.getByTestId('action-info-general')).toBeInTheDocument();
     expect(screen.queryByTestId('action-info-sso')).not.toBeInTheDocument();
 
@@ -130,7 +155,7 @@ describe('AcceptOrganizationInvite', function () {
     ).toBeInTheDocument();
   });
 
-  it('suggests sso authentication to login', function () {
+  it('suggests sso authentication to login', async function () {
     addMock({
       orgSlug: organization.slug,
       needsAuthentication: true,
@@ -141,15 +166,12 @@ describe('AcceptOrganizationInvite', function () {
       ssoProvider: 'SSO',
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{orgId: 'org-slug', memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
-    expect(getJoinButton()).not.toBeInTheDocument();
-
+    await waitFor(() => expect(getJoinButton()).not.toBeInTheDocument());
     expect(screen.getByTestId('action-info-general')).toBeInTheDocument();
     expect(screen.getByTestId('action-info-sso')).toBeInTheDocument();
 
@@ -162,7 +184,7 @@ describe('AcceptOrganizationInvite', function () {
     ).toBeInTheDocument();
   });
 
-  it('enforce required sso authentication', function () {
+  it('enforce required sso authentication', async function () {
     addMock({
       orgSlug: organization.slug,
       needsAuthentication: true,
@@ -173,15 +195,12 @@ describe('AcceptOrganizationInvite', function () {
       ssoProvider: 'SSO',
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{orgId: 'org-slug', memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
-    expect(getJoinButton()).not.toBeInTheDocument();
-
+    await waitFor(() => expect(getJoinButton()).not.toBeInTheDocument());
     expect(screen.queryByTestId('action-info-general')).not.toBeInTheDocument();
     expect(screen.getByTestId('action-info-sso')).toBeInTheDocument();
 
@@ -194,7 +213,7 @@ describe('AcceptOrganizationInvite', function () {
     ).not.toBeInTheDocument();
   });
 
-  it('enforce required sso authentication for logged in users', function () {
+  it('enforce required sso authentication for logged in users', async function () {
     addMock({
       orgSlug: organization.slug,
       needsAuthentication: false,
@@ -205,15 +224,12 @@ describe('AcceptOrganizationInvite', function () {
       ssoProvider: 'SSO',
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{orgId: 'org-slug', memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
-    expect(getJoinButton()).not.toBeInTheDocument();
-
+    await waitFor(() => expect(getJoinButton()).not.toBeInTheDocument());
     expect(screen.queryByTestId('action-info-general')).not.toBeInTheDocument();
     expect(screen.getByTestId('action-info-sso')).toBeInTheDocument();
 
@@ -237,22 +253,17 @@ describe('AcceptOrganizationInvite', function () {
       ssoProvider: 'SSO',
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{orgId: 'org-slug', memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
-    expect(screen.getByTestId('existing-member')).toBeInTheDocument();
-
+    await screen.findByTestId('existing-member');
     await userEvent.click(screen.getByTestId('existing-member-link'));
-
-    expect(logout).toHaveBeenCalled();
-    await waitFor(() => expect(window.location.replace).toHaveBeenCalled());
+    await waitFor(() => expect(logout).toHaveBeenCalled());
   });
 
-  it('shows right options for logged in user and optional SSO', function () {
+  it('shows right options for logged in user and optional SSO', async function () {
     addMock({
       orgSlug: organization.slug,
       needsAuthentication: false,
@@ -263,15 +274,12 @@ describe('AcceptOrganizationInvite', function () {
       ssoProvider: 'SSO',
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{orgId: 'org-slug', memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
-    expect(screen.getByTestId('action-info-sso')).toBeInTheDocument();
-
+    await screen.findByTestId('action-info-sso');
     expect(getJoinButton()).toBeInTheDocument();
   });
 
@@ -285,21 +293,17 @@ describe('AcceptOrganizationInvite', function () {
       existingMember: true,
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{orgId: 'org-slug', memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
-    expect(screen.getByTestId('existing-member')).toBeInTheDocument();
+    await screen.findByTestId('existing-member');
     await userEvent.click(screen.getByTestId('existing-member-link'));
-
-    expect(logout).toHaveBeenCalled();
-    await waitFor(() => expect(window.location.replace).toHaveBeenCalled());
+    await waitFor(() => expect(logout).toHaveBeenCalled());
   });
 
-  it('shows 2fa warning', function () {
+  it('shows 2fa warning', async function () {
     addMock({
       orgSlug: organization.slug,
       needsAuthentication: false,
@@ -309,15 +313,11 @@ describe('AcceptOrganizationInvite', function () {
       existingMember: false,
     });
 
-    render(
-      <AcceptOrganizationInvite
-        {...TestStubs.routeComponentProps()}
-        params={{orgId: 'org-slug', memberId: '1', token: 'abc'}}
-      />
-    );
+    render(<AcceptOrganizationInvite />, {
+      disableRouterMocks: true,
+      initialRouterConfig: defaultRouterConfig,
+    });
 
-    expect(
-      screen.getByRole('button', {name: 'Configure Two-Factor Auth'})
-    ).toBeInTheDocument();
+    await screen.findByRole('button', {name: 'Configure Two-Factor Auth'});
   });
 });

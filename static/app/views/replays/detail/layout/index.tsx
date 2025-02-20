@@ -2,10 +2,11 @@ import {useRef} from 'react';
 import styled from '@emotion/styled';
 
 import ErrorBoundary from 'sentry/components/errorBoundary';
-import ReplayTimeline from 'sentry/components/replays/breadcrumbs/replayTimeline';
+import Placeholder from 'sentry/components/placeholder';
+import ReplayController from 'sentry/components/replays/replayController';
 import ReplayView from 'sentry/components/replays/replayView';
 import {space} from 'sentry/styles/space';
-import {LayoutKey} from 'sentry/utils/replays/hooks/useReplayLayout';
+import useReplayLayout, {LayoutKey} from 'sentry/utils/replays/hooks/useReplayLayout';
 import {useDimensions} from 'sentry/utils/useDimensions';
 import useFullscreen from 'sentry/utils/window/useFullscreen';
 import FluidHeight from 'sentry/views/replays/detail/layout/fluidHeight';
@@ -14,6 +15,8 @@ import FocusArea from 'sentry/views/replays/detail/layout/focusArea';
 import FocusTabs from 'sentry/views/replays/detail/layout/focusTabs';
 import SplitPanel from 'sentry/views/replays/detail/layout/splitPanel';
 
+import type {ReplayRecord} from '../../types';
+
 const MIN_CONTENT_WIDTH = 340;
 const MIN_SIDEBAR_WIDTH = 325;
 const MIN_VIDEO_HEIGHT = 200;
@@ -21,11 +24,18 @@ const MIN_CONTENT_HEIGHT = 180;
 
 const DIVIDER_SIZE = 16;
 
-type Props = {
-  layout?: LayoutKey;
-};
+function ReplayLayout({
+  isVideoReplay = false,
+  replayRecord,
+  isLoading,
+}: {
+  isLoading: boolean;
+  replayRecord: ReplayRecord | undefined;
+  isVideoReplay?: boolean;
+}) {
+  const {getLayout} = useReplayLayout();
+  const layout = getLayout() ?? LayoutKey.TOPBAR;
 
-function ReplayLayout({layout = LayoutKey.TOPBAR}: Props) {
   const fullscreenRef = useRef(null);
   const {toggle: toggleFullscreen} = useFullscreen({
     elementRef: fullscreenRef,
@@ -34,35 +44,41 @@ function ReplayLayout({layout = LayoutKey.TOPBAR}: Props) {
   const measureRef = useRef<HTMLDivElement>(null);
   const {width, height} = useDimensions({elementRef: measureRef});
 
-  const timeline = (
-    <ErrorBoundary mini>
-      <ReplayTimeline />
-    </ErrorBoundary>
-  );
-
   const video = (
     <VideoSection ref={fullscreenRef}>
       <ErrorBoundary mini>
-        <ReplayView toggleFullscreen={toggleFullscreen} />
+        <ReplayView toggleFullscreen={toggleFullscreen} isLoading={isLoading} />
       </ErrorBoundary>
     </VideoSection>
+  );
+
+  const controller = (
+    <ErrorBoundary mini>
+      <ReplayController
+        isLoading={isLoading}
+        toggleFullscreen={toggleFullscreen}
+        hideFastForward={isVideoReplay}
+      />
+    </ErrorBoundary>
   );
 
   if (layout === LayoutKey.VIDEO_ONLY) {
     return (
       <BodyContent>
-        {timeline}
         {video}
+        {controller}
       </BodyContent>
     );
   }
 
-  const focusArea = (
-    <ErrorBoundary mini>
-      <FluidPanel title={<SmallMarginFocusTabs />}>
-        <FocusArea />
-      </FluidPanel>
-    </ErrorBoundary>
+  const focusArea = isLoading ? (
+    <Placeholder width="100%" height="100%" />
+  ) : (
+    <FluidPanel title={<SmallMarginFocusTabs isVideoReplay={isVideoReplay} />}>
+      <ErrorBoundary mini>
+        <FocusArea isVideoReplay={isVideoReplay} replayRecord={replayRecord} />
+      </ErrorBoundary>
+    </FluidPanel>
   );
 
   const hasSize = width + height > 0;
@@ -70,7 +86,6 @@ function ReplayLayout({layout = LayoutKey.TOPBAR}: Props) {
   if (layout === LayoutKey.NO_VIDEO) {
     return (
       <BodyContent>
-        {timeline}
         <FluidHeight ref={measureRef}>
           {hasSize ? <PanelContainer key={layout}>{focusArea}</PanelContainer> : null}
         </FluidHeight>
@@ -81,7 +96,6 @@ function ReplayLayout({layout = LayoutKey.TOPBAR}: Props) {
   if (layout === LayoutKey.SIDEBAR_LEFT) {
     return (
       <BodyContent>
-        {timeline}
         <FluidHeight ref={measureRef}>
           {hasSize ? (
             <SplitPanel
@@ -97,6 +111,7 @@ function ReplayLayout({layout = LayoutKey.TOPBAR}: Props) {
             />
           ) : null}
         </FluidHeight>
+        {controller}
       </BodyContent>
     );
   }
@@ -104,7 +119,6 @@ function ReplayLayout({layout = LayoutKey.TOPBAR}: Props) {
   // layout === 'topbar'
   return (
     <BodyContent>
-      {timeline}
       <FluidHeight ref={measureRef}>
         {hasSize ? (
           <SplitPanel
@@ -120,6 +134,7 @@ function ReplayLayout({layout = LayoutKey.TOPBAR}: Props) {
           />
         ) : null}
       </FluidHeight>
+      {controller}
     </BodyContent>
   );
 }
@@ -129,7 +144,7 @@ const BodyContent = styled('main')`
   width: 100%;
   height: 100%;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: 1fr auto;
   gap: ${space(2)};
   overflow: hidden;
   padding: ${space(2)};

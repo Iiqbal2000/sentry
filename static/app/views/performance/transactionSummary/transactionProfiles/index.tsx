@@ -1,80 +1,63 @@
-import {useCallback, useMemo, useState} from 'react';
-import {browserHistory} from 'react-router';
+import {useCallback, useMemo} from 'react';
 import styled from '@emotion/styled';
 
-import DatePageFilter from 'sentry/components/datePageFilter';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
+import type {SmartSearchBarProps} from 'sentry/components/deprecatedSmartSearchBar';
 import * as Layout from 'sentry/components/layouts/thirds';
+import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import PageFilterBar from 'sentry/components/organizations/pageFilterBar';
-import {ProfileEventsTable} from 'sentry/components/profiling/profileEventsTable';
-import SmartSearchBar, {SmartSearchBarProps} from 'sentry/components/smartSearchBar';
-import {MAX_QUERY_LENGTH} from 'sentry/constants';
+import {TransactionSearchQueryBuilder} from 'sentry/components/performance/transactionSearchQueryBuilder';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {defined} from 'sentry/utils';
+import type {Organization} from 'sentry/types/organization';
 import EventView from 'sentry/utils/discover/eventView';
-import {useProfileEvents} from 'sentry/utils/profiling/hooks/useProfileEvents';
-import {useProfileFilters} from 'sentry/utils/profiling/hooks/useProfileFilters';
-import {formatSort} from 'sentry/utils/profiling/hooks/utils';
+import {isAggregateField} from 'sentry/utils/discover/fields';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import {useLocation} from 'sentry/utils/useLocation';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import useOrganization from 'sentry/utils/useOrganization';
-import usePageFilters from 'sentry/utils/usePageFilters';
 import useProjects from 'sentry/utils/useProjects';
 import Tab from 'sentry/views/performance/transactionSummary/tabs';
-import {
-  getProfilesTableFields,
-  ProfilingFieldType,
-} from 'sentry/views/profiling/profileSummary/content';
 
-import PageLayout from '../pageLayout';
+import PageLayout, {redirectToPerformanceHomepage} from '../pageLayout';
 
-function Profiles(): React.ReactElement {
+import {TransactionProfilesContent} from './content';
+
+interface ProfilesProps {
+  organization: Organization;
+  transaction: string;
+}
+
+function Profiles({organization, transaction}: ProfilesProps) {
+  const navigate = useNavigate();
   const location = useLocation();
-  const organization = useOrganization();
-  const projects = useProjects();
-  const {selection} = usePageFilters();
+  const {projects} = useProjects();
 
-  const profilesCursor = useMemo(
-    () => decodeScalar(location.query.cursor),
-    [location.query.cursor]
+  const project = projects.find(p => p.id === location.query.project);
+
+  const rawQuery = useMemo(
+    () => decodeScalar(location.query.query, ''),
+    [location.query.query]
   );
 
-  const project = projects.projects.find(p => p.id === location.query.project);
-  const fields = getProfilesTableFields(project?.platform);
+  const query = useMemo(() => {
+    const conditions = new MutableSearch(rawQuery);
+    conditions.setFilterValues('event.type', ['transaction']);
+    conditions.setFilterValues('transaction', [transaction]);
 
-  const sort = formatSort<ProfilingFieldType>(decodeScalar(location.query.sort), fields, {
-    key: 'timestamp',
-    order: 'desc',
-  });
+    Object.keys(conditions.filters).forEach(field => {
+      if (isAggregateField(field)) {
+        conditions.removeFilter(field);
+      }
+    });
 
-  const [query, setQuery] = useState(() => {
-    // The search fields from the URL differ between profiling and
-    // events dataset. For now, just drop everything except transaction
-    const search = new MutableSearch('');
-    const transaction = decodeScalar(location.query.transaction);
-
-    if (defined(transaction)) {
-      search.setFilterValues('transaction', [transaction]);
-    }
-
-    return search;
-  });
-
-  const profiles = useProfileEvents<ProfilingFieldType>({
-    cursor: profilesCursor,
-    fields,
-    query: query.formatString(),
-    sort,
-    limit: 30,
-    referrer: 'api.profiling.transactions-profiles-table',
-  });
+    return conditions.formatString();
+  }, [transaction, rawQuery]);
 
   const handleSearch: SmartSearchBarProps['onSearch'] = useCallback(
     (searchQuery: string) => {
-      setQuery(new MutableSearch(searchQuery));
-      browserHistory.push({
+      navigate({
         ...location,
         query: {
           ...location.query,
@@ -83,45 +66,40 @@ function Profiles(): React.ReactElement {
         },
       });
     },
-    [location]
+    [location, navigate]
   );
 
-  const profileFilters = useProfileFilters({query: '', selection});
-  const transaction = decodeScalar(location.query.transaction);
+  const projectIds = useMemo(
+    () => (project ? [parseInt(project?.id, 10)] : undefined),
+    [project]
+  );
+
   return (
     <PageLayout
       location={location}
       organization={organization}
-      projects={projects.projects}
+      projects={projects}
       tab={Tab.PROFILING}
       generateEventView={() => EventView.fromLocation(location)}
       getDocumentTitle={() => t(`Profile: %s`, transaction)}
+      fillSpace
       childComponent={() => {
         return (
-          <Layout.Main fullWidth>
+          <StyledMain fullWidth>
             <FilterActions>
               <PageFilterBar condensed>
                 <EnvironmentPageFilter />
-                <DatePageFilter alignDropdown="left" />
+                <DatePageFilter />
               </PageFilterBar>
-              <SmartSearchBar
-                organization={organization}
-                hasRecentSearches
-                searchSource="profile_landing"
-                supportedTags={profileFilters}
-                query={query.formatString()}
+              <TransactionSearchQueryBuilder
+                projects={projectIds}
+                initialQuery={rawQuery}
                 onSearch={handleSearch}
-                maxQueryLength={MAX_QUERY_LENGTH}
+                searchSource="transaction_profiles"
               />
             </FilterActions>
-            <ProfileEventsTable
-              columns={fields}
-              data={profiles.status === 'success' ? profiles.data : null}
-              error={profiles.status === 'error' ? t('Unable to load profiles') : null}
-              isLoading={profiles.status === 'loading'}
-              sort={sort}
-            />
-          </Layout.Main>
+            <TransactionProfilesContent query={query} transaction={transaction} />
+          </StyledMain>
         );
       }}
     />
@@ -135,4 +113,23 @@ const FilterActions = styled('div')`
   grid-template-columns: min-content 1fr;
 `;
 
-export default Profiles;
+const StyledMain = styled(Layout.Main)`
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+`;
+
+function ProfilesIndex() {
+  const organization = useOrganization();
+  const location = useLocation();
+  const transaction = decodeScalar(location.query.transaction);
+
+  if (!transaction) {
+    redirectToPerformanceHomepage(organization, location);
+    return null;
+  }
+
+  return <Profiles organization={organization} transaction={transaction} />;
+}
+
+export default ProfilesIndex;

@@ -1,27 +1,28 @@
 import {Fragment, useEffect} from 'react';
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {promptsCheck, promptsUpdate} from 'sentry/actionCreators/prompts';
 import Feature from 'sentry/components/acl/feature';
-import {Alert} from 'sentry/components/alert';
-import {Button} from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
+import {Alert} from 'sentry/components/core/alert';
 import CreateAlertButton from 'sentry/components/createAlertButton';
 import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import * as Layout from 'sentry/components/layouts/thirds';
 import ExternalLink from 'sentry/components/links/externalLink';
 import PageFiltersContainer from 'sentry/components/organizations/pageFilters/container';
 import Pagination from 'sentry/components/pagination';
-import PanelTable from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import Projects from 'sentry/utils/projects';
 
 import FilterBar from '../../filterBar';
-import {Incident} from '../../types';
+import type {Incident} from '../../types';
 import {getQueryStatus, getTeamParams} from '../../utils';
 import AlertHeader from '../header';
 import Onboarding from '../onboarding';
@@ -31,7 +32,7 @@ import AlertListRow from './row';
 const DOCS_URL =
   'https://docs.sentry.io/workflow/alerts-notifications/alerts/?_ga=2.21848383.580096147.1592364314-1444595810.1582160976';
 
-type Props = RouteComponentProps<{}, {}> & {
+type Props = RouteComponentProps & {
   organization: Organization;
 };
 
@@ -110,7 +111,7 @@ class IncidentsList extends DeprecatedAsyncComponent<
 
     // Check if they have already seen the prompt for the alert stream
     const prompt = await promptsCheck(this.api, {
-      organizationId: organization.id,
+      organization,
       feature: 'alert_stream',
     });
 
@@ -120,8 +121,8 @@ class IncidentsList extends DeprecatedAsyncComponent<
       // Prompt has not been seen, mark the prompt as seen immediately so they
       // don't see it again
       promptsUpdate(this.api, {
+        organization,
         feature: 'alert_stream',
-        organizationId: organization.id,
         status: 'dismissed',
       });
     }
@@ -132,7 +133,7 @@ class IncidentsList extends DeprecatedAsyncComponent<
   get projectsFromIncidents() {
     const {incidentList} = this.state;
 
-    return [...new Set(incidentList?.map(({projects}) => projects).flat())];
+    return [...new Set(incidentList?.flatMap(({projects}) => projects))];
   }
 
   handleChangeSearch = (title: string) => {
@@ -184,9 +185,9 @@ class IncidentsList extends DeprecatedAsyncComponent<
 
     const actions = (
       <Fragment>
-        <Button size="sm" external href={DOCS_URL}>
+        <LinkButton size="sm" external href={DOCS_URL}>
           {t('View Features')}
-        </Button>
+        </LinkButton>
         <CreateAlertButton
           organization={organization}
           iconProps={{size: 'xs'}}
@@ -258,17 +259,17 @@ class IncidentsList extends DeprecatedAsyncComponent<
   }
 
   renderBody() {
-    const {organization, router, location} = this.props;
+    const {organization, location} = this.props;
 
     return (
       <SentryDocumentTitle title={t('Alerts')} orgSlug={organization.slug}>
         <PageFiltersContainer>
-          <AlertHeader router={router} activeTab="stream" />
+          <AlertHeader activeTab="stream" />
           <Layout.Body>
             <Layout.Main fullWidth>
               {!this.tryRenderOnboarding() && (
                 <Fragment>
-                  <StyledAlert showIcon>
+                  <StyledAlert type="info" showIcon>
                     {t('This page only shows metric alerts.')}
                   </StyledAlert>
                   <FilterBar
@@ -300,14 +301,16 @@ function IncidentsListContainer(props: Props) {
   const renderDisabled = () => (
     <Layout.Body>
       <Layout.Main fullWidth>
-        <Alert type="warning">{t("You don't have access to this feature")}</Alert>
+        <Alert.Container>
+          <Alert type="warning">{t("You don't have access to this feature")}</Alert>
+        </Alert.Container>
       </Layout.Main>
     </Layout.Body>
   );
 
   return (
     <Feature
-      features={['incidents']}
+      features="incidents"
       hookName="feature-disabled:alerts-page"
       renderDisabled={renderDisabled}
     >

@@ -1,4 +1,4 @@
-import {browserHistory} from 'react-router';
+import {RouterFixture} from 'sentry-fixture/routerFixture';
 
 import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
@@ -53,6 +53,7 @@ describe('Register', function () {
   });
 
   it('handles success', async function () {
+    const router = RouterFixture();
     const userObject = {
       id: 1,
       name: 'Joe',
@@ -68,10 +69,10 @@ describe('Register', function () {
       },
     });
 
-    render(<RegisterForm authConfig={emptyAuthConfig} />);
+    render(<RegisterForm authConfig={emptyAuthConfig} />, {router});
     await doLogin(mockRequest);
 
     await waitFor(() => expect(ConfigStore.get('user')).toEqual(userObject));
-    expect(browserHistory.push).toHaveBeenCalledWith({pathname: '/next/'});
+    expect(router.push).toHaveBeenCalledWith({pathname: '/next/'});
   });
 });

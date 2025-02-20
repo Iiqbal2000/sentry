@@ -7,7 +7,7 @@ type RadioPanelGroupProps<C extends string> = {
   /**
    * An array of [id, name]
    */
-  choices: [C, React.ReactNode, React.ReactNode?][];
+  choices: Array<[C, React.ReactNode, React.ReactNode?]>;
   label: string;
   onChange: (id: C, e: React.FormEvent<HTMLInputElement>) => void;
   value: string | null;
@@ -62,7 +62,7 @@ const RadioLineItem = styled('label')<{
   align-items: center;
   cursor: pointer;
   outline: none;
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
   margin: 0;
   color: ${p => p.theme.subText};
   transition: color 0.3s ease-in;

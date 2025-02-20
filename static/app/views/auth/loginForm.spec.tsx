@@ -1,4 +1,4 @@
-import {browserHistory} from 'react-router';
+import {RouterFixture} from 'sentry-fixture/routerFixture';
 
 import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
@@ -39,6 +39,7 @@ describe('LoginForm', function () {
   });
 
   it('handles success', async function () {
+    const router = RouterFixture();
     const userObject = {
       id: 1,
       name: 'Joe',
@@ -54,7 +55,7 @@ describe('LoginForm', function () {
       },
     });
 
-    render(<LoginForm authConfig={emptyAuthConfig} />);
+    render(<LoginForm authConfig={emptyAuthConfig} />, {router});
     await doLogin();
 
     expect(mockRequest).toHaveBeenCalledWith(
@@ -65,7 +66,7 @@ describe('LoginForm', function () {
     );
 
     await waitFor(() => expect(ConfigStore.get('user')).toEqual(userObject));
-    expect(browserHistory.push).toHaveBeenCalledWith({pathname: '/next/'});
+    expect(router.push).toHaveBeenCalledWith({pathname: '/next/'});
   });
 
   it('renders login provider buttons', function () {

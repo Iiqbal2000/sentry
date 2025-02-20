@@ -1,18 +1,25 @@
-import {browserHistory} from 'react-router';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {
   generateSuspectSpansResponse,
   initializeData as _initializeData,
 } from 'sentry-test/performance/initializePerformanceData';
-import {act, render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary';
+import {
+  act,
+  render,
+  screen,
+  userEvent,
+  waitFor,
+  within,
+} from 'sentry-test/reactTestingLibrary';
 
 import ProjectsStore from 'sentry/stores/projectsStore';
 import SpanDetails from 'sentry/views/performance/transactionSummary/transactionSpans/spanDetails';
 import {spanDetailsRouteWithQuery} from 'sentry/views/performance/transactionSummary/transactionSpans/spanDetails/utils';
 
-function initializeData(settings) {
+function initializeData(settings: Parameters<typeof _initializeData>[0]) {
   const data = _initializeData(settings);
-  act(() => void ProjectsStore.loadInitialData(data.organization.projects));
+  act(() => void ProjectsStore.loadInitialData(data.projects));
   return data;
 }
 
@@ -32,8 +39,6 @@ describe('Performance > Transaction Spans > Span Summary', function () {
   afterEach(function () {
     MockApiClient.clearMockResponses();
     ProjectsStore.reset();
-    // need to typecast to any to be able to call mockReset
-    (browserHistory.push as any).mockReset();
   });
 
   describe('Without Span Data', function () {
@@ -120,7 +125,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
       });
 
       render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-        context: data.routerContext,
+        router: data.router,
         organization: data.organization,
       });
 
@@ -141,7 +146,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
 
       // just want to get one span in the response
       const badExamples = [generateSuspectSpansResponse({examplesOnly: true})[0]];
-      for (const example of badExamples[0].examples) {
+      for (const example of badExamples[0]!.examples) {
         // make sure that the spans array is empty
         example.spans = [];
       }
@@ -199,7 +204,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
       });
 
       render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-        context: data.routerContext,
+        router: data.router,
         organization: data.organization,
       });
 
@@ -273,7 +278,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
       });
 
       render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-        context: data.routerContext,
+        router: data.router,
         organization: data.organization,
       });
 
@@ -339,7 +344,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
       });
 
       render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-        context: data.routerContext,
+        router: data.router,
         organization: data.organization,
       });
 
@@ -353,7 +358,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
       });
 
       render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-        context: data.routerContext,
+        router: data.router,
         organization: data.organization,
       });
 
@@ -375,72 +380,72 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         });
       });
 
-      it('renders a search bar', function () {
+      it('renders a search bar', async function () {
         const data = initializeData({
           features: FEATURES,
           query: {project: '1', transaction: 'transaction'},
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
-        const searchBarNode = screen.getByPlaceholderText('Filter Transactions');
+        const searchBarNode = await screen.findByPlaceholderText('Filter Transactions');
         expect(searchBarNode).toBeInTheDocument();
       });
 
-      it('disables reset button when no min or max query parameters were set', function () {
+      it('disables reset button when no min or max query parameters were set', async function () {
         const data = initializeData({
           features: FEATURES,
           query: {project: '1', transaction: 'transaction'},
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
-        const resetButton = screen.getByRole('button', {
+        const resetButton = await screen.findByRole('button', {
           name: /reset view/i,
         });
         expect(resetButton).toBeInTheDocument();
         expect(resetButton).toBeDisabled();
       });
 
-      it('enables reset button when min and max are set', function () {
+      it('enables reset button when min and max are set', async function () {
         const data = initializeData({
           features: FEATURES,
           query: {project: '1', transaction: 'transaction', min: '10', max: '100'},
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
-        const resetButton = screen.getByRole('button', {
+        const resetButton = await screen.findByRole('button', {
           name: /reset view/i,
         });
         expect(resetButton).toBeEnabled();
       });
 
-      it('clears min and max query parameters when reset button is clicked', function () {
+      it('clears min and max query parameters when reset button is clicked', async function () {
         const data = initializeData({
           features: FEATURES,
           query: {project: '1', transaction: 'transaction', min: '10', max: '100'},
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
-        const resetButton = screen.getByRole('button', {
+        const resetButton = await screen.findByRole('button', {
           name: /reset view/i,
         });
-        resetButton.click();
-        expect(browserHistory.push).toHaveBeenCalledWith(
+        await userEvent.click(resetButton);
+        expect(data.router.push).toHaveBeenCalledWith(
           expect.not.objectContaining({min: expect.any(String), max: expect.any(String)})
         );
       });
@@ -452,7 +457,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
@@ -460,7 +465,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         await userEvent.click(searchBarNode);
         await userEvent.paste('count():>3');
         expect(searchBarNode).toHaveTextContent('count():>3');
-        expect(browserHistory.push).not.toHaveBeenCalled();
+        expect(data.router.push).not.toHaveBeenCalled();
       });
 
       it('renders a display toggle that changes a chart view between timeseries and histogram by pushing it to the browser history', async function () {
@@ -479,7 +484,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
@@ -494,14 +499,14 @@ describe('Performance > Transaction Spans > Span Summary', function () {
           'Self Time Breakdown'
         );
 
-        (await within(displayToggle).findByRole('button')).click();
-        (
+        await userEvent.click(await within(displayToggle).findByRole('button'));
+        await userEvent.click(
           await within(displayToggle).findByRole('option', {
             name: 'Self Time Distribution',
           })
-        ).click();
+        );
 
-        expect(browserHistory.push).toHaveBeenCalledWith(
+        expect(data.router.push).toHaveBeenCalledWith(
           expect.objectContaining({
             query: {
               display: 'histogram',
@@ -528,7 +533,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
@@ -553,7 +558,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
@@ -576,7 +581,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
@@ -584,7 +589,7 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         expect(nodes[0]).toBeInTheDocument();
       });
 
-      it('sends min and max to span example query', function () {
+      it('sends min and max to span example query', async function () {
         const mock = MockApiClient.addMockResponse({
           url: '/organizations/org-slug/events-spans/',
           body: {},
@@ -595,22 +600,24 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
-        expect(mock).toHaveBeenLastCalledWith(
-          '/organizations/org-slug/events-spans/',
-          expect.objectContaining({
-            query: expect.objectContaining({
-              min_exclusive_time: '10',
-              max_exclusive_time: '120',
-            }),
-          })
-        );
+        await waitFor(() => {
+          expect(mock).toHaveBeenLastCalledWith(
+            '/organizations/org-slug/events-spans/',
+            expect.objectContaining({
+              query: expect.objectContaining({
+                min_exclusive_time: '10',
+                max_exclusive_time: '120',
+              }),
+            })
+          );
+        });
       });
 
-      it('sends min and max to suspect spans query', function () {
+      it('sends min and max to suspect spans query', async function () {
         const mock = MockApiClient.addMockResponse({
           url: '/organizations/org-slug/events-spans-performance/',
           body: {},
@@ -621,19 +628,21 @@ describe('Performance > Transaction Spans > Span Summary', function () {
         });
 
         render(<SpanDetails params={{spanSlug: 'op:aaaaaaaa'}} {...data} />, {
-          context: data.routerContext,
+          router: data.router,
           organization: data.organization,
         });
 
-        expect(mock).toHaveBeenLastCalledWith(
-          '/organizations/org-slug/events-spans-performance/',
-          expect.objectContaining({
-            query: expect.objectContaining({
-              min_exclusive_time: '10',
-              max_exclusive_time: '120',
-            }),
-          })
-        );
+        await waitFor(() => {
+          expect(mock).toHaveBeenLastCalledWith(
+            '/organizations/org-slug/events-spans-performance/',
+            expect.objectContaining({
+              query: expect.objectContaining({
+                min_exclusive_time: '10',
+                max_exclusive_time: '120',
+              }),
+            })
+          );
+        });
       });
     });
   });
@@ -641,8 +650,9 @@ describe('Performance > Transaction Spans > Span Summary', function () {
 
 describe('spanDetailsRouteWithQuery', function () {
   it('should encode slashes in span op', function () {
+    const organization = OrganizationFixture();
     const target = spanDetailsRouteWithQuery({
-      orgSlug: 'org-slug',
+      organization,
       transaction: 'transaction',
       query: {},
       spanSlug: {op: 'o/p', group: 'aaaaaaaaaaaaaaaa'},

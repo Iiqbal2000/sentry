@@ -1,9 +1,7 @@
 from django.urls import reverse
 
-from sentry.issues.occurrence_consumer import process_event_and_issue_occurrence
 from sentry.testutils.cases import APITestCase, PerformanceIssueTestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
-from sentry.testutils.silo import region_silo_test
+from sentry.testutils.helpers.datetime import before_now
 from sentry.utils.samples import load_data
 from tests.sentry.issues.test_utils import OccurrenceTestMixin
 
@@ -15,10 +13,10 @@ class ProjectEventDetailsTest(APITestCase, SnubaTestCase):
         self.setup_data()
 
     def setup_data(self):
-        one_min_ago = iso_format(before_now(minutes=1))
-        two_min_ago = iso_format(before_now(minutes=2))
-        three_min_ago = iso_format(before_now(minutes=3))
-        four_min_ago = iso_format(before_now(minutes=4))
+        one_min_ago = before_now(minutes=1).isoformat()
+        two_min_ago = before_now(minutes=2).isoformat()
+        three_min_ago = before_now(minutes=3).isoformat()
+        four_min_ago = before_now(minutes=4).isoformat()
 
         self.prev_event = self.store_event(
             data={"event_id": "a" * 32, "timestamp": four_min_ago, "fingerprint": ["group-1"]},
@@ -57,8 +55,8 @@ class ProjectEventDetailsTest(APITestCase, SnubaTestCase):
             "sentry-api-0-project-event-details",
             kwargs={
                 "event_id": self.cur_event.event_id,
-                "project_slug": self.project.slug,
-                "organization_slug": self.project.organization.slug,
+                "project_id_or_slug": self.project.slug,
+                "organization_id_or_slug": self.project.organization.slug,
             },
         )
         response = self.client.get(url, format="json")
@@ -74,8 +72,8 @@ class ProjectEventDetailsTest(APITestCase, SnubaTestCase):
             "sentry-api-0-project-event-details",
             kwargs={
                 "event_id": self.prev_event.event_id,
-                "project_slug": self.project.slug,
-                "organization_slug": self.project.organization.slug,
+                "project_id_or_slug": self.project.slug,
+                "organization_id_or_slug": self.project.organization.slug,
             },
         )
         response = self.client.get(url, format="json")
@@ -91,8 +89,8 @@ class ProjectEventDetailsTest(APITestCase, SnubaTestCase):
             "sentry-api-0-project-event-details",
             kwargs={
                 "event_id": self.cur_event.event_id,
-                "project_slug": self.project.slug,
-                "organization_slug": self.project.organization.slug,
+                "project_id_or_slug": self.project.slug,
+                "organization_id_or_slug": self.project.organization.slug,
             },
         )
         response = self.client.get(
@@ -110,8 +108,8 @@ class ProjectEventDetailsTest(APITestCase, SnubaTestCase):
             "sentry-api-0-project-event-details",
             kwargs={
                 "event_id": self.next_event.event_id,
-                "project_slug": self.project.slug,
-                "organization_slug": self.project.organization.slug,
+                "project_id_or_slug": self.project.slug,
+                "organization_id_or_slug": self.project.organization.slug,
             },
         )
         response = self.client.get(url, format="json")
@@ -121,35 +119,30 @@ class ProjectEventDetailsTest(APITestCase, SnubaTestCase):
         assert response.data["nextEventID"] is None
 
 
-@region_silo_test
 class ProjectEventDetailsGenericTest(OccurrenceTestMixin, ProjectEventDetailsTest):
     def setup_data(self):
-        one_min_ago = iso_format(before_now(minutes=1))
-        two_min_ago = iso_format(before_now(minutes=2))
-        three_min_ago = iso_format(before_now(minutes=3))
-        four_min_ago = iso_format(before_now(minutes=4))
+        one_min_ago = before_now(minutes=1).isoformat()
+        two_min_ago = before_now(minutes=2).isoformat()
+        three_min_ago = before_now(minutes=3).isoformat()
+        four_min_ago = before_now(minutes=4).isoformat()
 
         prev_event_id = "a" * 32
-        self.prev_event, prev_group_info = process_event_and_issue_occurrence(
-            self.build_occurrence_data(
-                event_id=prev_event_id, project_id=self.project.id, fingerprint=["group-1"]
-            ),
-            {
-                "event_id": prev_event_id,
-                "project_id": self.project.id,
+        self.prev_event, _ = self.process_occurrence(
+            event_id=prev_event_id,
+            project_id=self.project.id,
+            fingerprint=["group-1"],
+            event_data={
                 "timestamp": four_min_ago,
                 "message_timestamp": four_min_ago,
             },
         )
 
         cur_event_id = "b" * 32
-        self.cur_event, cur_group_info = process_event_and_issue_occurrence(
-            self.build_occurrence_data(
-                event_id=cur_event_id, project_id=self.project.id, fingerprint=["group-1"]
-            ),
-            {
-                "event_id": cur_event_id,
-                "project_id": self.project.id,
+        self.cur_event, cur_group_info = self.process_occurrence(
+            event_id=cur_event_id,
+            project_id=self.project.id,
+            fingerprint=["group-1"],
+            event_data={
                 "timestamp": three_min_ago,
                 "message_timestamp": three_min_ago,
             },
@@ -158,13 +151,11 @@ class ProjectEventDetailsGenericTest(OccurrenceTestMixin, ProjectEventDetailsTes
         self.cur_group = cur_group_info.group
 
         next_event_id = "c" * 32
-        self.next_event, next_group_info = process_event_and_issue_occurrence(
-            self.build_occurrence_data(
-                event_id=next_event_id, project_id=self.project.id, fingerprint=["group-1"]
-            ),
-            {
-                "event_id": next_event_id,
-                "project_id": self.project.id,
+        self.next_event, _ = self.process_occurrence(
+            event_id=next_event_id,
+            project_id=self.project.id,
+            fingerprint=["group-1"],
+            event_data={
                 "timestamp": two_min_ago,
                 "message_timestamp": two_min_ago,
                 "tags": {"environment": "production"},
@@ -172,26 +163,24 @@ class ProjectEventDetailsGenericTest(OccurrenceTestMixin, ProjectEventDetailsTes
         )
 
         unrelated_event_id = "d" * 32
-        process_event_and_issue_occurrence(
-            self.build_occurrence_data(
-                event_id=unrelated_event_id, project_id=self.project.id, fingerprint=["group-2"]
-            ),
-            {
-                "event_id": unrelated_event_id,
-                "project_id": self.project.id,
+        self.process_occurrence(
+            event_id=unrelated_event_id,
+            project_id=self.project.id,
+            fingerprint=["group-2"],
+            event_data={
                 "timestamp": one_min_ago,
                 "message_timestamp": one_min_ago,
                 "tags": {"environment": "production"},
             },
-        )[0]
+        )
 
     def test_generic_event_with_occurrence(self):
         url = reverse(
             "sentry-api-0-project-event-details",
             kwargs={
                 "event_id": self.cur_event.event_id,
-                "project_slug": self.project.slug,
-                "organization_slug": self.project.organization.slug,
+                "project_id_or_slug": self.project.slug,
+                "organization_id_or_slug": self.project.organization.slug,
             },
         )
         response = self.client.get(url, format="json", data={"group_id": self.cur_group.id})
@@ -202,7 +191,6 @@ class ProjectEventDetailsGenericTest(OccurrenceTestMixin, ProjectEventDetailsTes
         assert response.data["occurrence"]["id"] == self.cur_event.id
 
 
-@region_silo_test
 class ProjectEventDetailsTransactionTest(APITestCase, SnubaTestCase, PerformanceIssueTestCase):
     def setUp(self):
         super().setUp()
@@ -262,8 +250,8 @@ class ProjectEventDetailsTransactionTest(APITestCase, SnubaTestCase, Performance
             "sentry-api-0-project-event-details",
             kwargs={
                 "event_id": self.cur_transaction_event.event_id,
-                "project_slug": self.cur_transaction_event.project.slug,
-                "organization_slug": self.cur_transaction_event.project.organization.slug,
+                "project_id_or_slug": self.cur_transaction_event.project.slug,
+                "organization_id_or_slug": self.cur_transaction_event.project.organization.slug,
             },
         )
         response = self.client.get(url, format="json", data={"group_id": self.group.id})
@@ -280,8 +268,8 @@ class ProjectEventDetailsTransactionTest(APITestCase, SnubaTestCase, Performance
             "sentry-api-0-project-event-details",
             kwargs={
                 "event_id": self.prev_transaction_event.event_id,
-                "project_slug": self.prev_transaction_event.project.slug,
-                "organization_slug": self.prev_transaction_event.project.organization.slug,
+                "project_id_or_slug": self.prev_transaction_event.project.slug,
+                "organization_id_or_slug": self.prev_transaction_event.project.organization.slug,
             },
         )
         response = self.client.get(url, format="json", data={"group_id": self.group.id})
@@ -298,8 +286,8 @@ class ProjectEventDetailsTransactionTest(APITestCase, SnubaTestCase, Performance
             "sentry-api-0-project-event-details",
             kwargs={
                 "event_id": self.next_transaction_event.event_id,
-                "project_slug": self.next_transaction_event.project.slug,
-                "organization_slug": self.next_transaction_event.project.organization.slug,
+                "project_id_or_slug": self.next_transaction_event.project.slug,
+                "organization_id_or_slug": self.next_transaction_event.project.organization.slug,
             },
         )
         response = self.client.get(url, format="json", data={"group_id": self.group.id})
@@ -314,8 +302,8 @@ class ProjectEventDetailsTransactionTest(APITestCase, SnubaTestCase, Performance
             "sentry-api-0-project-event-details",
             kwargs={
                 "event_id": self.cur_transaction_event.event_id,
-                "project_slug": self.cur_transaction_event.project.slug,
-                "organization_slug": self.cur_transaction_event.project.organization.slug,
+                "project_id_or_slug": self.cur_transaction_event.project.slug,
+                "organization_id_or_slug": self.cur_transaction_event.project.organization.slug,
             },
         )
         response = self.client.get(url, format="json")
@@ -327,14 +315,13 @@ class ProjectEventDetailsTransactionTest(APITestCase, SnubaTestCase, Performance
         assert response.data["groupID"] is None
 
 
-@region_silo_test
 class ProjectEventJsonEndpointTest(APITestCase, SnubaTestCase):
     def setUp(self):
         super().setUp()
         self.login_as(user=self.user)
         self.event_id = "c" * 32
         self.fingerprint = ["group_2"]
-        self.min_ago = iso_format(before_now(minutes=1))
+        self.min_ago = before_now(minutes=1).replace(microsecond=0).isoformat()
         self.event = self.store_event(
             data={
                 "event_id": self.event_id,
@@ -347,8 +334,8 @@ class ProjectEventJsonEndpointTest(APITestCase, SnubaTestCase):
         self.url = reverse(
             "sentry-api-0-event-json",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "event_id": self.event_id,
             },
         )
@@ -356,7 +343,7 @@ class ProjectEventJsonEndpointTest(APITestCase, SnubaTestCase):
     def assert_event(self, data):
         assert data["event_id"] == self.event_id
         assert data["user"]["email"] == self.user.email
-        assert data["datetime"][:19] == self.min_ago
+        assert data["datetime"] == self.min_ago
         assert data["fingerprint"] == self.fingerprint
 
     def test_simple(self):
@@ -368,8 +355,8 @@ class ProjectEventJsonEndpointTest(APITestCase, SnubaTestCase):
         self.url = reverse(
             "sentry-api-0-event-json",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "event_id": "no" * 16,
             },
         )
@@ -390,11 +377,76 @@ class ProjectEventJsonEndpointTest(APITestCase, SnubaTestCase):
         url = reverse(
             "sentry-api-0-event-json",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": project2.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": project2.slug,
                 "event_id": self.event_id,
             },
         )
         response = self.client.get(url, format="json")
         assert response.status_code == 404, response.content
         assert response.data == {"detail": "Event not found"}
+
+
+class ProjectEventDetailsTransactionTestScrubbed(APITestCase, SnubaTestCase):
+    def setUp(self):
+        super().setUp()
+        self.login_as(user=self.user)
+        data = load_data("transaction")
+        for span in data["spans"]:
+            span["sentry_tags"]["user.ip"] = "127.0.0.1"
+            span["sentry_tags"]["user"] = "ip:127.0.0.1"
+        self.event = self.store_event(data=data, project_id=self.project.id)
+
+    def url(self, event):
+        return reverse(
+            "sentry-api-0-event-json",
+            kwargs={
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
+                "event_id": event.event_id,
+            },
+        )
+
+    def test_no_scrubbed(self):
+        response = self.client.get(self.url(self.event), format="json")
+        assert response.status_code == 200, response.content
+        assert len(response.data["spans"]) > 0
+        for span in response.data["spans"]:
+            assert "user.ip" in span["sentry_tags"]
+            assert span["sentry_tags"]["user"] == "ip:127.0.0.1"
+
+    def test_scrubbed_project(self):
+        self.project.update_option("sentry:scrub_ip_address", True)
+
+        response = self.client.get(self.url(self.event), format="json")
+        assert response.status_code == 200, response.content
+        assert len(response.data["spans"]) > 0
+        for span in response.data["spans"]:
+            assert "user.ip" not in span["sentry_tags"]
+            assert span["sentry_tags"]["user"] == "ip:[ip]"
+
+    def test_scrubbed_organization(self):
+        self.organization.update_option("sentry:require_scrub_ip_address", True)
+
+        response = self.client.get(self.url(self.event), format="json")
+        assert response.status_code == 200, response.content
+        assert len(response.data["spans"]) > 0
+        for span in response.data["spans"]:
+            assert "user.ip" not in span["sentry_tags"]
+            assert span["sentry_tags"]["user"] == "ip:[ip]"
+
+    def test_scrubbed_organization_does_not_scrub_other_user_fields(self):
+        self.organization.update_option("sentry:require_scrub_ip_address", True)
+
+        data = load_data("transaction")
+        for span in data["spans"]:
+            span["sentry_tags"]["user.ip"] = "127.0.0.1"
+            span["sentry_tags"]["user"] = "username:foo"
+        event = self.store_event(data=data, project_id=self.project.id)
+
+        response = self.client.get(self.url(event), format="json")
+        assert response.status_code == 200, response.content
+        assert len(response.data["spans"]) > 0
+        for span in response.data["spans"]:
+            assert "user.ip" not in span["sentry_tags"]
+            assert span["sentry_tags"]["user"] == "username:foo"

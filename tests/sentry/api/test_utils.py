@@ -4,18 +4,35 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
+from rest_framework.exceptions import APIException
 from sentry_sdk import Scope
-from sentry_sdk.utils import exc_info_from_error
 
 from sentry.api.utils import (
     MAX_STATS_PERIOD,
-    InvalidParams,
-    customer_domain_path,
+    clamp_date_range,
     get_date_range_from_params,
+    handle_query_errors,
     print_and_capture_handler_exception,
 )
+from sentry.exceptions import IncompatibleMetricsQuery, InvalidParams, InvalidSearchQuery
 from sentry.testutils.cases import APITestCase
 from sentry.testutils.helpers.datetime import freeze_time
+from sentry.utils.snuba import (
+    DatasetSelectionError,
+    QueryConnectionFailed,
+    QueryExecutionError,
+    QueryExecutionTimeMaximum,
+    QueryIllegalTypeOfArgument,
+    QueryMemoryLimitExceeded,
+    QueryMissingColumn,
+    QueryOutsideRetentionError,
+    QuerySizeExceeded,
+    QueryTooManySimultaneous,
+    RateLimitExceeded,
+    SchemaValidationError,
+    SnubaError,
+    UnqualifiedQueryError,
+)
 
 
 class GetDateRangeFromParamsTest(unittest.TestCase):
@@ -50,8 +67,8 @@ class GetDateRangeFromParamsTest(unittest.TestCase):
     def test_date_range(self):
         start, end = get_date_range_from_params({"start": "2018-11-01", "end": "2018-11-07"})
 
-        assert start == datetime.datetime(2018, 11, 1, tzinfo=timezone.utc)
-        assert end == datetime.datetime(2018, 11, 7, tzinfo=timezone.utc)
+        assert start == datetime.datetime(2018, 11, 1, tzinfo=datetime.UTC)
+        assert end == datetime.datetime(2018, 11, 7, tzinfo=datetime.UTC)
 
         with pytest.raises(InvalidParams):
             get_date_range_from_params(
@@ -74,13 +91,13 @@ class GetDateRangeFromParamsTest(unittest.TestCase):
     def test_relative_date_range(self):
         start, end = get_date_range_from_params({"timeframeStart": "14d", "timeframeEnd": "7d"})
 
-        assert start == datetime.datetime(2018, 11, 27, 3, 21, 34, tzinfo=timezone.utc)
-        assert end == datetime.datetime(2018, 12, 4, 3, 21, 34, tzinfo=timezone.utc)
+        assert start == datetime.datetime(2018, 11, 27, 3, 21, 34, tzinfo=datetime.UTC)
+        assert end == datetime.datetime(2018, 12, 4, 3, 21, 34, tzinfo=datetime.UTC)
 
         start, end = get_date_range_from_params({"statsPeriodStart": "14d", "statsPeriodEnd": "7d"})
 
-        assert start == datetime.datetime(2018, 11, 27, 3, 21, 34, tzinfo=timezone.utc)
-        assert end == datetime.datetime(2018, 12, 4, 3, 21, 34, tzinfo=timezone.utc)
+        assert start == datetime.datetime(2018, 11, 27, 3, 21, 34, tzinfo=datetime.UTC)
+        assert end == datetime.datetime(2018, 12, 4, 3, 21, 34, tzinfo=datetime.UTC)
 
     @freeze_time("2018-12-11 03:21:34")
     def test_relative_date_range_incomplete(self):
@@ -94,12 +111,13 @@ class PrintAndCaptureHandlerExceptionTest(APITestCase):
 
     @patch("sys.stderr.write")
     def test_logs_error_locally(self, mock_stderr_write: MagicMock):
-        exc_info = exc_info_from_error(self.handler_error)
+        try:
+            raise self.handler_error
+        except Exception as e:
+            print_and_capture_handler_exception(e)
 
-        with patch("sys.exc_info", return_value=exc_info):
-            print_and_capture_handler_exception(self.handler_error)
-
-            mock_stderr_write.assert_called_with("Exception: nope\n")
+        (((s,), _),) = mock_stderr_write.call_args_list
+        assert s.splitlines()[-1] == "Exception: nope"
 
     @patch("sentry.api.utils.capture_exception")
     def test_passes_along_exception(
@@ -146,52 +164,69 @@ class PrintAndCaptureHandlerExceptionTest(APITestCase):
             assert capture_exception_scope_kwarg._tags == expected_scope_tags
 
 
-def test_customer_domain_path():
-    scenarios = [
-        # Input, expected
-        ["/settings/", "/settings/"],
-        # Organization settings views.
-        ["/settings/acme/", "/settings/organization/"],
-        ["/settings/organization", "/settings/organization/"],
-        ["/settings/sentry/members/", "/settings/members/"],
-        ["/settings/sentry/members/3/", "/settings/members/3/"],
-        ["/settings/sentry/teams/peeps/", "/settings/teams/peeps/"],
-        ["/settings/sentry/billing/receipts/", "/settings/billing/receipts/"],
-        [
-            "/settings/acme/developer-settings/release-bot/",
-            "/settings/developer-settings/release-bot/",
-        ],
-        # Account settings should stay the same
-        ["/settings/account/", "/settings/account/"],
-        ["/settings/account/security/", "/settings/account/security/"],
-        ["/settings/account/details/", "/settings/account/details/"],
-        ["/join-request/acme", "/join-request/"],
-        ["/join-request/acme/", "/join-request/"],
-        ["/onboarding/acme/", "/onboarding/"],
-        ["/onboarding/acme/project/", "/onboarding/project/"],
-        ["/organizations/new/", "/organizations/new/"],
-        ["/organizations/albertos-apples/issues/", "/issues/"],
-        ["/organizations/albertos-apples/issues/?_q=all#hash", "/issues/?_q=all#hash"],
-        ["/acme/project-slug/getting-started/", "/getting-started/project-slug/"],
-        [
-            "/acme/project-slug/getting-started/python",
-            "/getting-started/project-slug/python",
-        ],
-        ["/settings/projects/python/filters/", "/settings/projects/python/filters/"],
-        ["/settings/projects/onboarding/abc123/", "/settings/projects/onboarding/abc123/"],
-        [
-            "/settings/projects/join-request/abc123/",
-            "/settings/projects/join-request/abc123/",
-        ],
-        [
-            "/settings/projects/python/filters/discarded/",
-            "/settings/projects/python/filters/discarded/",
-        ],
-        [
-            "/settings/projects/getting-started/abc123/",
-            "/settings/projects/getting-started/abc123/",
-        ],
-        ["/settings/teams/peeps/", "/settings/teams/peeps/"],
-    ]
-    for input_path, expected in scenarios:
-        assert expected == customer_domain_path(input_path)
+class FooBarError(Exception):
+    pass
+
+
+class HandleQueryErrorsTest:
+    @patch("sentry.api.utils.ParseError")
+    def test_handle_query_errors(self, mock_parse_error):
+        exceptions = [
+            DatasetSelectionError,
+            IncompatibleMetricsQuery,
+            InvalidParams,
+            InvalidSearchQuery,
+            QueryConnectionFailed,
+            QueryExecutionError,
+            QueryExecutionTimeMaximum,
+            QueryIllegalTypeOfArgument,
+            QueryMemoryLimitExceeded,
+            QueryMissingColumn,
+            QueryOutsideRetentionError,
+            QuerySizeExceeded,
+            QueryTooManySimultaneous,
+            RateLimitExceeded,
+            SchemaValidationError,
+            SnubaError,
+            UnqualifiedQueryError,
+        ]
+        mock_parse_error.return_value = FooBarError()
+        for ex in exceptions:
+            try:
+                with handle_query_errors():
+                    raise ex
+            except Exception as e:
+                assert isinstance(e, (FooBarError, APIException))
+
+
+class ClampDateRangeTest(unittest.TestCase):
+    def test_no_clamp_if_range_under_max(self):
+        start = datetime.datetime(2024, 1, 1)
+        end = datetime.datetime(2024, 1, 2)
+        max_timedelta = datetime.timedelta(days=7)
+
+        assert clamp_date_range((start, end), max_timedelta) == (start, end)
+
+    def test_no_clamp_for_negative_range(self):
+        start = datetime.datetime(2024, 1, 1)
+        end = datetime.datetime(2023, 1, 2)
+        max_timedelta = datetime.timedelta(hours=1)
+
+        assert clamp_date_range((start, end), max_timedelta) == (start, end)
+
+    def test_clamps_even_to_zero(self):
+        start = datetime.datetime(2024, 1, 1)
+        end = datetime.datetime(2024, 1, 2)
+        max_timedelta = datetime.timedelta(0)
+
+        assert clamp_date_range((start, end), max_timedelta) == (end, end)
+
+    def test_clamps_to_end(self):
+        start = datetime.datetime(2024, 1, 1)
+        end = datetime.datetime(2024, 1, 14)
+        max_timedelta = datetime.timedelta(days=1)
+
+        assert clamp_date_range((start, end), max_timedelta) == (
+            datetime.datetime(2024, 1, 13),
+            end,
+        )

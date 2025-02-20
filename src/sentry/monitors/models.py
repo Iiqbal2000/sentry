@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+import uuid
+import zoneinfo
+from collections.abc import Sequence
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 from uuid import uuid4
 
 import jsonschema
-import pytz
 from django.conf import settings
 from django.db import models
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 from django.utils import timezone
@@ -18,22 +21,24 @@ from sentry.backup.helpers import ImportFlags
 from sentry.backup.scopes import ImportScope, RelocationScope
 from sentry.constants import ObjectStatus
 from sentry.db.models import (
-    BaseManager,
     BoundedBigIntegerField,
     BoundedPositiveIntegerField,
     FlexibleForeignKey,
     JSONField,
     Model,
     UUIDField,
-    region_silo_only_model,
+    region_silo_model,
     sane_repr,
 )
+from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignKey
+from sentry.db.models.fields.slug import DEFAULT_SLUG_MAX_LENGTH, SentrySlugField
+from sentry.db.models.manager.base import BaseManager
 from sentry.db.models.utils import slugify_instance
-from sentry.grouping.utils import hash_from_values
 from sentry.locks import locks
 from sentry.models.environment import Environment
 from sentry.models.rule import Rule, RuleSource
 from sentry.monitors.types import CrontabSchedule, IntervalSchedule
+from sentry.types.actor import Actor
 from sentry.utils.retries import TimedRetryPolicy
 
 logger = logging.getLogger(__name__)
@@ -59,8 +64,6 @@ MONITOR_CONFIG = {
     "additionalProperties": False,
 }
 
-MAX_SLUG_LENGTH = 50
-
 
 class MonitorLimitsExceeded(Exception):
     pass
@@ -81,7 +84,7 @@ class MonitorStatus:
     represented.
 
     [!!]: This is NOT used for the status of the Monitor model itself. That is
-          simply an ObjectStatus.
+          a ObjectStatus.
     """
 
     ACTIVE = 0
@@ -90,12 +93,19 @@ class MonitorStatus:
     DELETION_IN_PROGRESS = 3
 
     OK = 4
+    """
+    The monitor environment has received check-ins and is OK.
+    """
+
     ERROR = 5
-    MISSED_CHECKIN = 6
-    TIMEOUT = 7
+    """
+    The monitor environment is currently in an active incident state. This is a
+    denormalization of thee fact that a MonitorIncident exists for the
+    environment without a resolving check-in.
+    """
 
     @classmethod
-    def as_choices(cls):
+    def as_choices(cls) -> Sequence[tuple[int, str]]:
         return (
             # TODO: It is unlikely a MonitorEnvironment should ever be in the
             # 'active' state, since for a monitor environment to be created
@@ -108,14 +118,16 @@ class MonitorStatus:
             (cls.DELETION_IN_PROGRESS, "deletion_in_progress"),
             (cls.OK, "ok"),
             (cls.ERROR, "error"),
-            (cls.MISSED_CHECKIN, "missed_checkin"),
-            (cls.TIMEOUT, "timeout"),
         )
 
 
 class CheckInStatus:
     UNKNOWN = 0
-    """No status was passed"""
+    """
+    Checkin may have lost data and we cannot know the resulting status of the
+    check-in. This can happen when an incident is detected using clock-tick
+    volume anomoly detection.
+    """
 
     OK = 1
     """Checkin had no issues during execution"""
@@ -132,8 +144,25 @@ class CheckInStatus:
     TIMEOUT = 5
     """Checkin was left in-progress past max_runtime"""
 
+    USER_TERMINAL_VALUES = (OK, ERROR)
+    """
+    Values indicating the monitor is in a terminal status where the terminal
+    status was reported by the monitor itself (was not synthetic)
+    """
+
+    SYNTHETIC_TERMINAL_VALUES = (MISSED, TIMEOUT, UNKNOWN)
+    """
+    Values indicating the montior is in a terminal "synthetic" status. These
+    status are not sent by the monitor themselve but are a side effect result.
+
+    For some values such as UNKNOWN it is possible for it to transition to a
+    USER_TERMINAL_VALUES.
+    """
+
     FINISHED_VALUES = (OK, ERROR, MISSED, TIMEOUT)
-    """Terminal values used to indicate a monitor is finished running"""
+    """
+    All terminal values indicating the monitor has reached it's final status
+    """
 
     @classmethod
     def as_choices(cls):
@@ -147,17 +176,33 @@ class CheckInStatus:
         )
 
 
+DEFAULT_STATUS_ORDER = [
+    MonitorStatus.ERROR,
+    MonitorStatus.OK,
+    MonitorStatus.ACTIVE,
+    MonitorStatus.DISABLED,
+]
+
+MONITOR_ENVIRONMENT_ORDERING = Case(
+    When(is_muted=True, then=Value(len(DEFAULT_STATUS_ORDER) + 1)),
+    *[When(status=s, then=Value(i)) for i, s in enumerate(DEFAULT_STATUS_ORDER)],
+    output_field=IntegerField(),
+)
+
+
 class MonitorType:
     # In the future we may have other types of monitors such as health check
     # monitors. But for now we just have CRON_JOB style monitors.
     UNKNOWN = 0
     CRON_JOB = 3
+    UPTIME = 4
 
     @classmethod
     def as_choices(cls):
         return (
             (cls.UNKNOWN, "unknown"),
             (cls.CRON_JOB, "cron_job"),
+            (cls.UPTIME, "uptime"),
         )
 
     @classmethod
@@ -179,29 +224,85 @@ class ScheduleType:
         return dict(cls.as_choices())[value]
 
 
-@region_silo_only_model
+@region_silo_model
 class Monitor(Model):
     __relocation_scope__ = RelocationScope.Organization
 
-    guid = UUIDField(unique=True, auto_add=True)
-    slug = models.SlugField()
+    date_added = models.DateTimeField(default=timezone.now)
     organization_id = BoundedBigIntegerField(db_index=True)
     project_id = BoundedBigIntegerField(db_index=True)
-    name = models.CharField(max_length=128)
+
     status = BoundedPositiveIntegerField(
         default=ObjectStatus.ACTIVE, choices=ObjectStatus.as_choices()
     )
+    """
+    Active status of the monitor. This is similar to most other ObjectStatus's
+    within the app. Used to mark monitors as disabled and pending deletions
+    """
+
+    guid = UUIDField(unique=True, auto_add=True)
+    """
+    Globally unique identifier for the monitor. Mostly legacy, used in legacy
+    API endpoints.
+    """
+
+    slug = SentrySlugField()
+    """
+    Organization unique slug of the monitor. Used to identify the monitor in
+    check-in payloads. The slug can be changed.
+    """
+
+    is_muted = models.BooleanField(default=False)
+    """
+    Monitor is operating normally but will not produce incidents or produce
+    occurrences into the issues platform.
+    """
+
+    name = models.CharField(max_length=128)
+    """
+    Human readable name of the monitor. Used for display purposes.
+    """
+
     type = BoundedPositiveIntegerField(
         default=MonitorType.UNKNOWN,
         choices=[(k, str(v)) for k, v in MonitorType.as_choices()],
     )
+    """
+    Type of monitor. Currently there are only CRON_JOB monitors.
+    """
+
+    owner_user_id = HybridCloudForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete="SET_NULL")
+    """
+    The user assigned as the owner of this model.
+    """
+
+    owner_team_id = BoundedBigIntegerField(null=True, db_index=True)
+    """
+    The team assigned as the owner of this model.
+    """
+
     config: models.Field[dict[str, Any], dict[str, Any]] = JSONField(default=dict)
-    date_added = models.DateTimeField(default=timezone.now)
+    """
+    Stores the monitor configuration. See MONITOR_CONFIG for the schema.
+    """
 
     class Meta:
         app_label = "sentry"
         db_table = "sentry_monitor"
-        unique_together = (("organization_id", "slug"),)
+        unique_together = (("project_id", "slug"),)
+        indexes = [
+            models.Index(fields=["organization_id", "slug"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(owner_team_id__isnull=False, owner_user_id__isnull=True)
+                    | models.Q(owner_team_id__isnull=True, owner_user_id__isnull=False)
+                    | models.Q(owner_team_id__isnull=True, owner_user_id__isnull=True)
+                ),
+                name="monitor_owner_team_or_user_check",
+            )
+        ]
 
     __repr__ = sane_repr("guid", "project_id", "name")
 
@@ -215,12 +316,16 @@ class Monitor(Model):
                     self,
                     self.name,
                     organization_id=self.organization_id,
-                    max_length=MAX_SLUG_LENGTH,
+                    max_length=DEFAULT_SLUG_MAX_LENGTH,
                 )
         return super().save(*args, **kwargs)
 
     @property
-    def schedule(self) -> Union[CrontabSchedule, IntervalSchedule]:
+    def owner_actor(self) -> Actor | None:
+        return Actor.from_id(user_id=self.owner_user_id, team_id=self.owner_team_id)
+
+    @property
+    def schedule(self) -> CrontabSchedule | IntervalSchedule:
         schedule_type = self.config["schedule_type"]
         schedule = self.config["schedule"]
 
@@ -231,11 +336,24 @@ class Monitor(Model):
 
         raise NotImplementedError("unknown schedule_type")
 
+    @property
+    def timezone(self):
+        return zoneinfo.ZoneInfo(self.config.get("timezone") or "UTC")
+
     def get_schedule_type_display(self):
         return ScheduleType.get_name(self.config["schedule_type"])
 
     def get_audit_log_data(self):
-        return {"name": self.name, "type": self.type, "status": self.status, "config": self.config}
+        return {
+            "name": self.name,
+            "type": self.type,
+            "status": self.status,
+            "config": self.config,
+            "is_muted": self.is_muted,
+            "slug": self.slug,
+            "owner_user_id": self.owner_user_id,
+            "owner_team_id": self.owner_team_id,
+        }
 
     def get_next_expected_checkin(self, last_checkin: datetime) -> datetime:
         """
@@ -243,8 +361,7 @@ class Monitor(Model):
         """
         from sentry.monitors.schedule import get_next_schedule
 
-        tz = pytz.timezone(self.config.get("timezone") or "UTC")
-        return get_next_schedule(last_checkin.astimezone(tz), self.schedule)
+        return get_next_schedule(last_checkin.astimezone(self.timezone), self.schedule)
 
     def get_next_expected_checkin_latest(self, last_checkin: datetime) -> datetime:
         """
@@ -252,11 +369,10 @@ class Monitor(Model):
         most recent checkin time. This is determined by the user-configured
         margin.
         """
+        from sentry.monitors.utils import get_checkin_margin
+
         next_checkin = self.get_next_expected_checkin(last_checkin)
-        # TODO(epurkhiser): We should probably just set this value as a
-        # `default` in the validator for the config instead of having the magic
-        # default number here
-        return next_checkin + timedelta(minutes=int(self.config.get("checkin_margin") or 1))
+        return next_checkin + get_checkin_margin(self.config.get("checkin_margin"))
 
     def update_config(self, config_payload, validated_config):
         monitor_config = self.config
@@ -275,32 +391,32 @@ class Monitor(Model):
             jsonschema.validate(self.config, MONITOR_CONFIG)
             return self.config
         except jsonschema.ValidationError:
-            logging.exception(f"Monitor: {self.id} invalid config: {self.config}", exc_info=True)
+            logging.exception("Monitor: %s invalid config: %s", self.id, self.config)
 
-    def get_alert_rule(self):
-        alert_rule_id = self.config.get("alert_rule_id")
-        if alert_rule_id:
-            alert_rule = Rule.objects.filter(
+    def get_issue_alert_rule(self):
+        issue_alert_rule_id = self.config.get("alert_rule_id")
+        if issue_alert_rule_id:
+            issue_alert_rule = Rule.objects.filter(
                 project_id=self.project_id,
-                id=alert_rule_id,
+                id=issue_alert_rule_id,
                 source=RuleSource.CRON_MONITOR,
                 status=ObjectStatus.ACTIVE,
             ).first()
-            if alert_rule:
-                return alert_rule
+            if issue_alert_rule:
+                return issue_alert_rule
 
-            # If alert_rule_id is stale, clear it from the config
+            # If issue_alert_rule_id is stale, clear it from the config
             clean_config = self.config.copy()
             clean_config.pop("alert_rule_id", None)
             self.update(config=clean_config)
 
         return None
 
-    def get_alert_rule_data(self):
-        alert_rule = self.get_alert_rule()
-        if alert_rule:
-            data = alert_rule.data
-            alert_rule_data: Dict[str, Optional[Any]] = dict()
+    def get_issue_alert_rule_data(self):
+        issue_alert_rule = self.get_issue_alert_rule()
+        if issue_alert_rule:
+            data = issue_alert_rule.data
+            issue_alert_rule_data: dict[str, Any | None] = dict()
 
             # Build up alert target data
             targets = []
@@ -313,24 +429,24 @@ class Monitor(Model):
                             "targetType": action.get("targetType"),
                         }
                     )
-            alert_rule_data["targets"] = targets
+            issue_alert_rule_data["targets"] = targets
 
-            environment, alert_rule_environment_id = None, alert_rule.environment_id
-            if alert_rule_environment_id:
+            environment, issue_alert_rule_environment_id = None, issue_alert_rule.environment_id
+            if issue_alert_rule_environment_id:
                 try:
-                    environment = Environment.objects.get(id=alert_rule_environment_id).name
+                    environment = Environment.objects.get(id=issue_alert_rule_environment_id).name
                 except Environment.DoesNotExist:
                     pass
 
-            alert_rule_data["environment"] = environment
+            issue_alert_rule_data["environment"] = environment
 
-            return alert_rule_data
+            return issue_alert_rule_data
 
         return None
 
     def normalize_before_relocation_import(
         self, pk_map: PrimaryKeyMap, scope: ImportScope, flags: ImportFlags
-    ) -> Optional[int]:
+    ) -> int | None:
         old_pk = super().normalize_before_relocation_import(pk_map, scope, flags)
         if old_pk is None:
             return None
@@ -352,14 +468,14 @@ def check_organization_monitor_limits(sender, instance, **kwargs):
         )
 
 
-@region_silo_only_model
+@region_silo_model
 class MonitorCheckIn(Model):
     __relocation_scope__ = RelocationScope.Excluded
 
     guid = UUIDField(unique=True, auto_add=True)
     project_id = BoundedBigIntegerField(db_index=True)
     monitor = FlexibleForeignKey("sentry.Monitor")
-    monitor_environment = FlexibleForeignKey("sentry.MonitorEnvironment", null=True)
+    monitor_environment = FlexibleForeignKey("sentry.MonitorEnvironment")
     location = FlexibleForeignKey("sentry.MonitorLocation", null=True)
     """
     XXX(epurkhiser): Currently unused
@@ -385,6 +501,25 @@ class MonitorCheckIn(Model):
     Represents the time the checkin was made. This CAN BE back-dated in some
     cases, and does not necessarily represent the insertion time of the row in
     the database.
+
+    This date comes from the time relay reiceved the envelope containing the
+    check-in.
+    """
+
+    date_clock = models.DateTimeField(null=True)
+    """
+    Represents the "clock time" that this check in was recorded at. Since the
+    stream of check-ins is processed within the context of a clock that only
+    moves forward as we process kafka messages, this time represents the time
+    at which we processed this check-in, in relation to all other tasks (such
+    as detecting misses)
+    """
+
+    date_created = models.DateTimeField(default=timezone.now, null=True)
+    """
+    Represents when the check-in was actually recorded into the database. This
+    is a real wall-clock time and is not tied to the "clock" time that
+    check-ins are processed in the contenxt of.
     """
 
     date_updated = models.DateTimeField(default=timezone.now)
@@ -417,18 +552,37 @@ class MonitorCheckIn(Model):
     that occurred during the check-in.
     """
 
-    attachment_id = BoundedBigIntegerField(null=True)
-    config = JSONField(default=dict)
-
-    objects = BaseManager(cache_fields=("guid",))
+    objects: ClassVar[BaseManager[Self]] = BaseManager(cache_fields=("guid",))
 
     class Meta:
         app_label = "sentry"
         db_table = "sentry_monitorcheckin"
         indexes = [
+            # used for endpoints for monitor stats + list check-ins
             models.Index(fields=["monitor", "date_added", "status"]),
+            # used for latest on api endpoints
+            models.Index(
+                fields=["monitor", "-date_added"],
+                condition=Q(status=CheckInStatus.IN_PROGRESS),
+                name="api_latest",
+            ),
+            # TODO(rjo100): to be removed when above is confirmed working
+            models.Index(fields=["monitor", "status", "date_added"]),
+            # used for has_newer_result + thresholds
             models.Index(fields=["monitor_environment", "date_added", "status"]),
+            # used for latest in monitor consumer
+            models.Index(
+                fields=["monitor_environment", "-date_added"],
+                condition=Q(status=CheckInStatus.IN_PROGRESS),
+                name="consumer_latest",
+            ),
+            # TODO(rjo100): to be removed when above is confirmed working
+            models.Index(fields=["monitor_environment", "status", "date_added"]),
+            # used for timeout task
             models.Index(fields=["status", "timeout_at"]),
+            # used for dispatch_mark_unknown
+            models.Index(fields=["status", "date_added"]),
+            # used for check-in list
             models.Index(fields=["trace_id"]),
         ]
 
@@ -447,14 +601,14 @@ class MonitorCheckIn(Model):
         pass
 
 
-@region_silo_only_model
+@region_silo_model
 class MonitorLocation(Model):
     __relocation_scope__ = RelocationScope.Excluded
 
     guid = UUIDField(unique=True, auto_add=True)
     name = models.CharField(max_length=128)
     date_added = models.DateTimeField(default=timezone.now)
-    objects = BaseManager(cache_fields=("guid",))
+    objects: ClassVar[BaseManager[Self]] = BaseManager(cache_fields=("guid",))
 
     class Meta:
         app_label = "sentry"
@@ -463,7 +617,7 @@ class MonitorLocation(Model):
     __repr__ = sane_repr("guid", "name")
 
 
-class MonitorEnvironmentManager(BaseManager):
+class MonitorEnvironmentManager(BaseManager["MonitorEnvironment"]):
     """
     A manager that consolidates logic for monitor environment updates
     """
@@ -471,6 +625,8 @@ class MonitorEnvironmentManager(BaseManager):
     def ensure_environment(
         self, project: Project, monitor: Monitor, environment_name: str | None
     ) -> MonitorEnvironment:
+        from sentry.monitors.rate_limit import update_monitor_quota
+
         if not environment_name:
             environment_name = "production"
 
@@ -480,17 +636,25 @@ class MonitorEnvironmentManager(BaseManager):
         # TODO: assume these objects exist once backfill is completed
         environment = Environment.get_or_create(project=project, name=environment_name)
 
-        return MonitorEnvironment.objects.get_or_create(
-            monitor=monitor, environment=environment, defaults={"status": MonitorStatus.ACTIVE}
-        )[0]
+        monitor_env, created = MonitorEnvironment.objects.get_or_create(
+            monitor=monitor,
+            environment_id=environment.id,
+            defaults={"status": MonitorStatus.ACTIVE},
+        )
+
+        # recompute per-project monitor check-in rate limit quota
+        if created:
+            update_monitor_quota(monitor_env)
+
+        return monitor_env
 
 
-@region_silo_only_model
+@region_silo_model
 class MonitorEnvironment(Model):
     __relocation_scope__ = RelocationScope.Excluded
 
     monitor = FlexibleForeignKey("sentry.Monitor")
-    environment = FlexibleForeignKey("sentry.Environment")
+    environment_id = BoundedBigIntegerField(db_index=True)
     date_added = models.DateTimeField(default=timezone.now)
 
     status = BoundedPositiveIntegerField(
@@ -501,6 +665,12 @@ class MonitorEnvironment(Model):
     The MonitorStatus of the monitor. This is denormalized from the check-ins
     list, since it would be possible to determine this by looking at recent
     check-ins. It is denormalized for simplicity.
+    """
+
+    is_muted = models.BooleanField(default=False)
+    """
+    Monitor environment is operating normally but will not produce incidents or produce
+    occurrences into the issues platform.
     """
 
     next_checkin = models.DateTimeField(null=True)
@@ -521,25 +691,27 @@ class MonitorEnvironment(Model):
     auto-generated missed check-ins.
     """
 
-    last_state_change = models.DateTimeField(null=True)
-    """
-    The last time that the monitor changed state. Used for issue fingerprinting.
-    """
-
-    objects = MonitorEnvironmentManager()
+    objects: ClassVar[MonitorEnvironmentManager] = MonitorEnvironmentManager()
 
     class Meta:
         app_label = "sentry"
         db_table = "sentry_monitorenvironment"
-        unique_together = (("monitor", "environment"),)
+        unique_together = (("monitor", "environment_id"),)
         indexes = [
             models.Index(fields=["status", "next_checkin_latest"]),
         ]
 
     __repr__ = sane_repr("monitor_id", "environment_id")
 
+    def get_environment(self) -> Environment:
+        return Environment.objects.get_from_cache(id=self.environment_id)
+
     def get_audit_log_data(self):
-        return {"name": self.environment.name, "status": self.status, "monitor": self.monitor.name}
+        return {
+            "name": self.get_environment().name,
+            "status": self.status,
+            "monitor": self.monitor.name,
+        }
 
     def get_last_successful_checkin(self):
         return (
@@ -549,31 +721,16 @@ class MonitorEnvironment(Model):
         )
 
     @property
-    def incident_grouphash(self):
-        # TODO(rjo100): Check to see if there's an active incident
-        # if not, use last_state_change as fallback
-        active_incident = (
-            MonitorIncident.objects.filter(
+    def active_incident(self) -> MonitorIncident | None:
+        """
+        Retrieve the current active incident. If there is no active incident None will be returned.
+        """
+        try:
+            return MonitorIncident.objects.get(
                 monitor_environment_id=self.id, resolving_checkin__isnull=True
             )
-            .order_by("-date_added")
-            .first()
-        )
-        if active_incident:
-            return active_incident.grouphash
-
-        # XXX(rjo100): While we migrate monitor issues to using the
-        # Incident stored grouphash we still may have some active issues
-        # that are using the old hashes. We can remove this in the
-        # future once all existing issues are resolved.
-        return hash_from_values(
-            [
-                "monitor",
-                str(self.monitor.guid),
-                self.environment.name,
-                str(self.last_state_change),
-            ]
-        )
+        except MonitorIncident.DoesNotExist:
+            return None
 
 
 @receiver(pre_save, sender=MonitorEnvironment)
@@ -588,7 +745,14 @@ def check_monitor_environment_limits(sender, instance, **kwargs):
         )
 
 
-@region_silo_only_model
+def default_grouphash():
+    """
+    Generate a unique 32 character grouphash for a monitor incident
+    """
+    return uuid.uuid4().hex
+
+
+@region_silo_model
 class MonitorIncident(Model):
     __relocation_scope__ = RelocationScope.Excluded
 
@@ -610,9 +774,50 @@ class MonitorIncident(Model):
     This represents the final OK check-in that we receive
     """
 
-    grouphash = models.CharField(max_length=32)
+    grouphash = models.CharField(max_length=32, default=default_grouphash)
+    """
+    Used for issue occurrences generation. Failed check-ins produce an
+    occurrence associated to this grouphash.
+    """
+
     date_added = models.DateTimeField(default=timezone.now)
 
     class Meta:
         app_label = "sentry"
         db_table = "sentry_monitorincident"
+        indexes = [
+            models.Index(fields=["monitor_environment", "resolving_checkin"]),
+            models.Index(
+                fields=["starting_timestamp"],
+                name="active_incident_idx",
+                condition=Q(resolving_checkin__isnull=True),
+            ),
+        ]
+        constraints = [
+            # Only allow for one active incident (no resolved check-in) per
+            # monitor environment
+            models.UniqueConstraint(
+                fields=["monitor_environment_id"],
+                name="unique_active_incident",
+                condition=Q(resolving_checkin__isnull=True),
+            ),
+        ]
+
+
+@region_silo_model
+class MonitorEnvBrokenDetection(Model):
+    """
+    Records an instance where we have detected a monitor environment to be
+    broken based on a long duration of failure and consecutive failing check-ins
+    """
+
+    __relocation_scope__ = RelocationScope.Excluded
+
+    monitor_incident = FlexibleForeignKey("sentry.MonitorIncident")
+    detection_timestamp = models.DateTimeField(auto_now_add=True)
+    user_notified_timestamp = models.DateTimeField(null=True, db_index=True)
+    env_muted_timestamp = models.DateTimeField(null=True, db_index=True)
+
+    class Meta:
+        app_label = "sentry"
+        db_table = "sentry_monitorenvbrokendetection"

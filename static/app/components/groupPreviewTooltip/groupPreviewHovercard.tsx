@@ -1,9 +1,9 @@
-import {ComponentProps, useCallback} from 'react';
-import {css} from '@emotion/react';
+import type {ComponentProps} from 'react';
+import {useCallback} from 'react';
+import {css, useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import {Hovercard} from 'sentry/components/hovercard';
-import theme from 'sentry/utils/theme';
 import useMedia from 'sentry/utils/useMedia';
 
 interface GroupPreviewHovercardProps extends ComponentProps<typeof Hovercard> {
@@ -17,6 +17,7 @@ export function GroupPreviewHovercard({
   body,
   ...props
 }: GroupPreviewHovercardProps) {
+  const theme = useTheme();
   const handleStackTracePreviewClick = useCallback(
     (e: React.MouseEvent) => void e.stopPropagation(),
     []
@@ -24,17 +25,19 @@ export function GroupPreviewHovercard({
 
   // No need to preview on hover for small devices
   const shouldNotPreview = useMedia(`(max-width: ${theme.breakpoints.large})`);
+  const shouldShowPositionTop = useMedia(`(max-width: ${theme.breakpoints.xlarge})`);
 
   return (
     <StyledHovercardWithBodyClass
       className={className}
       displayTimeout={200}
       delay={100}
-      position="right"
+      position={shouldShowPositionTop ? 'top' : 'right'}
       tipBorderColor="border"
       tipColor="background"
       hide={shouldNotPreview || hide}
       body={<div onClick={handleStackTracePreviewClick}>{body}</div>}
+      containerDisplayMode="inline"
       {...props}
     >
       {children}
@@ -52,8 +55,7 @@ const StyledHovercardWithBodyClass = styled(HovercardWithBodyClass)`
   max-height: 300px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-bottom-left-radius: ${p => p.theme.borderRadius};
-  border-bottom-right-radius: ${p => p.theme.borderRadius};
+  border-radius: ${p => p.theme.borderRadius};
 `;
 
 const StyledHovercard = styled(Hovercard)<{hide?: boolean}>`

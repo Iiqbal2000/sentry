@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import itertools
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Generic, Iterator, Tuple
+from typing import Generic
 
 import pytest
 
@@ -17,7 +18,7 @@ class Properties(Generic[K, V]):
     values: Iterator[V]
 
     @property
-    def items(self) -> Iterator[Tuple[K, V]]:
+    def items(self) -> Iterator[tuple[K, V]]:
         return zip(self.keys, self.values)
 
 
@@ -41,7 +42,7 @@ def properties(request) -> Properties:
         if backend_label == "default":
             from sentry.cache import default_cache as cache
         else:
-            raise ValueError("unknown cache backend label")
+            raise AssertionError("unknown cache backend label")
 
         return Properties(
             CacheKVStorage(cache),
@@ -76,7 +77,7 @@ def properties(request) -> Properties:
             values=itertools.count(),
         )
     else:
-        raise ValueError("unknown kvstore label")
+        raise AssertionError("unknown kvstore label")
 
 
 def test_single_key_operations(properties: Properties) -> None:

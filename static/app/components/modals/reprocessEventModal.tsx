@@ -2,7 +2,7 @@ import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
 import NumberField from 'sentry/components/forms/fields/numberField';
 import RadioField from 'sentry/components/forms/fields/radioField';
 import Form from 'sentry/components/forms/form';
@@ -11,7 +11,8 @@ import List from 'sentry/components/list';
 import ListItem from 'sentry/components/list/listItem';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Group, Organization} from 'sentry/types';
+import type {Group} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
 
 export type ReprocessEventModalOptions = {
   groupId: Group['id'];
@@ -91,7 +92,9 @@ export function ReprocessingEventModal({
             label={t('Number of events to be reprocessed')}
             help={t('If you set a limit, we will reprocess your most recent events.')}
             placeholder={t('Reprocess all events')}
-            onChange={value => setMaxEvents(!isNaN(value) ? Number(value) : undefined)}
+            onChange={(value: any) =>
+              setMaxEvents(!isNaN(value) ? Number(value) : undefined)
+            }
             min={1}
           />
 

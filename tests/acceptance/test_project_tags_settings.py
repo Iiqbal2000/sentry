@@ -2,14 +2,14 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from sentry.testutils.cases import AcceptanceTestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.testutils.helpers.datetime import before_now
 from sentry.testutils.silo import no_silo_test
 
-event_time = before_now(days=3).replace(tzinfo=timezone.utc)
-current_time = datetime.utcnow().replace(tzinfo=timezone.utc)
+event_time = before_now(days=3)
+current_time = datetime.now(timezone.utc)
 
 
-@no_silo_test(stable=True)
+@no_silo_test
 class ProjectTagsSettingsTest(AcceptanceTestCase, SnubaTestCase):
     def setUp(self):
         super().setUp()
@@ -29,7 +29,7 @@ class ProjectTagsSettingsTest(AcceptanceTestCase, SnubaTestCase):
                 "event_id": "a" * 32,
                 "message": "oh no",
                 "level": "error",
-                "timestamp": iso_format(event_time),
+                "timestamp": event_time.isoformat(),
             },
             project_id=self.project.id,
             assert_no_errors=False,

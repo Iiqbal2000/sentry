@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from django.db import models
 from django.db.models import QuerySet
@@ -9,21 +9,21 @@ from django.utils.translation import gettext_lazy as _
 
 from sentry.backup.scopes import RelocationScope
 from sentry.db.models import (
-    BaseManager,
     BoundedBigIntegerField,
     BoundedPositiveIntegerField,
     FlexibleForeignKey,
     JSONField,
     Model,
-    region_silo_only_model,
+    region_silo_model,
     sane_repr,
 )
+from sentry.db.models.manager.base import BaseManager
 
 if TYPE_CHECKING:
     from sentry.models.group import Group
 
 
-class GroupLinkManager(BaseManager):
+class GroupLinkManager(BaseManager["GroupLink"]):
     def get_group_issues(self, group: Group, external_issue_id: str | None = None) -> QuerySet:
         kwargs = dict(
             group=group,
@@ -37,7 +37,7 @@ class GroupLinkManager(BaseManager):
         return self.filter(**kwargs)
 
 
-@region_silo_only_model
+@region_silo_model
 class GroupLink(Model):
     """
     Link a group with an external resource like a commit, issue, or pull request
@@ -71,10 +71,10 @@ class GroupLink(Model):
         default=Relationship.references,
         choices=((Relationship.resolves, _("Resolves")), (Relationship.references, _("Linked"))),
     )
-    data = JSONField()
+    data: models.Field[dict[str, Any], dict[str, Any]] = JSONField()
     datetime = models.DateTimeField(default=timezone.now, db_index=True)
 
-    objects = GroupLinkManager()
+    objects: ClassVar[GroupLinkManager] = GroupLinkManager()
 
     class Meta:
         app_label = "sentry"

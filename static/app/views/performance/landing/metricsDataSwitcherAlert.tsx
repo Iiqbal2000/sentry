@@ -1,21 +1,22 @@
 import {useCallback, useMemo} from 'react';
-import {WithRouterProps} from 'react-router';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import {updateProjects} from 'sentry/actionCreators/pageFilters';
-import {Alert} from 'sentry/components/alert';
+import {Alert} from 'sentry/components/core/alert';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Link from 'sentry/components/links/link';
 import {SidebarPanelKey} from 'sentry/components/sidebar/types';
 import {t, tct} from 'sentry/locale';
 import SidebarPanelStore from 'sentry/stores/sidebarPanelStore';
-import {Organization, Project} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
-import {MetricDataSwitcherOutcome} from 'sentry/utils/performance/contexts/metricsCardinality';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {MetricDataSwitcherOutcome} from 'sentry/utils/performance/contexts/metricsCardinality';
 
+import type {DiscoverQueryPageSource} from '../utils';
 import {
   createUnnamedTransactionsDiscoverTarget,
-  DiscoverQueryPageSource,
   getIsMultiProject,
   getSelectedProjectPlatformsArray,
 } from '../utils';
@@ -70,7 +71,7 @@ export function MetricsDataSwitcherAlert(
       return null;
     }
 
-    const platform = platforms[0];
+    const platform = platforms[0]!;
     if (UNSUPPORTED_TRANSACTION_NAME_DOCS.includes(platform)) {
       return null;
     }
@@ -110,54 +111,60 @@ export function MetricsDataSwitcherAlert(
     if (getIsMultiProject(props.eventView.project)) {
       if ((props.compatibleProjects ?? []).length === 0) {
         return (
-          <Alert
-            type="warning"
-            showIcon
-            data-test-id="landing-mep-alert-multi-project-all-incompatible"
-          >
-            {tct(
-              `A few projects are incompatible with dynamic sampling. To enable this feature [updateSDK].`,
-              {
-                updateSDK,
-              }
-            )}
-          </Alert>
+          <Alert.Container>
+            <Alert
+              type="warning"
+              showIcon
+              data-test-id="landing-mep-alert-multi-project-all-incompatible"
+            >
+              {tct(
+                `A few projects are incompatible with dynamic sampling. To enable this feature [updateSDK].`,
+                {
+                  updateSDK,
+                }
+              )}
+            </Alert>
+          </Alert.Container>
         );
       }
       return (
-        <Alert
-          type="warning"
-          showIcon
-          data-test-id="landing-mep-alert-multi-project-incompatible"
-        >
-          {tct(
-            `A few projects are incompatible with dynamic sampling. You can either [updateSDK] or [onlyViewCompatible]`,
-            {
-              updateSDK,
-              onlyViewCompatible: (
-                <Link to="" onClick={handleSwitchToCompatibleProjects}>
-                  {t('only view compatible projects.')}
-                </Link>
-              ),
-            }
-          )}
-        </Alert>
+        <Alert.Container>
+          <Alert
+            type="warning"
+            showIcon
+            data-test-id="landing-mep-alert-multi-project-incompatible"
+          >
+            {tct(
+              `A few projects are incompatible with dynamic sampling. You can either [updateSDK] or [onlyViewCompatible]`,
+              {
+                updateSDK,
+                onlyViewCompatible: (
+                  <Link to="" onClick={handleSwitchToCompatibleProjects}>
+                    {t('only view compatible projects.')}
+                  </Link>
+                ),
+              }
+            )}
+          </Alert>
+        </Alert.Container>
       );
     }
 
     return (
-      <Alert
-        type="warning"
-        showIcon
-        data-test-id="landing-mep-alert-single-project-incompatible"
-      >
-        {tct(
-          `Your project has an outdated SDK which is incompatible with dynamic sampling. To enable this feature [updateSDK].`,
-          {
-            updateSDK,
-          }
-        )}
-      </Alert>
+      <Alert.Container>
+        <Alert
+          type="warning"
+          showIcon
+          data-test-id="landing-mep-alert-single-project-incompatible"
+        >
+          {tct(
+            `Your project has an outdated SDK which is incompatible with dynamic sampling. To enable this feature [updateSDK].`,
+            {
+              updateSDK,
+            }
+          )}
+        </Alert>
+      </Alert.Container>
     );
   }
 
@@ -165,33 +172,41 @@ export function MetricsDataSwitcherAlert(
     const discover = <Link to={discoverTarget}>{t('open them in Discover.')}</Link>;
     if (!docsLink) {
       return (
-        <Alert type="warning" showIcon data-test-id="landing-mep-alert-unnamed-discover">
-          {tct(
-            `You have some unparameterized transactions which are incompatible with dynamic sampling. You can [discover]`,
-            {
-              discover,
-            }
-          )}
-        </Alert>
+        <Alert.Container>
+          <Alert
+            type="warning"
+            showIcon
+            data-test-id="landing-mep-alert-unnamed-discover"
+          >
+            {tct(
+              `You have some unparameterized transactions which are incompatible with dynamic sampling. You can [discover]`,
+              {
+                discover,
+              }
+            )}
+          </Alert>
+        </Alert.Container>
       );
     }
 
     return (
-      <Alert
-        type="warning"
-        showIcon
-        data-test-id="landing-mep-alert-unnamed-discover-or-set"
-      >
-        {tct(
-          `You have some unparameterized transactions which are incompatible with dynamic sampling. You can either [setNames] or [discover]`,
-          {
-            setNames: (
-              <ExternalLink href={docsLink}>{t('set names manually')}</ExternalLink>
-            ),
-            discover,
-          }
-        )}
-      </Alert>
+      <Alert.Container>
+        <Alert
+          type="warning"
+          showIcon
+          data-test-id="landing-mep-alert-unnamed-discover-or-set"
+        >
+          {tct(
+            `You have some unparameterized transactions which are incompatible with dynamic sampling. You can either [setNames] or [discover]`,
+            {
+              setNames: (
+                <ExternalLink href={docsLink}>{t('set names manually')}</ExternalLink>
+              ),
+              discover,
+            }
+          )}
+        </Alert>
+      </Alert.Container>
     );
   }
 

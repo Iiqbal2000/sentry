@@ -1,12 +1,7 @@
-import {
-  DependencyList,
-  RefObject,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
-import {CellMeasurerCache, CellMeasurerCacheParams, MultiGrid} from 'react-virtualized';
+import type {DependencyList, RefObject} from 'react';
+import {useCallback, useEffect, useMemo, useState} from 'react';
+import type {CellMeasurerCacheParams, MultiGrid} from 'react-virtualized';
+import {CellMeasurerCache} from 'react-virtualized';
 
 type Opts = {
   /**
@@ -58,13 +53,13 @@ function useVirtualizedGrid({
   // Recompute the width of the dynamic column when deps change (ie: a search/filter is applied)
   useEffect(onWrapperResize, [onWrapperResize, deps]);
 
-  const onScrollbarPresenceChange = useCallback(({vertical, size}) => {
+  const onScrollbarPresenceChange = useCallback(({vertical, size}: any) => {
     setScrollBarWidth(vertical ? size : 0);
   }, []);
 
   const getColumnWidth = useCallback(
     (width: number) =>
-      ({index}) => {
+      ({index}: any) => {
         if (index !== dynamicColumnIndex) {
           return cache.columnWidth({index});
         }

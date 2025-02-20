@@ -6,7 +6,6 @@ from arroyo.types import BrokerValue, Message, Partition, Topic
 
 from sentry.conf.server import (
     KAFKA_CLUSTERS,
-    KAFKA_SNUBA_GENERIC_METRICS,
     SENTRY_SLICING_CONFIG,
     SENTRY_SLICING_LOGICAL_PARTITION_COUNT,
     SLICED_KAFKA_TOPICS,
@@ -19,6 +18,8 @@ from sentry.sentry_metrics.consumers.indexer.slicing_router import (
     _validate_slicing_config,
     _validate_slicing_consumer_config,
 )
+
+KAFKA_SNUBA_GENERIC_METRICS = "snuba-generic-metrics"
 
 
 @pytest.fixture
@@ -168,10 +169,7 @@ def test_validate_slicing_consumer_config(monkeypatch) -> None:
         {"bootstrap.servers": "127.0.0.1:9092"},
     )
 
-    try:
-        _validate_slicing_consumer_config("generic_metrics")
-    except SlicingConfigurationException as e:
-        assert False, f"Should not raise exception: {e}"
+    _validate_slicing_consumer_config("generic_metrics")  # should not raise
 
 
 def test_validate_slicing_config(monkeypatch) -> None:

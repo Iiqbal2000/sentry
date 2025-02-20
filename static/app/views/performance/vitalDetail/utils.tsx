@@ -1,19 +1,19 @@
-import {Theme} from '@emotion/react';
-import {Location, Query} from 'history';
+import type {Theme} from '@emotion/react';
+import type {Location, Query} from 'history';
 
 import MarkLine from 'sentry/components/charts/components/markLine';
-import {LineChartProps} from 'sentry/components/charts/lineChart';
+import type {LineChartProps} from 'sentry/components/charts/lineChart';
 import {getSeriesSelection} from 'sentry/components/charts/utils';
 import {IconHappy, IconMeh, IconSad} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Series} from 'sentry/types/echarts';
+import type {Series} from 'sentry/types/echarts';
 import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
 import {aggregateOutputType, getAggregateAlias} from 'sentry/utils/discover/fields';
 import {WebVital} from 'sentry/utils/fields';
 import {Browser} from 'sentry/utils/performance/vitals/constants';
 import {decodeScalar} from 'sentry/utils/queryString';
-import {Color} from 'sentry/utils/theme';
-import {AlertType} from 'sentry/views/alerts/wizard/options';
+import type {Color} from 'sentry/utils/theme';
+import type {AlertType} from 'sentry/views/alerts/wizard/options';
 
 export function generateVitalDetailRoute({orgSlug}: {orgSlug: string}): string {
   return `/organizations/${orgSlug}/performance/vitaldetail/`;
@@ -101,6 +101,7 @@ export function getVitalChartTitle(webVital: WebVital): string {
 }
 
 export function getVitalDetailTablePoorStatusFunction(vitalName: WebVital): string {
+  // @ts-expect-error TS(2551): Property 'measurements.ttfb' does not exist on typ... Remove this comment to see the full error message
   const vitalThreshold = webVitalPoor[vitalName];
   const statusFunction = `compare_numeric_aggregate(${getAggregateAlias(
     `p75(${vitalName})`
@@ -109,6 +110,7 @@ export function getVitalDetailTablePoorStatusFunction(vitalName: WebVital): stri
 }
 
 export function getVitalDetailTableMehStatusFunction(vitalName: WebVital): string {
+  // @ts-expect-error TS(2551): Property 'measurements.ttfb' does not exist on typ... Remove this comment to see the full error message
   const vitalThreshold = webVitalMeh[vitalName];
   const statusFunction = `compare_numeric_aggregate(${getAggregateAlias(
     `p75(${vitalName})`
@@ -151,7 +153,7 @@ export const vitalAbbreviations: Partial<Record<WebVital, string>> = {
 };
 
 export const vitalAlertTypes: Partial<Record<WebVital, AlertType>> = {
-  [WebVital.FCP]: 'custom',
+  [WebVital.FCP]: 'custom_transactions',
   [WebVital.CLS]: 'cls',
   [WebVital.FID]: 'fid',
   [WebVital.LCP]: 'lcp',
@@ -168,7 +170,7 @@ export function getMaxOfSeries(series: Series[]) {
 }
 
 export const vitalSupportedBrowsers: Partial<Record<WebVital, Browser[]>> = {
-  [WebVital.LCP]: [Browser.CHROME, Browser.EDGE, Browser.OPERA],
+  [WebVital.LCP]: [Browser.CHROME, Browser.EDGE, Browser.OPERA, Browser.FIREFOX],
   [WebVital.FID]: [
     Browser.CHROME,
     Browser.EDGE,
@@ -194,6 +196,7 @@ export const vitalSupportedBrowsers: Partial<Record<WebVital, Browser[]>> = {
     Browser.SAFARI,
     Browser.IE,
   ],
+  [WebVital.INP]: [Browser.CHROME, Browser.EDGE, Browser.OPERA],
 };
 
 export function getVitalChartDefinitions({
@@ -209,7 +212,9 @@ export function getVitalChartDefinitions({
 }) {
   const utc = decodeScalar(location.query.utc) !== 'false';
 
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   const vitalPoor = webVitalPoor[vital];
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   const vitalMeh = webVitalMeh[vital];
 
   const legend = {

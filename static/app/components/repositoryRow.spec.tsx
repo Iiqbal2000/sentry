@@ -1,5 +1,5 @@
-import {Organization} from 'sentry-fixture/organization';
-import {Repository} from 'sentry-fixture/repository';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {RepositoryFixture} from 'sentry-fixture/repository';
 
 import {
   render,
@@ -9,30 +9,27 @@ import {
 } from 'sentry-test/reactTestingLibrary';
 
 import RepositoryRow from 'sentry/components/repositoryRow';
-import {RepositoryStatus} from 'sentry/types';
+import {RepositoryStatus} from 'sentry/types/integrations';
 
 describe('RepositoryRow', function () {
   beforeEach(function () {
     MockApiClient.clearMockResponses();
   });
 
-  const repository = Repository();
-  const pendingRepo = Repository({
+  const repository = RepositoryFixture();
+  const pendingRepo = RepositoryFixture({
     status: RepositoryStatus.PENDING_DELETION,
   });
 
-  const api = new MockApiClient();
-
   describe('rendering with access', function () {
-    const organization = Organization({
+    const organization = OrganizationFixture({
       access: ['org:integrations'],
     });
 
     it('displays provider information', function () {
-      render(
-        <RepositoryRow repository={repository} api={api} orgSlug={organization.slug} />,
-        {organization}
-      );
+      render(<RepositoryRow repository={repository} orgSlug={organization.slug} />, {
+        organization,
+      });
       expect(screen.getByText(repository.name)).toBeInTheDocument();
       expect(screen.getByText('github.com/example/repo-name')).toBeInTheDocument();
 
@@ -44,10 +41,9 @@ describe('RepositoryRow', function () {
     });
 
     it('displays cancel pending button', function () {
-      render(
-        <RepositoryRow repository={pendingRepo} api={api} orgSlug={organization.slug} />,
-        {organization}
-      );
+      render(<RepositoryRow repository={pendingRepo} orgSlug={organization.slug} />, {
+        organization,
+      });
 
       // Trash button should be disabled
       expect(screen.getByRole('button', {name: 'delete'})).toBeDisabled();
@@ -59,25 +55,23 @@ describe('RepositoryRow', function () {
   });
 
   describe('rendering without access', function () {
-    const organization = Organization({
+    const organization = OrganizationFixture({
       access: ['org:write'],
     });
 
     it('displays disabled trash', function () {
-      render(
-        <RepositoryRow repository={repository} api={api} orgSlug={organization.slug} />,
-        {organization}
-      );
+      render(<RepositoryRow repository={repository} orgSlug={organization.slug} />, {
+        organization,
+      });
 
       // Trash button should be disabled
       expect(screen.getByRole('button', {name: 'delete'})).toBeDisabled();
     });
 
     it('displays disabled cancel', function () {
-      render(
-        <RepositoryRow repository={pendingRepo} api={api} orgSlug={organization.slug} />,
-        {organization}
-      );
+      render(<RepositoryRow repository={pendingRepo} orgSlug={organization.slug} />, {
+        organization,
+      });
 
       // Cancel should be disabled
       expect(screen.getByRole('button', {name: 'Cancel'})).toBeDisabled();
@@ -85,7 +79,7 @@ describe('RepositoryRow', function () {
   });
 
   describe('deletion', function () {
-    const organization = Organization({
+    const organization = OrganizationFixture({
       access: ['org:integrations'],
     });
 
@@ -97,10 +91,9 @@ describe('RepositoryRow', function () {
         body: {status: 'hidden'},
       });
 
-      render(
-        <RepositoryRow repository={repository} api={api} orgSlug={organization.slug} />,
-        {organization}
-      );
+      render(<RepositoryRow repository={repository} orgSlug={organization.slug} />, {
+        organization,
+      });
       renderGlobalModal();
       await userEvent.click(screen.getByRole('button', {name: 'delete'}));
 
@@ -112,7 +105,7 @@ describe('RepositoryRow', function () {
   });
 
   describe('cancel deletion', function () {
-    const organization = Organization({
+    const organization = OrganizationFixture({
       access: ['org:integrations'],
     });
 
@@ -124,10 +117,9 @@ describe('RepositoryRow', function () {
         body: {},
       });
 
-      render(
-        <RepositoryRow repository={pendingRepo} api={api} orgSlug={organization.slug} />,
-        {organization}
-      );
+      render(<RepositoryRow repository={pendingRepo} orgSlug={organization.slug} />, {
+        organization,
+      });
       await userEvent.click(screen.getByRole('button', {name: 'Cancel'}));
 
       expect(cancel).toHaveBeenCalled();

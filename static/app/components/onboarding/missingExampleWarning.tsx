@@ -1,9 +1,9 @@
-import {Alert} from 'sentry/components/alert';
+import {Alert} from 'sentry/components/core/alert';
 import ExternalLink from 'sentry/components/links/externalLink';
 import platforms from 'sentry/data/platforms';
 import {tct} from 'sentry/locale';
-import type {PlatformKey} from 'sentry/types';
-import {OnboardingPlatformDoc} from 'sentry/types/onboarding';
+import type {OnboardingPlatformDoc} from 'sentry/types/onboarding';
+import type {PlatformKey} from 'sentry/types/project';
 
 /**
  * The documentation will include the following string should it be missing the
@@ -25,17 +25,19 @@ export function MissingExampleWarning({
   }
 
   return (
-    <Alert type="warning" showIcon>
-      {tct(
-        `Looks like this getting started example is still undergoing some
+    <Alert.Container>
+      <Alert type="warning" showIcon>
+        {tct(
+          `Looks like this getting started example is still undergoing some
          work and doesn't include an example for triggering an event quite
          yet. If you have trouble sending your first event be sure to consult
          the [docsLink:full documentation] for [platform].`,
-        {
-          docsLink: <ExternalLink href={platformDocs?.link} />,
-          platform: platforms.find(p => p.id === platform)?.name,
-        }
-      )}
-    </Alert>
+          {
+            docsLink: <ExternalLink href={platformDocs?.link} />,
+            platform: platforms.find(p => p.id === platform)?.name,
+          }
+        )}
+      </Alert>
+    </Alert.Container>
   );
 }

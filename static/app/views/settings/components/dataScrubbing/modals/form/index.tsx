@@ -9,14 +9,8 @@ import {IconChevron} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 
-import {
-  EventId,
-  KeysOfUnion,
-  MethodType,
-  Rule,
-  RuleType,
-  SourceSuggestion,
-} from '../../types';
+import type {EventId, KeysOfUnion, Rule, SourceSuggestion} from '../../types';
+import {MethodType, RuleType} from '../../types';
 import {getMethodLabel, getRuleLabel} from '../../utils';
 
 import EventIdField from './eventIdField';
@@ -31,7 +25,7 @@ type Props<V extends Values, K extends keyof V> = {
   onChange: (field: K, value: string) => void;
   onUpdateEventId: (eventId: string) => void;
   onValidate: (field: K) => () => void;
-  sourceSuggestions: Array<SourceSuggestion>;
+  sourceSuggestions: SourceSuggestion[];
   values: V;
 };
 
@@ -222,7 +216,7 @@ const ToggleWrapper = styled('div')`
 `;
 
 const Toggle = styled(Button)`
-  font-weight: 700;
+  font-weight: ${p => p.theme.fontWeightBold};
   color: ${p => p.theme.subText};
   &:hover,
   &:focus {

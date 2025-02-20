@@ -1,5 +1,5 @@
 import {canUseMetricsData} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
-import {usePageError} from 'sentry/utils/performance/contexts/pageError';
+import {usePageAlert} from 'sentry/utils/performance/contexts/pageAlert';
 import {PerformanceDisplayProvider} from 'sentry/utils/performance/contexts/performanceDisplayContext';
 
 import Table from '../../table';
@@ -9,9 +9,10 @@ import {checkIsReactNative} from '../utils';
 import {DoubleChartRow, TripleChartRow} from '../widgets/components/widgetChartRow';
 import {PerformanceWidgetSetting} from '../widgets/widgetDefinitions';
 
-import {BasePerformanceViewProps} from './types';
+import type {BasePerformanceViewProps} from './types';
 
 export function MobileView(props: BasePerformanceViewProps) {
+  const {setPageError} = usePageAlert();
   let columnTitles = checkIsReactNative(props.eventView)
     ? REACT_NATIVE_COLUMN_TITLES
     : MOBILE_COLUMN_TITLES;
@@ -31,7 +32,11 @@ export function MobileView(props: BasePerformanceViewProps) {
   ];
 
   if (organization.features.includes('mobile-vitals')) {
-    columnTitles = [...columnTitles.slice(0, 5), 'ttid', ...columnTitles.slice(5, 0)];
+    columnTitles = [
+      ...columnTitles.slice(0, 5),
+      {title: 'ttid'},
+      ...columnTitles.slice(5, 0),
+    ];
     allowedCharts.push(
       ...[
         PerformanceWidgetSetting.TIME_TO_INITIAL_DISPLAY,
@@ -39,6 +44,16 @@ export function MobileView(props: BasePerformanceViewProps) {
       ]
     );
   }
+  if (organization.features.includes('insights-initial-modules')) {
+    doubleRowAllowedCharts[0] = PerformanceWidgetSetting.SLOW_SCREENS_BY_TTID;
+  }
+  if (organization.features.includes('starfish-mobile-appstart')) {
+    doubleRowAllowedCharts.push(
+      PerformanceWidgetSetting.SLOW_SCREENS_BY_COLD_START,
+      PerformanceWidgetSetting.SLOW_SCREENS_BY_WARM_START
+    );
+  }
+
   if (
     organization.features.includes('performance-new-trends') &&
     canUseMetricsData(props.organization)
@@ -49,16 +64,16 @@ export function MobileView(props: BasePerformanceViewProps) {
       ...[PerformanceWidgetSetting.MOST_IMPROVED, PerformanceWidgetSetting.MOST_REGRESSED]
     );
   }
+
+  if (props.organization.features.includes('insights-initial-modules')) {
+    doubleRowAllowedCharts.push(PerformanceWidgetSetting.MOST_TIME_CONSUMING_DOMAINS);
+  }
   return (
     <PerformanceDisplayProvider value={{performanceType: ProjectPerformanceType.ANY}}>
       <div>
         <DoubleChartRow {...props} allowedCharts={doubleRowAllowedCharts} />
         <TripleChartRow {...props} allowedCharts={allowedCharts} />
-        <Table
-          {...props}
-          columnTitles={columnTitles}
-          setError={usePageError().setPageError}
-        />
+        <Table {...props} columnTitles={columnTitles} setError={setPageError} />
       </div>
     </PerformanceDisplayProvider>
   );

@@ -1,23 +1,23 @@
-import {browserHistory} from 'react-router';
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
+import ConfigStore from 'sentry/stores/configStore';
 import OrganizationsStore from 'sentry/stores/organizationsStore';
-import {Config} from 'sentry/types';
-import {OrganizationCrumb} from 'sentry/views/settings/components/settingsBreadcrumb/organizationCrumb';
+import type {Config} from 'sentry/types/system';
 
-import {RouteWithName} from './types';
+import {OrganizationCrumb} from './organizationCrumb';
+import type {RouteWithName} from './types';
 
 jest.unmock('sentry/utils/recreateRoute');
 
 describe('OrganizationCrumb', function () {
   let initialData: Config;
-  const {organization, project, routerContext, routerProps} = initializeOrg();
+  const {organization, project, router, routerProps} = initializeOrg();
   const organizations = [
     organization,
-    Organization({
+    OrganizationFixture({
       id: '234',
       slug: 'org-slug2',
     }),
@@ -26,11 +26,14 @@ describe('OrganizationCrumb', function () {
   beforeEach(() => {
     OrganizationsStore.init();
     OrganizationsStore.load(organizations);
+
+    initialData = ConfigStore.getState();
+    jest.mocked(window.location.assign).mockReset();
   });
 
   const switchOrganization = async () => {
     await userEvent.hover(screen.getByRole('link'));
-    await userEvent.click(screen.getAllByRole('option')[1]);
+    await userEvent.click(screen.getAllByRole('option')[1]!);
   };
 
   const renderComponent = (
@@ -39,17 +42,12 @@ describe('OrganizationCrumb', function () {
     >
   ) =>
     render(<OrganizationCrumb {...routerProps} params={{}} {...props} />, {
-      context: routerContext,
+      router,
       organization,
     });
 
-  beforeEach(function () {
-    initialData = window.__initialData;
-    jest.mocked(browserHistory.push).mockReset();
-    jest.mocked(window.location.assign).mockReset();
-  });
   afterEach(function () {
-    window.__initialData = initialData;
+    ConfigStore.loadInitialData(initialData);
   });
 
   it('switches organizations on settings index', async function () {
@@ -67,7 +65,7 @@ describe('OrganizationCrumb', function () {
     renderComponent({routes, route});
     await switchOrganization();
 
-    expect(browserHistory.push).toHaveBeenCalledWith('/settings/org-slug2/');
+    expect(router.push).toHaveBeenCalledWith({pathname: '/settings/org-slug2/'});
   });
 
   it('switches organizations while on API Keys Details route', async function () {
@@ -88,7 +86,7 @@ describe('OrganizationCrumb', function () {
     renderComponent({routes, route});
     await switchOrganization();
 
-    expect(browserHistory.push).toHaveBeenCalledWith('/settings/org-slug2/api-keys/');
+    expect(router.push).toHaveBeenCalledWith({pathname: '/settings/org-slug2/api-keys/'});
   });
 
   it('switches organizations while on API Keys List route', async function () {
@@ -108,7 +106,7 @@ describe('OrganizationCrumb', function () {
     renderComponent({routes, route});
     await switchOrganization();
 
-    expect(browserHistory.push).toHaveBeenCalledWith('/settings/org-slug2/api-keys/');
+    expect(router.push).toHaveBeenCalledWith({pathname: '/settings/org-slug2/api-keys/'});
   });
 
   it('switches organizations while in Project Client Keys Details route', async function () {
@@ -130,17 +128,16 @@ describe('OrganizationCrumb', function () {
     });
     await switchOrganization();
 
-    expect(browserHistory.push).toHaveBeenCalledWith('/settings/org-slug2/');
+    expect(router.push).toHaveBeenCalledWith({pathname: '/settings/org-slug2/'});
   });
 
   it('switches organizations for child route with customer domains', async function () {
-    window.__initialData = {
-      customerDomain: {
-        subdomain: 'albertos-apples',
-        organizationUrl: 'https://albertos-apples.sentry.io',
-        sentryUrl: 'https://sentry.io',
-      },
-    } as Config;
+    ConfigStore.set('customerDomain', {
+      subdomain: 'albertos-apples',
+      organizationUrl: 'https://albertos-apples.sentry.io',
+      sentryUrl: 'https://sentry.io',
+    });
+    ConfigStore.set('features', new Set(['system:multi-region']));
 
     const routes: RouteWithName[] = [
       {path: '/'},
@@ -156,10 +153,9 @@ describe('OrganizationCrumb', function () {
     const route = routes[6];
     const orgs = [
       organization,
-      Organization({
+      OrganizationFixture({
         id: '234',
         slug: 'acme',
-        features: ['customer-domains'],
         links: {
           organizationUrl: 'https://acme.sentry.io',
           regionUrl: 'https://us.sentry.io',

@@ -1,4 +1,4 @@
-import type {Authenticator, EnrolledAuthenticator} from './auth';
+import type {UserEnrolledAuthenticator} from './auth';
 import type {Avatar, Scope} from './core';
 import type {UserExperiments} from './experiments';
 
@@ -22,25 +22,20 @@ export type AvatarUser = {
   };
 };
 
-/**
- * This is an authenticator that a user is enrolled in
- */
-type UserEnrolledAuthenticator = {
-  dateCreated: EnrolledAuthenticator['createdAt'];
-  dateUsed: EnrolledAuthenticator['lastUsedAt'];
-  id: EnrolledAuthenticator['authId'];
-  name: EnrolledAuthenticator['name'];
-  type: Authenticator['id'];
-};
-
+// This object tracks the status of the quick start display for each organization.
+// The key is the organization ID, and the value represents the display status:
+// Null = Hidden on the first visit
+// 1 = Shown once (on the second visit)
+// 2 = Hidden automatically after the second visit
+type QuickStartDisplay = Record<string, number>;
 export interface User extends Omit<AvatarUser, 'options'> {
   canReset2fa: boolean;
   dateJoined: string;
-  emails: {
+  emails: Array<{
     email: string;
     id: string;
     is_verified: boolean;
-  }[];
+  }>;
   experiments: Partial<UserExperiments>;
   flags: {newsletter_consent_prompt: boolean};
   has2fa: boolean;
@@ -58,6 +53,8 @@ export interface User extends Omit<AvatarUser, 'options'> {
     clock24Hours: boolean;
     defaultIssueEvent: 'recommended' | 'latest' | 'oldest';
     language: string;
+    prefersIssueDetailsStreamlinedUI: boolean;
+    quickStartDisplay: QuickStartDisplay;
     stacktraceOrder: number;
     theme: 'system' | 'light' | 'dark';
     timezone: string;
@@ -82,14 +79,20 @@ interface BaseApiToken {
   dateCreated: string;
   expiresAt: string;
   id: string;
+  name: string;
   scopes: Scope[];
   state: string;
 }
 
-// We include the token for API tokens used for internal apps
+// API Tokens should not be using and storing the token values in the application, as the tokens are secrets.
 export interface InternalAppApiToken extends BaseApiToken {
   application: null;
   refreshToken: string;
+  tokenLastCharacters: string;
+}
+
+// We include the token for new API tokens
+export interface NewInternalAppApiToken extends InternalAppApiToken {
   token: string;
 }
 

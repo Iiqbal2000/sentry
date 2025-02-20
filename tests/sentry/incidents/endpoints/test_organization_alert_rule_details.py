@@ -2,51 +2,75 @@ from __future__ import annotations
 
 from copy import deepcopy
 from functools import cached_property
-from typing import Any
+from unittest import mock
 from unittest.mock import patch
 
+import orjson
+import pytest
 import responses
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.test import override_settings
+from httpx import HTTPError
 from rest_framework.exceptions import ErrorDetail
 from rest_framework.response import Response
+from slack_sdk.errors import SlackApiError
+from slack_sdk.web import SlackResponse
+from urllib3.exceptions import MaxRetryError, TimeoutError
+from urllib3.response import HTTPResponse
 
 from sentry import audit_log
 from sentry.api.serializers import serialize
-from sentry.api.serializers.models.alert_rule import DetailedAlertRuleSerializer
 from sentry.auth.access import OrganizationGlobalAccess
-from sentry.incidents.models import (
+from sentry.conf.server import SEER_ANOMALY_DETECTION_STORE_DATA_URL
+from sentry.deletions.tasks.scheduled import run_scheduled_deletions
+from sentry.incidents.endpoints.serializers.alert_rule import DetailedAlertRuleSerializer
+from sentry.incidents.logic import INVALID_TIME_WINDOW
+from sentry.incidents.models.alert_rule import (
     AlertRule,
+    AlertRuleDetectionType,
+    AlertRuleSeasonality,
+    AlertRuleSensitivity,
     AlertRuleStatus,
+    AlertRuleThresholdType,
     AlertRuleTrigger,
     AlertRuleTriggerAction,
-    Incident,
-    IncidentStatus,
 )
+from sentry.incidents.models.incident import Incident, IncidentStatus
 from sentry.incidents.serializers import AlertRuleSerializer
-from sentry.integrations.slack.client import SlackClient
+from sentry.integrations.slack.tasks.find_channel_id_for_alert_rule import (
+    find_channel_id_for_alert_rule,
+)
+from sentry.integrations.slack.utils.channel import SlackChannelIdData
 from sentry.models.auditlogentry import AuditLogEntry
-from sentry.models.integrations.integration import Integration
 from sentry.models.organizationmemberteam import OrganizationMemberTeam
-from sentry.services.hybrid_cloud.app import app_service
-from sentry.shared_integrations.exceptions.base import ApiError
-from sentry.silo import SiloMode
+from sentry.seer.anomaly_detection.store_data import seer_anomaly_detection_connection_pool
+from sentry.seer.anomaly_detection.types import StoreDataResponse
+from sentry.sentry_apps.services.app import app_service
+from sentry.silo.base import SiloMode
 from sentry.testutils.abstract import Abstract
+from sentry.testutils.helpers.features import with_feature
 from sentry.testutils.outbox import outbox_runner
-from sentry.testutils.silo import assume_test_silo_mode, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode
 from sentry.testutils.skips import requires_snuba
-from sentry.utils import json
 from tests.sentry.incidents.endpoints.test_organization_alert_rule_index import AlertRuleBase
+from tests.sentry.workflow_engine.migration_helpers.test_migrate_alert_rule import (
+    assert_dual_written_resolution_threshold_equals,
+)
 
 pytestmark = [requires_snuba]
 
 
 class AlertRuleDetailsBase(AlertRuleBase):
-    __test__ = Abstract(__module__, __qualname__)  # type: ignore[name-defined]  # python/mypy#10570
+    __test__ = Abstract(__module__, __qualname__)
 
     endpoint = "sentry-api-0-organization-alert-rule-details"
 
-    def new_alert_rule(self, data=None):
+    @patch(
+        "sentry.seer.anomaly_detection.store_data.seer_anomaly_detection_connection_pool.urlopen"
+    )
+    def new_alert_rule(self, mock_seer_request, data=None):
+        mock_seer_request.return_value = HTTPResponse(orjson.dumps({"success": True}), status=200)
         if data is None:
             data = deepcopy(self.alert_rule_dict)
 
@@ -55,7 +79,7 @@ class AlertRuleDetailsBase(AlertRuleBase):
                 "organization": self.organization,
                 "access": OrganizationGlobalAccess(self.organization, settings.SENTRY_SCOPES),
                 "user": self.user,
-                "installations": app_service.get_installed_for_organization(
+                "installations": app_service.installations_for_organization(
                     organization_id=self.organization.id
                 ),
             },
@@ -87,6 +111,10 @@ class AlertRuleDetailsBase(AlertRuleBase):
     @cached_property
     def alert_rule(self):
         return self.new_alert_rule(data=deepcopy(self.alert_rule_dict))
+
+    @cached_property
+    def dynamic_alert_rule(self):
+        return self.new_alert_rule(data=deepcopy(self.dynamic_alert_rule_dict))
 
     @cached_property
     def valid_params(self):
@@ -150,7 +178,6 @@ class AlertRuleDetailsBase(AlertRuleBase):
         assert resp.status_code == 404
 
 
-@region_silo_test(stable=True)
 class AlertRuleDetailsGetEndpointTest(AlertRuleDetailsBase):
     def test_simple(self):
         self.create_team(organization=self.organization, members=[self.user])
@@ -188,6 +215,325 @@ class AlertRuleDetailsGetEndpointTest(AlertRuleDetailsBase):
         assert resp.data["latestIncident"] is not None
         assert resp.data["latestIncident"]["id"] == str(incident.id)
         assert "latestIncident" not in no_expand_resp.data
+
+    @with_feature("organizations:slack-metric-alert-description")
+    @with_feature("organizations:incidents")
+    def test_with_description(self):
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        rule = self.create_alert_rule(description="howdy")
+        trigger = self.create_alert_rule_trigger(rule, "hi", 1000)
+        self.create_alert_rule_trigger_action(alert_rule_trigger=trigger)
+        resp = self.get_success_response(self.organization.slug, rule.id)
+        assert rule.description == resp.data.get("description")
+
+    @with_feature("organizations:anomaly-detection-alerts")
+    @with_feature("organizations:anomaly-detection-rollout")
+    @with_feature("organizations:incidents")
+    def test_static_detection_type(self):
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        rule = self.create_alert_rule()  # the default detection type is static
+        trigger = self.create_alert_rule_trigger(rule, "hi", 1000)
+        self.create_alert_rule_trigger_action(alert_rule_trigger=trigger)
+        resp = self.get_success_response(self.organization.slug, rule.id)
+        assert rule.detection_type == AlertRuleDetectionType.STATIC
+        assert rule.detection_type == resp.data.get("detectionType")
+
+        # Confirm that we don't mess up flow for customers who don't know about detection_type field yet
+        rule2 = self.create_alert_rule(comparison_delta=60)
+        trigger2 = self.create_alert_rule_trigger(rule, "heyo", 1000)
+        self.create_alert_rule_trigger_action(alert_rule_trigger=trigger2)
+        resp = self.get_success_response(self.organization.slug, rule2.id)
+        assert rule2.detection_type == AlertRuleDetectionType.PERCENT
+        assert rule2.detection_type == resp.data.get("detectionType")
+
+        with pytest.raises(
+            ValidationError,
+            match="Sensitivity is not a valid field for this alert type",
+        ):
+            # STATIC detection types shouldn't have seasonality or sensitivity
+            self.create_alert_rule(
+                seasonality=AlertRuleSeasonality.AUTO, sensitivity=AlertRuleSensitivity.HIGH
+            )
+        with pytest.raises(
+            ValidationError,
+            match="Above and below is not a valid threshold type for this alert type",
+        ):
+            self.create_alert_rule(threshold_type=AlertRuleThresholdType.ABOVE_AND_BELOW)
+
+    @with_feature("organizations:anomaly-detection-alerts")
+    @with_feature("organizations:anomaly-detection-rollout")
+    @with_feature("organizations:incidents")
+    def test_percent_detection_type(self):
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        rule = self.create_alert_rule(
+            comparison_delta=60, detection_type=AlertRuleDetectionType.PERCENT
+        )
+        trigger = self.create_alert_rule_trigger(rule, "hi", 1000)
+        self.create_alert_rule_trigger_action(alert_rule_trigger=trigger)
+        resp = self.get_success_response(self.organization.slug, rule.id)
+        assert rule.detection_type == resp.data.get("detectionType")
+
+        with pytest.raises(
+            ValidationError, match="Percentage-based alerts require a comparison delta"
+        ):
+            self.create_alert_rule(
+                detection_type=AlertRuleDetectionType.PERCENT
+            )  # PERCENT detection type requires a comparison delta
+
+        with pytest.raises(
+            ValidationError,
+            match="Sensitivity is not a valid field for this alert type",
+        ):
+            # PERCENT detection type should not have sensitivity or seasonality
+            self.create_alert_rule(
+                seasonality=AlertRuleSeasonality.AUTO,
+                sensitivity=AlertRuleSensitivity.HIGH,
+                detection_type=AlertRuleDetectionType.PERCENT,
+            )
+
+        with pytest.raises(
+            ValidationError,
+            match="Above and below is not a valid threshold type for this alert type",
+        ):
+            self.create_alert_rule(
+                threshold_type=AlertRuleThresholdType.ABOVE_AND_BELOW,
+                detection_type=AlertRuleDetectionType.PERCENT,
+            )
+
+    @with_feature("organizations:anomaly-detection-alerts")
+    @with_feature("organizations:anomaly-detection-rollout")
+    @with_feature("organizations:incidents")
+    @patch(
+        "sentry.seer.anomaly_detection.store_data.seer_anomaly_detection_connection_pool.urlopen"
+    )
+    def test_dynamic_detection_type(self, mock_seer_request):
+        seer_return_value: StoreDataResponse = {"success": True}
+        mock_seer_request.return_value = HTTPResponse(orjson.dumps(seer_return_value), status=200)
+
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        rule = self.create_alert_rule(
+            seasonality=AlertRuleSeasonality.AUTO,
+            sensitivity=AlertRuleSensitivity.HIGH,
+            threshold_type=AlertRuleThresholdType.ABOVE_AND_BELOW,
+            detection_type=AlertRuleDetectionType.DYNAMIC,
+            time_window=30,
+        )
+        trigger = self.create_alert_rule_trigger(rule, "hi", 0)
+        self.create_alert_rule_trigger_action(alert_rule_trigger=trigger)
+        resp = self.get_success_response(self.organization.slug, rule.id)
+        assert rule.detection_type == resp.data.get("detectionType")
+
+        with pytest.raises(ValidationError, match="Dynamic alerts require a sensitivity level"):
+            self.create_alert_rule(
+                seasonality=AlertRuleSeasonality.AUTO,
+                detection_type=AlertRuleDetectionType.DYNAMIC,
+                time_window=30,
+            )  # Require both seasonality and sensitivity
+
+        # TODO: uncomment this test when seasonality becomes a supported field
+        # with pytest.raises(
+        #     ValidationError, match="Dynamic alerts require both sensitivity and seasonality"
+        # ):
+        #     self.create_alert_rule(
+        #         sensitivity=AlertRuleSensitivity.MEDIUM,
+        #         detection_type=AlertRuleDetectionType.DYNAMIC,
+        #         time_window=30,
+        #     )  # Require both seasonality and sensitivity
+
+        with pytest.raises(ValidationError, match="Dynamic alerts require a sensitivity level"):
+            self.create_alert_rule(
+                detection_type=AlertRuleDetectionType.DYNAMIC,
+                time_window=30,
+            )  # DYNAMIC detection type requires seasonality and sensitivity
+
+        with pytest.raises(
+            ValidationError, match="Comparison delta is not a valid field for this alert type"
+        ):
+            # DYNAMIC detection type should not have comparison delta
+            self.create_alert_rule(
+                seasonality=AlertRuleSeasonality.AUTO,
+                sensitivity=AlertRuleSensitivity.HIGH,
+                comparison_delta=60,
+                detection_type=AlertRuleDetectionType.DYNAMIC,
+                time_window=30,
+            )
+
+        with pytest.raises(ValidationError, match="Invalid time window for dynamic alert"):
+            rule = self.create_alert_rule(
+                seasonality=AlertRuleSeasonality.AUTO,
+                sensitivity=AlertRuleSensitivity.HIGH,
+                threshold_type=AlertRuleThresholdType.ABOVE_AND_BELOW,
+                detection_type=AlertRuleDetectionType.DYNAMIC,
+                time_window=1,
+            )
+
+        with pytest.raises(
+            ValidationError, match="Dynamic alerts do not support 'is:unresolved' queries"
+        ):
+            rule = self.create_alert_rule(
+                seasonality=AlertRuleSeasonality.AUTO,
+                sensitivity=AlertRuleSensitivity.HIGH,
+                threshold_type=AlertRuleThresholdType.ABOVE_AND_BELOW,
+                detection_type=AlertRuleDetectionType.DYNAMIC,
+                time_window=30,
+                query="is:unresolved",
+            )
+
+    @with_feature("organizations:anomaly-detection-alerts")
+    @with_feature("organizations:anomaly-detection-rollout")
+    @with_feature("organizations:incidents")
+    def test_missing_threshold(self):
+        """Test that we throw a validation error when the trigger is missing alertThreshold"""
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        data = deepcopy(self.dynamic_alert_rule_dict)
+        del data["triggers"][0]["alertThreshold"]
+
+        serializer = AlertRuleSerializer(
+            context={
+                "organization": self.organization,
+                "access": OrganizationGlobalAccess(self.organization, settings.SENTRY_SCOPES),
+                "user": self.user,
+                "installations": app_service.installations_for_organization(
+                    organization_id=self.organization.id
+                ),
+            },
+            data=data,
+        )
+        assert not serializer.is_valid(), serializer.errors
+        assert serializer.errors["nonFieldErrors"][0] == "Trigger must have an alertThreshold"
+
+    @responses.activate
+    def test_with_sentryapp_success(self):
+        self.superuser = self.create_user("admin@localhost", is_superuser=True)
+        self.login_as(user=self.superuser)
+        self.create_team(organization=self.organization, members=[self.superuser])
+
+        sentry_app = self.create_sentry_app(
+            organization=self.organization,
+            published=True,
+            verify_install=False,
+            name="Super Awesome App",
+            schema={"elements": [self.create_alert_rule_action_schema()]},
+        )
+        self.create_sentry_app_installation(
+            slug=sentry_app.slug, organization=self.organization, user=self.superuser
+        )
+        rule = self.create_alert_rule()
+        trigger = self.create_alert_rule_trigger(rule, "hi", 1000)
+        self.create_alert_rule_trigger_action(
+            alert_rule_trigger=trigger,
+            target_identifier=sentry_app.id,
+            type=AlertRuleTriggerAction.Type.SENTRY_APP,
+            target_type=AlertRuleTriggerAction.TargetType.SENTRY_APP,
+            sentry_app=sentry_app,
+            sentry_app_config=[
+                {"name": "title", "value": "An alert"},
+                {"summary": "Something happened here..."},
+                {"name": "points", "value": "3"},
+                {"name": "assignee", "value": "Nisanthan"},
+            ],
+        )
+
+        responses.add(
+            responses.GET,
+            "https://example.com/sentry/members",
+            json=[
+                {"value": "bob", "label": "Bob"},
+                {"value": "jess", "label": "Jess"},
+            ],
+            status=200,
+        )
+        with self.feature("organizations:incidents"):
+            resp = self.get_response(self.organization.slug, rule.id)
+
+        assert resp.status_code == 200
+        assert len(responses.calls) == 1
+        assert "errors" not in resp.data
+
+        action = resp.data["triggers"][0]["actions"][0]
+        assert "select" == action["formFields"]["optional_fields"][-1]["type"]
+        assert "sentry/members" in action["formFields"]["optional_fields"][-1]["uri"]
+        assert "bob" == action["formFields"]["optional_fields"][-1]["choices"][0][0]
+
+    @responses.activate
+    def test_with_sentryapp_multiple_installations_filters_by_org(self):
+        self.superuser = self.create_user("admin@localhost", is_superuser=True)
+        self.login_as(user=self.superuser)
+        self.create_team(organization=self.organization, members=[self.superuser])
+
+        org2 = self.create_organization(name="org2")
+
+        sentry_app = self.create_sentry_app(
+            organization=self.organization,
+            published=True,
+            verify_install=False,
+            name="Super Awesome App",
+            schema={"elements": [self.create_alert_rule_action_schema()]},
+        )
+        self.create_sentry_app_installation(
+            slug=sentry_app.slug, organization=self.organization, user=self.superuser
+        )
+        self.create_sentry_app_installation(
+            slug=sentry_app.slug, organization=org2, user=self.superuser
+        )
+
+        get_context_response = app_service.get_component_contexts(
+            filter=dict(app_ids=[sentry_app.id], organization_id=self.organization.id),
+            component_type="alert-rule-action",
+        )
+
+        rule = self.create_alert_rule()
+        trigger = self.create_alert_rule_trigger(rule, "hi", 1000)
+        self.create_alert_rule_trigger_action(
+            alert_rule_trigger=trigger,
+            target_identifier=sentry_app.id,
+            type=AlertRuleTriggerAction.Type.SENTRY_APP,
+            target_type=AlertRuleTriggerAction.TargetType.SENTRY_APP,
+            sentry_app=sentry_app,
+            sentry_app_config=[
+                {"name": "title", "value": "An alert"},
+                {"summary": "Something happened here..."},
+                {"name": "points", "value": "3"},
+                {"name": "assignee", "value": "Nisanthan"},
+            ],
+        )
+
+        responses.add(
+            responses.GET,
+            "https://example.com/sentry/members",
+            json=[
+                {"value": "bob", "label": "Bob"},
+                {"value": "jess", "label": "Jess"},
+            ],
+            status=200,
+        )
+        with self.feature("organizations:incidents"):
+            with mock.patch.object(app_service, "get_component_contexts") as mock_get:
+                mock_get.return_value = get_context_response
+                resp = self.get_response(self.organization.slug, rule.id)
+
+                assert mock_get.call_count == 1
+                mock_get.assert_called_with(
+                    filter={
+                        "app_ids": [sentry_app.id],
+                        "organization_id": self.organization.id,
+                    },
+                    component_type="alert-rule-action",
+                )
+
+        assert resp.status_code == 200
+        assert len(responses.calls) == 1
+        assert "errors" not in resp.data
+
+        action = resp.data["triggers"][0]["actions"][0]
+        assert "select" == action["formFields"]["optional_fields"][-1]["type"]
+        assert "sentry/members" in action["formFields"]["optional_fields"][-1]["uri"]
+        assert "bob" == action["formFields"]["optional_fields"][-1]["choices"][0][0]
 
     @responses.activate
     def test_with_unresponsive_sentryapp(self):
@@ -242,13 +588,23 @@ class AlertRuleDetailsGetEndpointTest(AlertRuleDetailsBase):
     def test_with_snooze_rule(self):
         self.create_team(organization=self.organization, members=[self.user])
         self.login_as(self.user)
-        self.snooze_rule(user_id=self.user.id, owner_id=self.user.id, alert_rule=self.alert_rule)
+        rule_snooze = self.snooze_rule(
+            user_id=self.user.id, owner_id=self.user.id, alert_rule=self.alert_rule
+        )
 
         with self.feature("organizations:incidents"):
             response = self.get_success_response(self.organization.slug, self.alert_rule.id)
 
-        assert response.data["snooze"]
-        assert response.data["snoozeCreatedBy"] == "You"
+            assert response.data["snooze"]
+            assert response.data["snoozeCreatedBy"] == "You"
+
+            rule_snooze.owner_id = None
+            rule_snooze.save()
+
+            response = self.get_success_response(self.organization.slug, self.alert_rule.id)
+
+            assert response.data["snooze"]
+            assert "snoozeCreatedBy" not in response.data
 
     def test_with_snooze_rule_everyone(self):
         self.create_team(organization=self.organization, members=[self.user])
@@ -264,7 +620,6 @@ class AlertRuleDetailsGetEndpointTest(AlertRuleDetailsBase):
         assert response.data["snoozeCreatedBy"] == user2.get_display_name()
 
 
-@region_silo_test(stable=True)
 class AlertRuleDetailsPutEndpointTest(AlertRuleDetailsBase):
     method = "put"
 
@@ -322,7 +677,8 @@ class AlertRuleDetailsPutEndpointTest(AlertRuleDetailsBase):
         assert resp.data == serialize(self.alert_rule)
         # If the aggregate changed we'd have a new subscription, validate that
         # it hasn't changed explicitly
-        updated_sub = AlertRule.objects.get(id=self.alert_rule.id).snuba_query.subscriptions.first()
+        updated_alert_rule = AlertRule.objects.get(id=self.alert_rule.id)
+        updated_sub = updated_alert_rule.snuba_query.subscriptions.get()
         assert updated_sub.subscription_id == existing_sub.subscription_id
 
     def test_update_trigger_label_to_unallowed_value(self):
@@ -434,6 +790,278 @@ class AlertRuleDetailsPutEndpointTest(AlertRuleDetailsBase):
 
         assert len(resp.data["triggers"]) == 1
 
+    @mock.patch("sentry.incidents.serializers.alert_rule.dual_delete_migrated_alert_rule_trigger")
+    def test_dual_delete_trigger(self, mock_dual_delete):
+        self.create_member(
+            user=self.user, organization=self.organization, role="owner", teams=[self.team]
+        )
+
+        self.login_as(self.user)
+        alert_rule = self.alert_rule
+        # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
+        serialized_alert_rule = self.get_serialized_alert_rule()
+
+        serialized_alert_rule["triggers"].pop(1)
+
+        with self.feature("organizations:incidents"):
+            resp = self.get_success_response(
+                self.organization.slug, alert_rule.id, **serialized_alert_rule
+            )
+        assert len(resp.data["triggers"]) == 1
+        # we test the logic for this method elsewhere, so just test that it's correctly called
+        assert mock_dual_delete.call_count == 1
+
+    @with_feature("organizations:workflow-engine-metric-alert-dual-write")
+    def test_delete_trigger_dual_update_resolve(self):
+        """
+        If there is no explicit resolve threshold on an alert rule, then we need to dual update the
+        comparison on the DataCondition corresponding to alert resolution.
+        """
+        self.create_member(
+            user=self.user, organization=self.organization, role="owner", teams=[self.team]
+        )
+
+        self.login_as(self.user)
+        alert_rule_dict = deepcopy(self.alert_rule_dict)
+        alert_rule_dict.update({"resolveThreshold": None})
+        alert_rule = self.new_alert_rule(data=alert_rule_dict)
+
+        serialized_alert_rule = self.get_serialized_alert_rule()
+        # the new resolution threshold should be the critical alert threshold
+        new_threshold = serialized_alert_rule["triggers"][0]["alertThreshold"]
+        old_threshold = serialized_alert_rule["triggers"][1]["alertThreshold"]
+        assert_dual_written_resolution_threshold_equals(alert_rule, old_threshold)
+
+        serialized_alert_rule["triggers"].pop(1)
+
+        with self.feature("organizations:incidents"):
+            resp = self.get_success_response(
+                self.organization.slug, alert_rule.id, **serialized_alert_rule
+            )
+
+        assert len(resp.data["triggers"]) == 1
+        assert_dual_written_resolution_threshold_equals(alert_rule, new_threshold)
+
+    @with_feature("organizations:workflow-engine-metric-alert-dual-write")
+    def test_update_trigger_threshold_dual_update_resolve(self):
+        """
+        If there is no explicit resolve threshold on an alert rule, then we need to dual update the
+        comparison on the DataCondition corresponding to alert resolution if trigger thresholds
+        are updated.
+        """
+        self.create_member(
+            user=self.user, organization=self.organization, role="owner", teams=[self.team]
+        )
+
+        self.login_as(self.user)
+        alert_rule_dict = deepcopy(self.alert_rule_dict)
+        alert_rule_dict.update({"resolveThreshold": None})
+        alert_rule = self.new_alert_rule(data=alert_rule_dict)
+
+        serialized_alert_rule = self.get_serialized_alert_rule()
+        # the new resolution threshold should be the critical alert threshold
+        # original thresholds: critical = 200, warning = 150
+        old_threshold = serialized_alert_rule["triggers"][1]["alertThreshold"]
+        assert_dual_written_resolution_threshold_equals(alert_rule, old_threshold)
+
+        # TEST 1: if we update the critical trigger threshold, the resolve threshold shouldn't change
+        serialized_alert_rule["triggers"][0]["alertThreshold"] = 300
+        with self.feature("organizations:incidents"):
+            self.get_success_response(
+                self.organization.slug, alert_rule.id, **serialized_alert_rule
+            )
+        assert_dual_written_resolution_threshold_equals(alert_rule, old_threshold)
+
+        # TEST 2: if we update the warning trigger threshold, the resolve threshold also changes
+        new_threshold = 100
+        serialized_alert_rule["triggers"][1]["alertThreshold"] = new_threshold
+        with self.feature("organizations:incidents"):
+            self.get_success_response(
+                self.organization.slug, alert_rule.id, **serialized_alert_rule
+            )
+        assert_dual_written_resolution_threshold_equals(alert_rule, new_threshold)
+
+    @with_feature("organizations:workflow-engine-metric-alert-dual-write")
+    def test_update_trigger_threshold_dual_update_resolve_noop(self):
+        """
+        If there is an explicit resolve threshold on an alert rule, then updating triggers should
+        not affect the resolve action filter.
+        """
+        self.create_member(
+            user=self.user, organization=self.organization, role="owner", teams=[self.team]
+        )
+
+        self.login_as(self.user)
+        alert_rule = self.alert_rule
+
+        serialized_alert_rule = self.get_serialized_alert_rule()
+        resolve_threshold = alert_rule.resolve_threshold
+        assert_dual_written_resolution_threshold_equals(alert_rule, resolve_threshold)
+
+        new_threshold = 125
+        serialized_alert_rule["triggers"][1]["alertThreshold"] = new_threshold
+        with self.feature("organizations:incidents"):
+            self.get_success_response(
+                self.organization.slug, alert_rule.id, **serialized_alert_rule
+            )
+        # remains unchanged
+        assert_dual_written_resolution_threshold_equals(alert_rule, resolve_threshold)
+
+    @with_feature("organizations:workflow-engine-metric-alert-dual-write")
+    def test_remove_resolve_threshold_dual_update_resolve(self):
+        """
+        If we set the remove the resolve threshold from an alert rule, then we need to update the
+        resolve action filter according to the triggers.
+        """
+        self.create_member(
+            user=self.user, organization=self.organization, role="owner", teams=[self.team]
+        )
+
+        self.login_as(self.user)
+        alert_rule = self.alert_rule
+
+        serialized_alert_rule = self.get_serialized_alert_rule()
+        resolve_threshold = alert_rule.resolve_threshold
+        assert_dual_written_resolution_threshold_equals(alert_rule, resolve_threshold)
+
+        serialized_alert_rule["resolveThreshold"] = None
+        new_threshold = serialized_alert_rule["triggers"][1]["alertThreshold"]
+        with self.feature("organizations:incidents"):
+            self.get_success_response(
+                self.organization.slug, alert_rule.id, **serialized_alert_rule
+            )
+        # resolve threshold changes to the warning threshold
+        assert_dual_written_resolution_threshold_equals(alert_rule, new_threshold)
+
+    @with_feature("organizations:slack-metric-alert-description")
+    @with_feature("organizations:incidents")
+    def test_with_description(self):
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        alert_rule = self.alert_rule
+        # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
+        description = "yeehaw"
+        serialized_alert_rule = self.get_serialized_alert_rule()
+        serialized_alert_rule["description"] = description
+
+        resp = self.get_success_response(
+            self.organization.slug, alert_rule.id, **serialized_alert_rule
+        )
+        assert description == resp.data.get("description")
+
+    @with_feature("organizations:anomaly-detection-alerts")
+    @with_feature("organizations:anomaly-detection-rollout")
+    @with_feature("organizations:incidents")
+    @patch(
+        "sentry.seer.anomaly_detection.store_data.seer_anomaly_detection_connection_pool.urlopen"
+    )
+    def test_anomaly_detection_alert_update_timeout(self, mock_seer_request):
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        alert_rule = self.dynamic_alert_rule
+        # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
+        mock_seer_request.return_value = HTTPResponse(orjson.dumps({"success": True}), status=200)
+        data = self.get_serialized_alert_rule()
+        mock_seer_request.side_effect = TimeoutError
+        resp = self.get_error_response(
+            self.organization.slug,
+            alert_rule.id,
+            status_code=408,
+            **data,
+        )
+        assert resp.data["detail"]["message"] == "Proxied request timed out"
+        assert mock_seer_request.call_count == 1
+
+    @with_feature("organizations:anomaly-detection-alerts")
+    @with_feature("organizations:anomaly-detection-rollout")
+    @with_feature("organizations:incidents")
+    @patch(
+        "sentry.seer.anomaly_detection.store_data.seer_anomaly_detection_connection_pool.urlopen"
+    )
+    def test_anomaly_detection_alert_update_max_retry(self, mock_seer_request):
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        alert_rule = self.dynamic_alert_rule
+        # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
+
+        mock_seer_request.side_effect = MaxRetryError(
+            seer_anomaly_detection_connection_pool, SEER_ANOMALY_DETECTION_STORE_DATA_URL
+        )
+        data = self.get_serialized_alert_rule()
+
+        resp = self.get_error_response(
+            self.organization.slug,
+            alert_rule.id,
+            status_code=408,
+            **data,
+        )
+        assert resp.data["detail"]["message"] == "Proxied request timed out"
+        assert mock_seer_request.call_count == 1
+
+    @with_feature("organizations:anomaly-detection-alerts")
+    @with_feature("organizations:anomaly-detection-rollout")
+    @with_feature("organizations:incidents")
+    @patch(
+        "sentry.seer.anomaly_detection.store_data.seer_anomaly_detection_connection_pool.urlopen"
+    )
+    def test_anomaly_detection_alert_update_other_error(self, mock_seer_request):
+        """
+        Test the catch-all in case Seer returns something that we don't expect.
+        """
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        alert_rule = self.dynamic_alert_rule
+        # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
+        mock_seer_request.side_effect = HTTPError
+        data = self.get_serialized_alert_rule()
+
+        resp = self.get_error_response(
+            self.organization.slug,
+            alert_rule.id,
+            status_code=400,
+            **data,
+        )
+        assert resp.data[0] == ErrorDetail(
+            string="Failed to send data to Seer - cannot update alert rule.", code="invalid"
+        )
+        assert mock_seer_request.call_count == 1
+
+    @with_feature("organizations:anomaly-detection-alerts")
+    @with_feature("organizations:anomaly-detection-rollout")
+    @with_feature("organizations:incidents")
+    @patch(
+        "sentry.seer.anomaly_detection.store_data.seer_anomaly_detection_connection_pool.urlopen"
+    )
+    def test_anomaly_detection_alert_update_validation_error(self, mock_seer_request):
+        self.create_team(organization=self.organization, members=[self.user])
+        self.login_as(self.user)
+        alert_rule = self.dynamic_alert_rule
+        # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
+        data = self.get_serialized_alert_rule()
+        data["timeWindow"] = 10
+
+        resp = self.get_error_response(
+            self.organization.slug,
+            alert_rule.id,
+            status_code=400,
+            **data,
+        )
+        assert resp.data[0] == INVALID_TIME_WINDOW
+        # We don't call send_historical_data_to_seer if we encounter a validation error.
+        assert mock_seer_request.call_count == 0
+        data2 = self.get_serialized_alert_rule()
+        data2["query"] = "is:unresolved"
+
+        resp = self.get_error_response(
+            self.organization.slug,
+            alert_rule.id,
+            status_code=400,
+            **data2,
+        )
+        assert resp.data[0] == "Dynamic alerts do not support 'is:unresolved' queries"
+        # We don't call send_historical_data_to_seer if we encounter a validation error.
+        assert mock_seer_request.call_count == 0
+
     def test_delete_action(self):
         self.create_member(
             user=self.user, organization=self.organization, role="owner", teams=[self.team]
@@ -457,11 +1085,40 @@ class AlertRuleDetailsPutEndpointTest(AlertRuleDetailsBase):
         serialized_alert_rule["triggers"][1]["actions"].pop()
 
         with self.feature("organizations:incidents"):
+            resp = self.get_error_response(
+                self.organization.slug, alert_rule.id, status_code=400, **serialized_alert_rule
+            )
+        assert resp.data == {
+            "nonFieldErrors": [
+                "Each trigger must have an associated action for this alert to fire."
+            ]
+        }
+
+    @mock.patch(
+        "sentry.incidents.serializers.alert_rule_trigger.dual_delete_migrated_alert_rule_trigger_action"
+    )
+    def test_dual_delete_action(self, mock_dual_delete):
+        self.create_member(
+            user=self.user, organization=self.organization, role="owner", teams=[self.team]
+        )
+
+        self.login_as(self.user)
+        alert_rule = self.alert_rule
+        # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
+        serialized_alert_rule = self.get_serialized_alert_rule()
+
+        serialized_action = serialized_alert_rule["triggers"][1]["actions"].pop(1)
+        action = AlertRuleTriggerAction.objects.get(id=serialized_action["id"])
+
+        with self.feature("organizations:incidents"):
             resp = self.get_success_response(
                 self.organization.slug, alert_rule.id, **serialized_alert_rule
             )
 
-        assert len(resp.data["triggers"][1]["actions"]) == 0
+        assert len(resp.data["triggers"][1]["actions"]) == 1
+        # we test the logic for this method elsewhere, so just test that it's correctly called
+        assert mock_dual_delete.call_count == 1
+        assert mock_dual_delete.call_args_list[0][0][0] == action
 
     def test_update_trigger_action_type(self):
         self.create_member(
@@ -554,7 +1211,8 @@ class AlertRuleDetailsPutEndpointTest(AlertRuleDetailsBase):
         )
         self.login_as(self.user)
         alert_rule = self.alert_rule
-        alert_rule.owner = self.team.actor
+        alert_rule.team = self.team
+        alert_rule.user_id = None
         alert_rule.save()
         # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
         serialized_alert_rule = self.get_serialized_alert_rule()
@@ -602,14 +1260,21 @@ class AlertRuleDetailsPutEndpointTest(AlertRuleDetailsBase):
         assert len(audit_log_entry) == 1
 
 
-class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsPutEndpointTest):
-    def _mock_slack_response(self, url: str, body: dict[str, Any], status: int = 200) -> None:
-        responses.add(
-            method=responses.GET,
-            url=url,
-            status=status,
-            content_type="application/json",
-            body=json.dumps(body),
+class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsBase):
+    method = "put"
+
+    def mock_conversations_info(self, channel):
+        return patch(
+            "slack_sdk.web.client.WebClient.conversations_info",
+            return_value=SlackResponse(
+                client=None,
+                http_verb="POST",
+                api_url="https://slack.com/api/conversations.info",
+                req_args={"channel": channel},
+                data={"ok": True, "channel": channel},
+                headers={},
+                status_code=200,
+            ),
         )
 
     def _organization_alert_rule_api_call(
@@ -650,9 +1315,9 @@ class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsPutEndpointTest):
 
     @patch(
         "sentry.integrations.slack.utils.channel.get_channel_id_with_timeout",
-        return_value=("#", None, True),
+        return_value=SlackChannelIdData("#", None, True),
     )
-    @patch("sentry.tasks.integrations.slack.find_channel_id_for_alert_rule.apply_async")
+    @patch.object(find_channel_id_for_alert_rule, "apply_async")
     @patch("sentry.integrations.slack.utils.rule_status.uuid4")
     def test_kicks_off_slack_async_job(
         self, mock_uuid4, mock_find_channel_id_for_alert_rule, mock_get_channel_id
@@ -662,14 +1327,14 @@ class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsPutEndpointTest):
         )
         self.login_as(self.user)
         mock_uuid4.return_value = self.get_mock_uuid()
-        with assume_test_silo_mode(SiloMode.CONTROL):
-            self.integration = Integration.objects.create(
-                provider="slack",
-                name="Team A",
-                external_id="TXXXXXXX1",
-                metadata={"access_token": "xoxp-xxxxxxxxx-xxxxxxxxxx-xxxxxxxxxxxx"},
-            )
-            self.integration.add_organization(self.organization, self.user)
+        self.integration, _ = self.create_provider_integration_for(
+            self.organization,
+            self.user,
+            provider="slack",
+            name="Team A",
+            external_id="TXXXXXXX1",
+            metadata={"access_token": "xoxp-xxxxxxxxx-xxxxxxxxxx-xxxxxxxxxxxx"},
+        )
         test_params = self.valid_params.copy()
         test_params["triggers"] = [
             {
@@ -700,8 +1365,7 @@ class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsPutEndpointTest):
         }
         mock_find_channel_id_for_alert_rule.assert_called_once_with(kwargs=kwargs)
 
-    @responses.activate
-    def test_create_slack_alert_with_name_and_channel_id(self):
+    def test_create_slack_alert_with_name_and_channel_id_sdk(self):
         """
         The user specifies the Slack channel and channel ID (which match).
         """
@@ -712,19 +1376,19 @@ class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsPutEndpointTest):
         channelName = "my-channel"
         # Specifying an inputChannelID will cause the validate_channel_id logic to be triggered
         channelID = 123
-        self._mock_slack_response(
-            url=f"https://slack.com/api/conversations.info?channel={channelID}",
-            body={"ok": "true", "channel": {"name": channelName}},
-        )
-        with assume_test_silo_mode(SiloMode.REGION), override_settings(SILO_MODE=SiloMode.REGION):
-            resp = self._organization_alert_rule_api_call(channelName, channelID)
+        channel = {"name": channelName}
+        with self.mock_conversations_info(channel):
+            with (
+                assume_test_silo_mode(SiloMode.REGION),
+                override_settings(SILO_MODE=SiloMode.REGION),
+            ):
+                resp = self._organization_alert_rule_api_call(channelName, channelID)
 
-        stored_action = resp.data["triggers"][0]["actions"][0]
-        assert stored_action["inputChannelId"] == str(channelID)
-        assert stored_action["targetIdentifier"] == channelName
+            stored_action = resp.data["triggers"][0]["actions"][0]
+            assert stored_action["inputChannelId"] == str(channelID)
+            assert stored_action["targetIdentifier"] == channelName
 
-    @responses.activate
-    def test_create_slack_alert_with_mismatch_name_and_channel_id(self):
+    def test_create_slack_alert_with_mismatch_name_and_channel_id_sdk(self):
         """
         The user specifies the Slack channel and channel ID but they do not match.
         """
@@ -736,48 +1400,62 @@ class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsPutEndpointTest):
         channelName = "my-channel"
         # Specifying an inputChannelID will cause the validate_channel_id logic to be triggered
         channelID = 123
-        self._mock_slack_response(
-            url=f"https://slack.com/api/conversations.info?channel={channelID}",
-            body={"ok": "true", "channel": {"name": otherChannel}},
-        )
+        channel = {"name": otherChannel}
+        with self.mock_conversations_info(channel):
+            with (
+                assume_test_silo_mode(SiloMode.REGION),
+                override_settings(SILO_MODE=SiloMode.REGION),
+            ):
+                resp = self._organization_alert_rule_api_call(channelName, channelID)
 
-        with assume_test_silo_mode(SiloMode.REGION), override_settings(SILO_MODE=SiloMode.REGION):
-            resp = self._organization_alert_rule_api_call(channelName, channelID)
+            assert resp.status_code == 400
+            assert resp.data == {
+                "nonFieldErrors": [
+                    ErrorDetail(
+                        string=f"Received channel name {otherChannel} does not match inputted channel name {channelName}.",
+                        code="invalid",
+                    )
+                ]
+            }
 
-        assert resp.status_code == 400
-        assert resp.data == {
-            "nonFieldErrors": [
-                ErrorDetail(
-                    string=f"Received channel name {otherChannel} does not match inputted channel name {channelName}.",
-                    code="invalid",
-                )
-            ]
-        }
-
-    # An incorrect channelID will raise an ApiError in the Slack client
-    @patch.object(SlackClient, "get", side_effect=ApiError(text="channel_not_found"))
+    # An incorrect channelID will raise an SlackApiError in the Slack client
     @responses.activate
-    def test_create_slack_alert_with_non_existent_channel_id(self, mock_slack_client):
+    def test_create_slack_alert_with_non_existent_channel_id(self):
         """
         The user specifies a bad Slack channel ID.
         """
-        self.create_member(
-            user=self.user, organization=self.organization, role="owner", teams=[self.team]
-        )
-        self.login_as(self.user)
-        channelName = "my-channel"
-        # Specifying an inputChannelID will cause the validate_channel_id logic to be triggered
-        channelID = 123
-        resp = self._organization_alert_rule_api_call(channelName, channelID)
+        with patch(
+            "slack_sdk.web.client.WebClient.conversations_info",
+            side_effect=SlackApiError(
+                "error",
+                SlackResponse(
+                    client=None,
+                    http_verb="POST",
+                    api_url="https://slack.com/api/conversations.info",
+                    req_args={"channel": "my-channel"},
+                    data={"ok": False, "error": "channel_not_found"},
+                    headers={},
+                    status_code=400,
+                ),
+            ),
+        ):
+            self.create_member(
+                user=self.user, organization=self.organization, role="owner", teams=[self.team]
+            )
+            self.login_as(self.user)
+            channelName = "my-channel"
+            # Specifying an inputChannelID will cause the validate_channel_id logic to be triggered
+            channelID = 123
+            resp = self._organization_alert_rule_api_call(channelName, channelID)
 
-        assert resp.status_code == 400
-        assert resp.data == {
-            "nonFieldErrors": [
-                ErrorDetail(string="Channel not found. Invalid ID provided.", code="invalid")
-            ]
-        }
+            assert resp.status_code == 400
+            assert resp.data == {
+                "nonFieldErrors": [
+                    ErrorDetail(string="Channel not found. Invalid ID provided.", code="invalid")
+                ]
+            }
 
-    @patch("sentry.tasks.integrations.slack.find_channel_id_for_alert_rule.apply_async")
+    @patch.object(find_channel_id_for_alert_rule, "apply_async")
     @patch("sentry.integrations.slack.utils.rule_status.uuid4")
     @responses.activate
     def test_create_slack_alert_with_empty_channel_id(
@@ -802,7 +1480,11 @@ class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsPutEndpointTest):
 
     @patch(
         "sentry.integrations.slack.utils.channel.get_channel_id_with_timeout",
-        side_effect=[("#", 10, False), ("#", 10, False), ("#", 20, False)],
+        side_effect=[
+            SlackChannelIdData("#", "10", False),
+            SlackChannelIdData("#", "10", False),
+            SlackChannelIdData("#", "20", False),
+        ],
     )
     @patch("sentry.integrations.slack.utils.rule_status.uuid4")
     def test_async_lookup_outside_transaction(self, mock_uuid4, mock_get_channel_id):
@@ -811,13 +1493,14 @@ class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsPutEndpointTest):
         )
         self.login_as(self.user)
         mock_uuid4.return_value = self.get_mock_uuid()
-        self.integration = Integration.objects.create(
-            provider="slack",
-            name="Team A",
-            external_id="TXXXXXXX1",
-            metadata={"access_token": "xoxp-xxxxxxxxx-xxxxxxxxxx-xxxxxxxxxxxx"},
-        )
-        self.integration.add_organization(self.organization, self.user)
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            self.integration = self.create_provider_integration(
+                provider="slack",
+                name="Team A",
+                external_id="TXXXXXXX1",
+                metadata={"access_token": "xoxp-xxxxxxxxx-xxxxxxxxxx-xxxxxxxxxxxx"},
+            )
+            self.integration.add_organization(self.organization, self.user)
         test_params = self.valid_params.copy()
         test_params["triggers"] = [
             {
@@ -936,7 +1619,9 @@ class AlertRuleDetailsSlackPutEndpointTest(AlertRuleDetailsPutEndpointTest):
         )  # Did not increment from the last assertion because we early out on the validation error
 
 
-class AlertRuleDetailsSentryAppPutEndpointTest(AlertRuleDetailsPutEndpointTest):
+class AlertRuleDetailsSentryAppPutEndpointTest(AlertRuleDetailsBase):
+    method = "put"
+
     def test_sentry_app(self):
         self.create_member(
             user=self.user, organization=self.organization, role="owner", teams=[self.team]
@@ -1113,12 +1798,10 @@ class AlertRuleDetailsSentryAppPutEndpointTest(AlertRuleDetailsPutEndpointTest):
 
         with self.feature(["organizations:incidents", "organizations:performance-view"]):
             resp = self.get_response(self.organization.slug, self.alert_rule.id, **test_params)
+        assert resp.status_code == 500
+        assert error_message in resp.data["detail"]
 
-        assert resp.status_code == 400
-        assert error_message in resp.data["sentry_app"]
 
-
-@region_silo_test(stable=True)
 class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
     method = "delete"
 
@@ -1134,6 +1817,12 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
             )
 
         assert not AlertRule.objects.filter(id=self.alert_rule.id).exists()
+        assert AlertRule.objects_with_snapshots.filter(name=self.alert_rule.name).exists()
+        assert AlertRule.objects_with_snapshots.filter(id=self.alert_rule.id).exists()
+
+        with self.tasks():
+            run_scheduled_deletions()
+
         assert not AlertRule.objects_with_snapshots.filter(name=self.alert_rule.name).exists()
         assert not AlertRule.objects_with_snapshots.filter(id=self.alert_rule.id).exists()
 
@@ -1146,6 +1835,33 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
             resp.renderer_context["request"].META["REMOTE_ADDR"]
             == list(audit_log_entry)[0].ip_address
         )
+
+    @patch(
+        "sentry.incidents.endpoints.organization_alert_rule_details.dual_delete_migrated_alert_rule"
+    )
+    def test_dual_delete(self, mock_dual_delete):
+        self.create_member(
+            user=self.user, organization=self.organization, role="owner", teams=[self.team]
+        )
+        self.login_as(self.user)
+
+        with self.feature("organizations:incidents"), outbox_runner():
+            self.get_success_response(self.organization.slug, self.alert_rule.id, status_code=204)
+
+        assert not AlertRule.objects.filter(id=self.alert_rule.id).exists()
+        assert AlertRule.objects_with_snapshots.filter(name=self.alert_rule.name).exists()
+        assert AlertRule.objects_with_snapshots.filter(id=self.alert_rule.id).exists()
+
+        # we test the logic for this method elsewhere, so just test that it's correctly called
+        assert mock_dual_delete.call_count == 1
+        kwargs = mock_dual_delete.call_args_list[0][1]
+        assert kwargs["alert_rule"] == self.alert_rule
+
+        with self.tasks():
+            run_scheduled_deletions()
+
+        assert not AlertRule.objects_with_snapshots.filter(name=self.alert_rule.name).exists()
+        assert not AlertRule.objects_with_snapshots.filter(id=self.alert_rule.id).exists()
 
     def test_no_feature(self):
         self.create_member(
@@ -1185,7 +1901,7 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
         )
         self.login_as(self.user)
         alert_rule = self.alert_rule
-        alert_rule.owner = self.team.actor
+        alert_rule.team = self.team
         alert_rule.save()
         # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
         OrganizationMemberTeam.objects.filter(
@@ -1196,7 +1912,7 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
             resp = self.get_response(self.organization.slug, alert_rule.id)
         assert resp.status_code == 204
         another_alert_rule = self.alert_rule
-        alert_rule.owner = self.team.actor
+        alert_rule.team = self.team
         another_alert_rule.save()
         self.create_team_membership(team=self.team, member=om)
         with self.feature("organizations:incidents"):
@@ -1211,7 +1927,7 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
         team = self.create_team(organization=self.organization, members=[self.user])
         project = self.create_project(name="boo", organization=self.organization, teams=[team])
         alert_rule = self.create_alert_rule(projects=[project])
-        alert_rule.owner = team.actor
+        alert_rule.team_id = team.id
         alert_rule.save()
 
         other_user = self.create_user()
@@ -1221,7 +1937,7 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
             name="ahh", organization=self.organization, teams=[other_team]
         )
         other_alert_rule = self.create_alert_rule(projects=[other_project])
-        other_alert_rule.owner = other_team.actor
+        other_alert_rule.team_id = other_team.id
         other_alert_rule.save()
 
         with self.feature("organizations:incidents"):

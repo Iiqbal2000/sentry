@@ -1,5 +1,3 @@
-from typing import List
-
 from django.db import IntegrityError, router, transaction
 from django.db.models import Q
 from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_serializer
@@ -10,13 +8,9 @@ from rest_framework.response import Response
 
 from sentry import audit_log
 from sentry.api.api_publish_status import ApiPublishStatus
-from sentry.api.base import (
-    DEFAULT_SLUG_ERROR_MESSAGE,
-    DEFAULT_SLUG_PATTERN,
-    PreventNumericSlugMixin,
-    region_silo_endpoint,
-)
+from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.organization import OrganizationEndpoint, OrganizationPermission
+from sentry.api.fields.sentry_slug import SentrySerializerSlugField
 from sentry.api.paginator import OffsetPaginator
 from sentry.api.serializers import serialize
 from sentry.api.serializers.models.team import TeamSerializer, TeamSerializerResponse
@@ -24,7 +18,8 @@ from sentry.apidocs.constants import RESPONSE_BAD_REQUEST, RESPONSE_FORBIDDEN, R
 from sentry.apidocs.examples.team_examples import TeamExamples
 from sentry.apidocs.parameters import CursorQueryParam, GlobalParams, TeamParams
 from sentry.apidocs.utils import inline_sentry_response_serializer
-from sentry.models.integrations.external_actor import ExternalActor
+from sentry.db.models.fields.slug import DEFAULT_SLUG_MAX_LENGTH
+from sentry.integrations.models.external_actor import ExternalActor
 from sentry.models.organizationmember import OrganizationMember
 from sentry.models.organizationmemberteam import OrganizationMemberTeam
 from sentry.models.team import Team, TeamStatus
@@ -46,15 +41,13 @@ class OrganizationTeamsPermission(OrganizationPermission):
 
 
 @extend_schema_serializer(exclude_fields=["idp_provisioned"], deprecate_fields=["name"])
-class TeamPostSerializer(serializers.Serializer, PreventNumericSlugMixin):
-    slug = serializers.RegexField(
-        DEFAULT_SLUG_PATTERN,
+class TeamPostSerializer(serializers.Serializer):
+    slug = SentrySerializerSlugField(
         help_text="""Uniquely identifies a team and is used for the interface. If not
         provided, it is automatically generated from the name.""",
-        max_length=50,
+        max_length=DEFAULT_SLUG_MAX_LENGTH,
         required=False,
         allow_null=True,
-        error_messages={"invalid": DEFAULT_SLUG_ERROR_MESSAGE},
     )
     name = serializers.CharField(
         help_text="""**`[DEPRECATED]`** The name for the team. If not provided, it is
@@ -88,14 +81,14 @@ class OrganizationTeamsEndpoint(OrganizationEndpoint):
     @extend_schema(
         operation_id="List an Organization's Teams",
         parameters=[
-            GlobalParams.ORG_SLUG,
+            GlobalParams.ORG_ID_OR_SLUG,
             TeamParams.DETAILED,
             CursorQueryParam,
         ],
         request=None,
         responses={
             200: inline_sentry_response_serializer(
-                "ListOrgTeamResponse", List[TeamSerializerResponse]
+                "ListOrgTeamResponse", list[TeamSerializerResponse]
             ),
             403: RESPONSE_FORBIDDEN,
             404: RESPONSE_NOT_FOUND,
@@ -138,16 +131,18 @@ class OrganizationTeamsEndpoint(OrganizationEndpoint):
                         )
 
                 elif key == "query":
-                    value = " ".join(value)
-                    queryset = queryset.filter(Q(name__icontains=value) | Q(slug__icontains=value))
+                    joined_value = " ".join(value)
+                    queryset = queryset.filter(
+                        Q(name__icontains=joined_value) | Q(slug__icontains=joined_value)
+                    )
                 elif key == "slug":
                     queryset = queryset.filter(slug__in=value)
                 elif key == "id":
                     try:
-                        value = [int(item) for item in value]
+                        int_values = [int(item) for item in value]
                     except ValueError:
                         raise ParseError(detail="Invalid id value")
-                    queryset = queryset.filter(id__in=value)
+                    queryset = queryset.filter(id__in=int_values)
                 else:
                     queryset = queryset.none()
 
@@ -169,7 +164,7 @@ class OrganizationTeamsEndpoint(OrganizationEndpoint):
     @extend_schema(
         operation_id="Create a New Team",
         parameters=[
-            GlobalParams.ORG_SLUG,
+            GlobalParams.ORG_ID_OR_SLUG,
         ],
         request=TeamPostSerializer,
         responses={

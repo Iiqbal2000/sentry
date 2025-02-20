@@ -1,11 +1,10 @@
 import {useState} from 'react';
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
 import OptionSelector from 'sentry/components/charts/optionSelector';
-import {t} from 'sentry/locale';
 
 describe('Charts > OptionSelector (Multiple)', function () {
   const features = ['discover-basic'];
@@ -17,7 +16,7 @@ describe('Charts > OptionSelector (Multiple)', function () {
     {label: 'avg(transaction.duration)', value: 'avg(transaction.duration)'},
   ];
   const onChangeStub = jest.fn();
-  const organization = Organization({
+  const organization = OrganizationFixture({
     features: [...features],
   });
 
@@ -32,7 +31,7 @@ describe('Charts > OptionSelector (Multiple)', function () {
       <OptionSelector
         multiple
         isOpen
-        title={t('Y-Axis')}
+        title={'Y-Axis'}
         selected={currentSelected}
         options={yAxisOptions}
         onChange={newSelected => {
@@ -53,12 +52,12 @@ describe('Charts > OptionSelector (Multiple)', function () {
       projects: [],
     });
 
-    return render(<TestComponent />, {context: initialData.routerContext});
+    return render(<TestComponent />, {router: initialData.router});
   };
 
-  it('renders yAxisOptions with yAxisValue selected', function () {
+  it('renders yAxisOptions with yAxisValue selected', async function () {
     renderComponent();
-    expect(screen.getByRole('option', {name: 'count()'})).toHaveAttribute(
+    expect(await screen.findByRole('option', {name: 'count()'})).toHaveAttribute(
       'aria-selected',
       'true'
     );

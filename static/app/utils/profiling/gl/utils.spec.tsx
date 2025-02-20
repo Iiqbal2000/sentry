@@ -1,4 +1,4 @@
-import Fuse from 'fuse.js';
+import type Fuse from 'fuse.js';
 import {mat3, vec2} from 'gl-matrix';
 
 import {
@@ -19,11 +19,9 @@ import {findRangeBinarySearch, Rect, trimTextCenter} from '../speedscope';
 describe('makeProjectionMatrix', () => {
   it('should return a projection matrix', () => {
     // prettier-ignore
-    expect(makeProjectionMatrix(1024, 768)).toEqual(mat3.fromValues(
-      2/1024, 0, 0,
-      -0, -2/768, -0,
-      -1,1,1
-    ));
+    expect(makeProjectionMatrix(1024, 768)).toEqual(
+      mat3.fromValues(2 / 1024, 0, 0, -0, -2 / 768, -0, -1, 1, 1)
+    );
   });
 });
 
@@ -55,7 +53,7 @@ describe('upperBound', () => {
     [[-3, -2, -1], -2, 1],
     [[1, 2, 3], 10, 3],
     [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5, 4],
-  ])(`inserts`, (args, target, insert) => {
+  ])(`inserts %p`, (args, target, insert) => {
     expect(
       upperBound(
         target,
@@ -69,8 +67,8 @@ describe('upperBound', () => {
     const view = new Rect(4, 0, 2, 0);
 
     expect(upperBound(view.right, frames)).toBe(6);
-    expect(frames[6].start).toBeGreaterThanOrEqual(view.right);
-    expect(frames[6].end).toBeGreaterThanOrEqual(view.right);
+    expect(frames[6]!.start).toBeGreaterThanOrEqual(view.right);
+    expect(frames[6]!.end).toBeGreaterThanOrEqual(view.right);
   });
 });
 
@@ -81,7 +79,7 @@ describe('lowerBound', () => {
     [[-3, -2, -1], -1, 1],
     [[1, 2, 3], 10, 3],
     [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5, 3],
-  ])(`inserts`, (args, target, insert) => {
+  ])(`inserts %p`, (args, target, insert) => {
     expect(
       lowerBound(
         target,
@@ -95,8 +93,8 @@ describe('lowerBound', () => {
     const view = new Rect(4, 0, 2, 0);
 
     expect(lowerBound(view.left, frames)).toBe(3);
-    expect(frames[3].start).toBeLessThanOrEqual(view.left);
-    expect(frames[3].end).toBeLessThanOrEqual(view.left);
+    expect(frames[3]!.start).toBeLessThanOrEqual(view.left);
+    expect(frames[3]!.end).toBeLessThanOrEqual(view.left);
   });
 });
 
@@ -321,11 +319,7 @@ describe('Rect', () => {
     it('transformRect', () => {
       // prettier-ignore
       // Scale (10,20),translate by (3, 4)
-      const matrix = mat3.fromValues(
-        10,0,0,
-        0,20,0,
-        3,4,0,
-  )
+      const matrix = mat3.fromValues(10, 0, 0, 0, 20, 0, 3, 4, 0);
       expect(new Rect(1, 1, 1, 1).transformRect(matrix)).toEqual(
         new Rect(13, 24, 10, 20)
       );
@@ -624,11 +618,7 @@ describe('computeConfigViewWithStrategy', () => {
       // Scales by 2 along the x and y axis
       expect(actual).toEqual(
         // prettier-ignore
-        mat3.fromValues(
-          2, 0, 0,
-          0, 2, 0,
-          0, 0, 1
-        )
+        mat3.fromValues(2, 0, 0, 0, 2, 0, 0, 0, 1)
       );
     });
 
@@ -640,11 +630,7 @@ describe('computeConfigViewWithStrategy', () => {
 
       expect(actual).toEqual(
         // prettier-ignore
-        mat3.fromValues(
-          2, 0, 0,
-          0, 2, 0,
-          -5, -5, 1
-        )
+        mat3.fromValues(2, 0, 0, 0, 2, 0, -5, -5, 1)
       );
     });
   });

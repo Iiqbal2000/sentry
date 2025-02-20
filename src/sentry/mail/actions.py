@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from sentry.mail import mail_adapter
 from sentry.mail.forms.notify_email import NotifyEmailForm
@@ -18,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 class NotifyEmailAction(EventAction):
     id = "sentry.mail.actions.NotifyEmailAction"
-    form_cls = NotifyEmailForm
     label = "Send a notification to {targetType} and if none can be found then send a notification to {fallthroughType}"
     prompt = "Send a notification"
     metrics_slug = "EmailAction"
@@ -35,9 +33,13 @@ class NotifyEmailAction(EventAction):
             self.data = {**self.data, "fallthroughType": FallthroughChoiceType.ACTIVE_MEMBERS.value}
         return self.label.format(**self.data)
 
-    def after(self, event, state, notification_uuid: Optional[str] = None):
+    def after(self, event, notification_uuid: str | None = None):
         group = event.group
-        extra = {"event_id": event.event_id, "group_id": group.id}
+        extra = {
+            "event_id": event.event_id,
+            "group_id": group.id,
+            "notification_uuid": notification_uuid,
+        }
         group = event.group
 
         target_type = ActionTargetType(self.data["targetType"])
@@ -70,5 +72,5 @@ class NotifyEmailAction(EventAction):
             )
         )
 
-    def get_form_instance(self):
-        return self.form_cls(self.project, self.data)
+    def get_form_instance(self) -> NotifyEmailForm:
+        return NotifyEmailForm(self.project, self.data)

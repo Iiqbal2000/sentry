@@ -1,22 +1,28 @@
+import os
 import secrets
-from typing import List
-from urllib.parse import urlparse
+from typing import Any, ClassVar, Self
+from urllib.parse import urlparse, urlunparse
 
 import petname
+import sentry_sdk
 from django.db import models, router, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
+from sentry.backup.dependencies import NormalizedModelName, get_model_name
+from sentry.backup.sanitize import SanitizableField, Sanitizer
 from sentry.backup.scopes import RelocationScope
 from sentry.db.models import (
-    BaseManager,
     BoundedPositiveIntegerField,
     FlexibleForeignKey,
     Model,
-    control_silo_only_model,
+    control_silo_model,
     sane_repr,
 )
-from sentry.models.outbox import ControlOutbox, OutboxCategory, OutboxScope, outbox_context
+from sentry.db.models.fields.array import ArrayField
+from sentry.db.models.manager.base import BaseManager
+from sentry.hybridcloud.models.outbox import ControlOutbox, outbox_context
+from sentry.hybridcloud.outbox.category import OutboxCategory, OutboxScope
 from sentry.types.region import find_all_region_names
 
 
@@ -37,7 +43,7 @@ class ApiApplicationStatus:
     deletion_in_progress = 3
 
 
-@control_silo_only_model
+@control_silo_model
 class ApiApplication(Model):
     __relocation_scope__ = RelocationScope.Global
 
@@ -61,8 +67,15 @@ class ApiApplication(Model):
     terms_url = models.URLField(null=True)
 
     date_added = models.DateTimeField(default=timezone.now)
+    scopes = ArrayField(
+        models.TextField(),
+        null=True,
+    )
+    # ApiApplication by default provides user level access
+    # This field is true if a certain application is limited to access only a specific org
+    requires_org_level_access = models.BooleanField(default=False)
 
-    objects = BaseManager(cache_fields=("client_id",))
+    objects: ClassVar[BaseManager[Self]] = BaseManager(cache_fields=("client_id",))
 
     class Meta:
         app_label = "sentry"
@@ -73,13 +86,13 @@ class ApiApplication(Model):
     def __str__(self):
         return self.name
 
-    def delete(self, **kwargs):
+    def delete(self, *args, **kwargs):
         with outbox_context(transaction.atomic(router.db_for_write(ApiApplication)), flush=False):
             for outbox in self.outboxes_for_update():
                 outbox.save()
-            return super().delete(**kwargs)
+            return super().delete(*args, **kwargs)
 
-    def outboxes_for_update(self) -> List[ControlOutbox]:
+    def outboxes_for_update(self) -> list[ControlOutbox]:
         return [
             ControlOutbox(
                 shard_scope=OutboxScope.APP_SCOPE,
@@ -98,12 +111,34 @@ class ApiApplication(Model):
     def is_allowed_response_type(self, value):
         return value in ("code", "token")
 
+    def normalize_url(self, value):
+        parts = urlparse(value)
+        normalized_path = os.path.normpath(parts.path)
+        if normalized_path == ".":
+            normalized_path = "/"
+        elif value.endswith("/") and not normalized_path.endswith("/"):
+            normalized_path += "/"
+        return urlunparse(parts._replace(path=normalized_path))
+
     def is_valid_redirect_uri(self, value):
-        v_netloc = urlparse(value).netloc
-        for ruri in self.redirect_uris.split("\n"):
-            if v_netloc != urlparse(ruri).netloc:
-                continue
+        value = self.normalize_url(value)
+
+        for redirect_uri in self.redirect_uris.split("\n"):
+            ruri = self.normalize_url(redirect_uri)
+            if value == ruri:
+                return True
             if value.startswith(ruri):
+                with sentry_sdk.isolation_scope() as scope:
+                    scope.set_context(
+                        "api_application",
+                        {
+                            "client_id": self.client_id,
+                            "redirect_uri": value,
+                            "allowed_redirect_uris": self.redirect_uris,
+                        },
+                    )
+                    message = "oauth.prefix-matched-redirect-uri"
+                    sentry_sdk.capture_message(message, level="info")
                 return True
         return False
 
@@ -128,3 +163,16 @@ class ApiApplication(Model):
             "allowed_origins": self.allowed_origins,
             "status": self.status,
         }
+
+    @classmethod
+    def sanitize_relocation_json(
+        cls, json: Any, sanitizer: Sanitizer, model_name: NormalizedModelName | None = None
+    ) -> None:
+        model_name = get_model_name(cls) if model_name is None else model_name
+        super().sanitize_relocation_json(json, sanitizer, model_name)
+
+        sanitizer.set_string(json, SanitizableField(model_name, "allowed_origins"), lambda _: "")
+        sanitizer.set_string(
+            json, SanitizableField(model_name, "client_id"), lambda _: generate_token()
+        )
+        sanitizer.set_string(json, SanitizableField(model_name, "redirect_uris"), lambda _: "")

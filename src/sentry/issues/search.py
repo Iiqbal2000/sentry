@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import functools
 import logging
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
-from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Set, TypedDict
+from typing import Any, Optional, Protocol, TypedDict
 
-from sentry import features
 from sentry.api.event_search import SearchFilter, SearchKey, SearchValue
 from sentry.issues import grouptype
-from sentry.issues.grouptype import GroupCategory, get_all_group_type_ids, get_group_type_by_type_id
-from sentry.models.environment import Environment
+from sentry.issues.grouptype import (
+    GroupCategory,
+    GroupType,
+    get_all_group_type_ids,
+    get_group_type_by_type_id,
+)
+from sentry.issues.grouptype import registry as GT_REGISTRY
 from sentry.models.organization import Organization
 from sentry.search.events.filter import convert_search_filter_to_snuba_query
 from sentry.snuba.dataset import Dataset
@@ -27,8 +32,7 @@ class IntermediateSearchQueryPartial(Protocol):
         groupby: Sequence[str],
         having: Sequence[Any],
         orderby: Sequence[str],
-    ) -> Mapping[str, Any]:
-        ...
+    ) -> Mapping[str, Any]: ...
 
 
 class SearchQueryPartial(Protocol):
@@ -40,8 +44,7 @@ class SearchQueryPartial(Protocol):
         conditions: Sequence[Any],
         aggregations: Sequence[Any],
         condition_resolver: Any,
-    ) -> Mapping[str, Any]:
-        ...
+    ) -> Mapping[str, Any]: ...
 
 
 GroupSearchFilterUpdater = Callable[[Sequence[SearchFilter]], Sequence[SearchFilter]]
@@ -52,8 +55,8 @@ GroupSearchStrategy = Callable[
         Sequence[Any],
         Sequence[Any],
         int,
-        Sequence[int],
-        Optional[Sequence[Environment]],
+        list[int],
+        Optional[Sequence[str]],
         Optional[Sequence[int]],
         Mapping[str, Sequence[int]],
         Sequence[Any],
@@ -68,27 +71,24 @@ class MergeableRow(TypedDict, total=False):
 
 
 def group_categories_from(
-    search_filters: Optional[Sequence[SearchFilter]],
-) -> Set[int]:
+    search_filters: Sequence[SearchFilter] | None,
+) -> set[int]:
     """Iterates over search_filters for any Group-specific filters
 
     :returns: a set of GroupCategories if the list of search-filters targets a Group type or category, else
                 an empty set.
     """
-    group_categories: Set[int] = set()
+    group_categories: set[int] = set()
     # determine which dataset to fan-out to based on the search filter criteria provided
     # if its unspecified, we have to query all datasources
     for search_filter in search_filters or ():
         if search_filter.key.name in ("issue.category", "issue.type"):
             if search_filter.is_negation:
+                # get all group categories except the ones in the negation filter
                 group_categories.update(
                     get_group_type_by_type_id(value).category
-                    for value in list(
-                        filter(
-                            lambda x: x not in get_all_group_type_ids(),
-                            search_filter.value.raw_value,
-                        )
-                    )
+                    for value in get_all_group_type_ids()
+                    if value not in search_filter.value.raw_value
                 )
             else:
                 group_categories.update(
@@ -99,18 +99,45 @@ def group_categories_from(
     return group_categories
 
 
+def group_types_from(
+    search_filters: Sequence[SearchFilter] | None,
+) -> set[int]:
+    """
+    Return the set of group type ids to include in the query, or None if all group types should be included.
+    """
+
+    # if no relevant filters, return none to signify we should query all group types
+    if not any(sf.key.name in ("issue.category", "issue.type") for sf in search_filters or ()):
+        # Filters some types from the default search
+        all_group_type_objs: list[GroupType] = [
+            GT_REGISTRY.get_by_type_id(id) for id in GT_REGISTRY.get_all_group_type_ids()
+        ]
+        return {gt.type_id for gt in all_group_type_objs if gt.in_default_search}
+
+    # start by including all group types
+    include_group_types = set(get_all_group_type_ids())
+    for search_filter in search_filters or ():
+        # note that for issue.category, the raw value becomes the full list of group type ids mapped from the category
+        if search_filter.key.name in ("issue.category", "issue.type"):
+            if search_filter.is_negation:
+                include_group_types -= set(search_filter.value.raw_value)
+            else:
+                include_group_types &= set(search_filter.value.raw_value)
+    return include_group_types
+
+
 def _query_params_for_error(
     query_partial: SearchQueryPartial,
     selected_columns: Sequence[Any],
     aggregations: Sequence[Any],
     organization_id: int,
-    project_ids: Sequence[int],
-    environments: Optional[Sequence[Environment]],
-    group_ids: Optional[Sequence[int]],
+    project_ids: list[int],
+    environments: Sequence[str] | None,
+    group_ids: Sequence[int] | None,
     filters: Mapping[str, Sequence[int]],
     conditions: Sequence[Any],
-    actor: Optional[Any] = None,
-) -> Optional[SnubaQueryParams]:
+    actor: Any | None = None,
+) -> SnubaQueryParams:
     if group_ids:
         filters = {"group_id": sorted(group_ids), **filters}
     error_conditions = _updated_conditions(
@@ -124,7 +151,7 @@ def _query_params_for_error(
     )
 
     params = query_partial(
-        dataset=Dataset.Discover,
+        dataset=Dataset.Events,
         selected_columns=selected_columns,
         filter_keys=filters,
         conditions=error_conditions,
@@ -135,87 +162,21 @@ def _query_params_for_error(
     return SnubaQueryParams(**params)
 
 
-def _query_params_for_perf(
-    query_partial: SearchQueryPartial,
-    selected_columns: Sequence[Any],
-    aggregations: Sequence[Any],
-    organization_id: int,
-    project_ids: Sequence[int],
-    environments: Optional[Sequence[Environment]],
-    group_ids: Optional[Sequence[int]],
-    filters: Mapping[str, Sequence[int]],
-    conditions: Sequence[Any],
-    actor: Optional[Any] = None,
-) -> Optional[SnubaQueryParams]:
-    organization = Organization.objects.filter(id=organization_id).first()
-    if organization:
-        transaction_conditions = _updated_conditions(
-            "event.type",
-            "=",
-            "transaction",
-            organization_id,
-            project_ids,
-            environments,
-            conditions,
-        )
-
-        if group_ids:
-            transaction_conditions = [
-                [["hasAny", ["group_ids", ["array", group_ids]]], "=", 1],
-                *transaction_conditions,
-            ]
-            selected_columns = [
-                [
-                    "arrayJoin",
-                    [
-                        [
-                            "arrayIntersect",
-                            [
-                                ["array", group_ids],
-                                "group_ids",
-                            ],
-                        ]
-                    ],
-                    "group_id",
-                ],
-                *selected_columns,
-            ]
-        else:
-            aggregations = list(aggregations).copy() if aggregations else []
-            aggregations.insert(0, ["arrayJoin", ["group_ids"], "group_id"])
-
-        params = query_partial(
-            dataset=Dataset.Discover,
-            selected_columns=selected_columns,
-            filter_keys=filters,
-            conditions=transaction_conditions,
-            aggregations=aggregations,
-            condition_resolver=functools.partial(
-                snuba.get_snuba_column_name, dataset=Dataset.Transactions
-            ),
-        )
-
-        return SnubaQueryParams(**params)
-    return None
-
-
 def _query_params_for_generic(
     query_partial: SearchQueryPartial,
     selected_columns: Sequence[Any],
     aggregations: Sequence[Any],
     organization_id: int,
-    project_ids: Sequence[int],
-    environments: Optional[Sequence[Environment]],
-    group_ids: Optional[Sequence[int]],
+    project_ids: list[int],
+    environments: Sequence[str] | None,
+    group_ids: Sequence[int] | None,
     filters: Mapping[str, Sequence[int]],
     conditions: Sequence[Any],
-    actor: Optional[Any] = None,
-    categories: Optional[Sequence[GroupCategory]] = None,
-) -> Optional[SnubaQueryParams]:
+    actor: Any | None = None,
+    categories: Sequence[GroupCategory] | None = None,
+) -> SnubaQueryParams | None:
     organization = Organization.objects.filter(id=organization_id).first()
-    if organization and features.has(
-        "organizations:issue-platform", organization=organization, actor=actor
-    ):
+    if organization:
         if categories is None:
             logging.error("Category is required in _query_params_for_generic")
             return None
@@ -248,8 +209,8 @@ def _query_params_for_generic(
     return None
 
 
-def get_search_strategies() -> Mapping[int, GroupSearchStrategy]:
-    strategies = {}
+def get_search_strategies() -> dict[int, GroupSearchStrategy]:
+    strategies: dict[int, GroupSearchStrategy] = {}
     for group_category in GroupCategory:
         if group_category == GroupCategory.ERROR:
             strategy = _query_params_for_error
@@ -293,8 +254,8 @@ def _updated_conditions(
     operator: str,
     value: str,
     organization_id: int,
-    project_ids: Sequence[int],
-    environments: Optional[Sequence[Environment]],
+    project_ids: list[int],
+    environments: Sequence[str] | None,
     conditions: Sequence[Any],
 ) -> Sequence[Any]:
     search_filter = SearchFilter(

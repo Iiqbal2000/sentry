@@ -1,5 +1,5 @@
 import styled from '@emotion/styled';
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
@@ -12,7 +12,7 @@ jest.mock('sentry/actionCreators/teams', () => ({
 }));
 
 describe('CreateTeamModal', function () {
-  const org = Organization();
+  const org = OrganizationFixture();
   const closeModal = jest.fn();
   const onClose = jest.fn();
 
@@ -21,7 +21,7 @@ describe('CreateTeamModal', function () {
   });
 
   it('calls createTeam action creator on submit', async function () {
-    const styledWrapper = styled(c => c.children);
+    const styledWrapper = styled<any>((c: {children: React.ReactNode}) => c.children);
     render(
       <CreateTeamModal
         Body={styledWrapper()}

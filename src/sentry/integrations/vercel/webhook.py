@@ -3,27 +3,30 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-from typing import Any, Mapping, Tuple
+from collections.abc import Mapping
+from typing import Any, TypedDict
 
+from django.http.request import HttpRequest
+from django.http.response import HttpResponseBase
 from django.utils.crypto import constant_time_compare
 from django.views.decorators.csrf import csrf_exempt
 from requests.exceptions import RequestException
 from rest_framework.request import Request
 from rest_framework.response import Response
-from sentry_sdk import configure_scope
 
 from sentry import VERSION, audit_log, http, options
+from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import Endpoint, control_silo_endpoint
-from sentry.models.integrations.integration import Integration
-from sentry.models.integrations.organization_integration import OrganizationIntegration
-from sentry.models.integrations.sentry_app_installation_for_provider import (
+from sentry.hybridcloud.services.organization_mapping import organization_mapping_service
+from sentry.integrations.models.integration import Integration
+from sentry.integrations.models.organization_integration import OrganizationIntegration
+from sentry.models.project import Project
+from sentry.projects.services.project import project_service
+from sentry.sentry_apps.models.sentry_app_installation_for_provider import (
     SentryAppInstallationForProvider,
 )
-from sentry.models.integrations.sentry_app_installation_token import SentryAppInstallationToken
-from sentry.models.project import Project
-from sentry.services.hybrid_cloud.organization_mapping import organization_mapping_service
-from sentry.services.hybrid_cloud.project import project_service
+from sentry.sentry_apps.models.sentry_app_installation_token import SentryAppInstallationToken
 from sentry.shared_integrations.exceptions import IntegrationError
 from sentry.utils.audit import create_audit_entry
 from sentry.utils.http import absolute_uri
@@ -37,6 +40,12 @@ class NoCommitFoundError(IntegrationError):
 
 class MissingRepositoryError(IntegrationError):
     pass
+
+
+class _ReleasePayload(TypedDict):
+    version: str
+    projects: list[str]
+    refs: list[dict[str, str]]
 
 
 def verify_signature(request):
@@ -92,7 +101,7 @@ def get_repository(meta: Mapping[str, str]) -> str:
 
 def get_payload_and_token(
     payload: Mapping[str, Any], organization_id: int, sentry_project_id: int
-) -> Tuple[Mapping[str, Any], str]:
+) -> tuple[_ReleasePayload, str]:
     meta = payload["deployment"]["meta"]
 
     # look up the project so we can get the slug
@@ -118,7 +127,7 @@ def get_payload_and_token(
     commit_sha = get_commit_sha(meta)
     repository = get_repository(meta)
 
-    release_payload = {
+    release_payload: _ReleasePayload = {
         "version": commit_sha,
         "projects": [project.slug],
         "refs": [{"repository": repository, "commit": commit_sha}],
@@ -128,19 +137,20 @@ def get_payload_and_token(
 
 @control_silo_endpoint
 class VercelWebhookEndpoint(Endpoint):
+    owner = ApiOwner.INTEGRATIONS
     publish_status = {
-        "DELETE": ApiPublishStatus.UNKNOWN,
-        "POST": ApiPublishStatus.UNKNOWN,
+        "DELETE": ApiPublishStatus.PRIVATE,
+        "POST": ApiPublishStatus.PRIVATE,
     }
     authentication_classes = ()
     permission_classes = ()
     provider = "vercel"
 
     @csrf_exempt
-    def dispatch(self, request: Request, *args, **kwargs) -> Response:
+    def dispatch(self, request: HttpRequest, *args, **kwargs) -> HttpResponseBase:
         return super().dispatch(request, *args, **kwargs)
 
-    def parse_new_external_id(self, request: Request) -> str:
+    def parse_external_id(self, request: Request) -> str:
         payload = request.data["payload"]
         # New Vercel request flow
         external_id = (
@@ -150,75 +160,36 @@ class VercelWebhookEndpoint(Endpoint):
         )
         return external_id
 
-    def parse_old_external_id(self, request: Request) -> str:
-        # Old Vercel request flow
-        external_id = request.data.get("teamId") or request.data["userId"]
-        return external_id
-
-    def parse_external_id(self, request: Request) -> str:
-        try:
-            return self.parse_new_external_id(request)
-        except Exception:
-            return self.parse_old_external_id(request)
-
     def post(self, request: Request) -> Response | None:
         if not request.META.get("HTTP_X_VERCEL_SIGNATURE"):
             logger.error("vercel.webhook.missing-signature")
             return self.respond(status=401)
-
         is_valid = verify_signature(request)
-
         if not is_valid:
             logger.error("vercel.webhook.invalid-signature")
             return self.respond(status=401)
 
         # Vercel's webhook allows you to subscribe to different events,
         # denoted by the `type` attribute. We currently subscribe to:
-        #     * integration-configuration-removed, integration-configuration.removed (Configuration Removed)
-        #     * deployment, deployment.created (Deployment Created)
+        #     * integration-configuration.removed (Configuration Removed)
+        #     * deployment.created (Deployment Created)
         # https://vercel.com/docs/integrations/webhooks-overview
-        with configure_scope() as scope:
-            try:
-                event_type = request.data["type"]
-            except KeyError:
-                return self.respond({"detail": "Missing event type."}, status=400)
+        try:
+            event_type = request.data["type"]
+        except KeyError:
+            return self.respond({"detail": "Missing event type."}, status=400)
 
-            # Try the new Vercel request. If it fails, try the old Vercel request
-            try:
-                payload = request.data["payload"]
-                external_id = self.parse_new_external_id(request)
-                scope.set_tag("vercel_webhook.type", "new")
-
-                if event_type == "integration-configuration.removed":
-                    configuration_id = payload["configuration"]["id"]
-                    return self._delete(external_id, configuration_id, request)
-                if event_type == "deployment.created":
-                    return self._deployment_created(external_id, request)
-            except Exception:
-                external_id = self.parse_old_external_id(request)
-                scope.set_tag("vercel_webhook.type", "old")
-
-                if event_type == "integration-configuration-removed":
-                    configuration_id = request.data["payload"]["configuration"]["id"]
-                    return self._delete(external_id, configuration_id, request)
-
-                if event_type == "deployment":
-                    return self._deployment_created(external_id, request)
-
+        external_id = self.parse_external_id(request)
+        if event_type == "integration-configuration.removed":
+            configuration_id = request.data["payload"]["configuration"]["id"]
+            return self._delete(external_id, configuration_id, request)
+        if event_type == "deployment.created":
+            return self._deployment_created(external_id, request)
         return None
 
     def delete(self, request: Request):
-        with configure_scope() as scope:
-            # Try the new Vercel request. If it fails, try the old Vercel request
-            try:
-                payload = request.data["payload"]
-                external_id = self.parse_new_external_id(request)
-                scope.set_tag("vercel_webhook.type", "new")
-                configuration_id = payload["configuration"]["id"]
-            except Exception:
-                external_id = self.parse_old_external_id(request)
-                scope.set_tag("vercel_webhook.type", "old")
-                configuration_id = request.data.get("configurationId")
+        external_id = self.parse_external_id(request)
+        configuration_id = request.data["payload"]["configuration"]["id"]
 
         return self._delete(external_id, configuration_id, request)
 
@@ -232,11 +203,12 @@ class VercelWebhookEndpoint(Endpoint):
             )
             return self.respond(status=404)
 
-        orgs = integration.organizationintegration_set.values_list("organization_id", flat=True)
+        org_ids = integration.organizationintegration_set.values_list("organization_id", flat=True)
 
-        if len(orgs) == 0:
+        if len(org_ids) == 0:
             # we already deleted the organization integration and
             # there was only one to begin with
+
             integration.delete()
             return self.respond(status=204)
 
@@ -247,12 +219,14 @@ class VercelWebhookEndpoint(Endpoint):
             return self.respond(status=204)
 
         configuration = integration.metadata["configurations"].pop(configuration_id)
+
         # one of two cases:
         #  1.) someone is deleting from vercel's end and we still need to delete the
         #      organization integration AND the integration (since there is only one)
         #  2.) we already deleted the organization integration tied to this configuration
         #      and the remaining one is for a different org (and configuration)
-        if len(orgs) == 1:
+
+        if len(org_ids) == 1:
             try:
                 # Case no. 1: do the deleting and return
                 OrganizationIntegration.objects.get(
@@ -260,7 +234,7 @@ class VercelWebhookEndpoint(Endpoint):
                 )
                 create_audit_entry(
                     request=request,
-                    organization_id=orgs[0],
+                    organization_id=org_ids[0],
                     target_object=integration.id,
                     event=audit_log.get_event_id("INTEGRATION_REMOVE"),
                     actor_label="Vercel User",
@@ -328,7 +302,8 @@ class VercelWebhookEndpoint(Endpoint):
         # Only create releases for production deploys for now
         if payload["target"] != "production":
             logger.info(
-                f"Ignoring deployment for environment: {payload['target']}",
+                "Ignoring deployment for environment: %s",
+                payload["target"],
                 extra={"external_id": external_id, "vercel_project_id": vercel_project_id},
             )
             return self.respond(status=204)
@@ -361,7 +336,6 @@ class VercelWebhookEndpoint(Endpoint):
                 organization_ids=[oi.organization_id for oi in org_integrations]
             )
         }
-
         # for each org integration, search the configs to find one that matches the vercel project of the webhook
         for org_integration in org_integrations:
             project_mappings = org_integration.config.get("project_mappings") or []
@@ -403,9 +377,10 @@ class VercelWebhookEndpoint(Endpoint):
                 }
                 json_error = None
 
-                # create the basic release payload without refs
-                no_ref_payload = release_payload.copy()
-                del no_ref_payload["refs"]
+                no_ref_payload = {
+                    "version": release_payload["version"],
+                    "projects": release_payload["projects"],
+                }
 
                 with http.build_session() as session:
                     try:
@@ -414,10 +389,11 @@ class VercelWebhookEndpoint(Endpoint):
                         resp.raise_for_status()
                     except RequestException as e:
                         # errors here should be uncommon but we should be aware of them
-                        logger.error(
-                            f"Error creating release: {e} - {json_error}",
+                        logger.exception(
+                            "Error creating release: %s - %s",
+                            e,
+                            json_error,
                             extra=logging_params,
-                            exc_info=True,
                         )
                         # 400 probably isn't the right status code but oh well
                         return self.respond({"detail": f"Error creating release: {e}"}, status=400)
@@ -434,7 +410,9 @@ class VercelWebhookEndpoint(Endpoint):
                     except RequestException as e:
                         # errors will probably be common if the user doesn't have repos set up
                         logger.info(
-                            f"Error setting refs: {e} - {json_error}",
+                            "Error setting refs: %s - %s",
+                            e,
+                            json_error,
                             extra=logging_params,
                             exc_info=True,
                         )

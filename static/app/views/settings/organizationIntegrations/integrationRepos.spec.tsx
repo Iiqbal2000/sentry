@@ -1,5 +1,6 @@
-import {Organization} from 'sentry-fixture/organization';
-import {Repository} from 'sentry-fixture/repository';
+import {GitHubIntegrationFixture} from 'sentry-fixture/githubIntegration';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {RepositoryFixture} from 'sentry-fixture/repository';
 
 import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
@@ -7,9 +8,9 @@ import RepositoryStore from 'sentry/stores/repositoryStore';
 import IntegrationRepos from 'sentry/views/settings/organizationIntegrations/integrationRepos';
 
 describe('IntegrationRepos', function () {
-  const org = Organization();
-  const integration = TestStubs.GitHubIntegration();
-  let resetReposSpy;
+  const org = OrganizationFixture();
+  const integration = GitHubIntegrationFixture();
+  let resetReposSpy: jest.SpyInstance;
 
   beforeEach(() => {
     MockApiClient.clearMockResponses();
@@ -18,8 +19,7 @@ describe('IntegrationRepos', function () {
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
-    resetReposSpy();
+    resetReposSpy.mockClear();
   });
 
   describe('Getting repositories', function () {
@@ -36,10 +36,31 @@ describe('IntegrationRepos', function () {
       });
 
       render(<IntegrationRepos integration={integration} />);
+
+      // we only attempt to fetch repositories upon typing
+      await userEvent.click(await screen.findByText('Add Repository'));
+      await userEvent.type(screen.getByRole('textbox'), 'asdf');
+
       expect(
         await screen.findByText(
           /We were unable to fetch repositories for this integration/
         )
+      ).toBeInTheDocument();
+    });
+
+    it('does not fetch repositories with empty query', async function () {
+      MockApiClient.addMockResponse({
+        url: `/organizations/${org.slug}/repos/`,
+        method: 'GET',
+        body: [],
+      });
+
+      render(<IntegrationRepos integration={integration} />);
+
+      await userEvent.click(await screen.findByText('Add Repository'));
+
+      expect(
+        await screen.findByText(/Please enter a repository name/)
       ).toBeInTheDocument();
     });
   });
@@ -49,7 +70,7 @@ describe('IntegrationRepos', function () {
       const addRepo = MockApiClient.addMockResponse({
         url: `/organizations/${org.slug}/repos/`,
         method: 'POST',
-        body: Repository({integrationId: '1'}),
+        body: RepositoryFixture({integrationId: '1'}),
       });
       MockApiClient.addMockResponse({
         url: `/organizations/${org.slug}/integrations/1/repos/`,
@@ -64,7 +85,9 @@ describe('IntegrationRepos', function () {
       });
 
       render(<IntegrationRepos integration={integration} />);
-      await userEvent.click(screen.getByText('Add Repository'));
+
+      await userEvent.click(await screen.findByText('Add Repository'));
+      await userEvent.type(screen.getByRole('textbox'), 'repo-name');
       await userEvent.click(screen.getByText('repo-name'));
 
       expect(addRepo).toHaveBeenCalledWith(
@@ -106,14 +129,16 @@ describe('IntegrationRepos', function () {
       });
 
       render(<IntegrationRepos integration={integration} />);
-      await userEvent.click(screen.getByText('Add Repository'));
+
+      await userEvent.click(await screen.findByText('Add Repository'));
+      await userEvent.type(screen.getByRole('textbox'), 'sentry-repo');
       await userEvent.click(screen.getByText('sentry-repo'));
 
       expect(addRepo).toHaveBeenCalled();
       expect(screen.queryByText('getsentry/sentry')).not.toBeInTheDocument();
     });
 
-    it('does not disable add repo for members', function () {
+    it('does not disable add repo for members', async function () {
       MockApiClient.addMockResponse({
         url: `/organizations/${org.slug}/integrations/1/repos/`,
         body: {
@@ -126,13 +151,8 @@ describe('IntegrationRepos', function () {
         body: [],
       });
 
-      render(
-        <IntegrationRepos
-          integration={integration}
-          organization={Organization({access: []})}
-        />
-      );
-      expect(screen.getByText('Add Repository')).toBeEnabled();
+      render(<IntegrationRepos integration={integration} />);
+      await waitFor(() => expect(screen.getByText('Add Repository')).toBeEnabled());
     });
   });
 
@@ -141,7 +161,7 @@ describe('IntegrationRepos', function () {
       MockApiClient.addMockResponse({
         url: `/organizations/${org.slug}/repos/`,
         body: [
-          Repository({
+          RepositoryFixture({
             integrationId: undefined,
             externalSlug: 'example/repo-name',
             provider: {
@@ -162,9 +182,9 @@ describe('IntegrationRepos', function () {
       });
       render(<IntegrationRepos integration={integration} />);
 
-      await userEvent.click(screen.getByText('Add Repository'));
+      await userEvent.click(await screen.findByText('Add Repository'));
+      await userEvent.type(screen.getByRole('textbox'), 'repo-name');
       await userEvent.click(screen.getByText('repo-name'));
-
       expect(updateRepo).toHaveBeenCalledWith(
         `/organizations/${org.slug}/repos/4/`,
         expect.objectContaining({
@@ -178,7 +198,7 @@ describe('IntegrationRepos', function () {
       MockApiClient.addMockResponse({
         url: `/organizations/${org.slug}/repos/`,
         method: 'GET',
-        body: [Repository({name: 'repo-name-other', externalSlug: '9876'})],
+        body: [RepositoryFixture({name: 'repo-name-other', externalSlug: '9876'})],
       });
       const getItems = MockApiClient.addMockResponse({
         url: `/organizations/${org.slug}/integrations/${integration.id}/repos/`,
@@ -194,7 +214,8 @@ describe('IntegrationRepos', function () {
       });
       render(<IntegrationRepos integration={integration} />);
 
-      await userEvent.click(screen.getByText('Add Repository'));
+      await userEvent.click(await screen.findByText('Add Repository'));
+      await userEvent.type(screen.getByRole('textbox'), 'repo-name');
       await userEvent.click(screen.getByText('repo-name'));
 
       expect(getItems).toHaveBeenCalled();

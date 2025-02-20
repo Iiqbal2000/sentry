@@ -1,28 +1,27 @@
 import {Component, Fragment} from 'react';
-import {Theme} from '@emotion/react';
-import {Location, LocationDescriptor} from 'history';
+import type {Location, LocationDescriptor} from 'history';
 
 import DropdownLink from 'sentry/components/dropdownLink';
 import ProjectBadge from 'sentry/components/idBadge/projectBadge';
-import {
+import type {
   ErrorDestination,
+  TransactionDestination,
+} from 'sentry/components/quickTrace/utils';
+import {
   generateSingleErrorTarget,
-  generateSingleTransactionTarget,
   generateTraceTarget,
   isQuickTraceEvent,
-  TransactionDestination,
 } from 'sentry/components/quickTrace/utils';
 import {Tooltip} from 'sentry/components/tooltip';
 import {backend, frontend, mobile, serverless} from 'sentry/data/platformCategories';
 import {IconFire} from 'sentry/icons';
 import {t, tct, tn} from 'sentry/locale';
-import {OrganizationSummary} from 'sentry/types';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import {getDocsPlatform} from 'sentry/utils/docs';
-import {getDuration} from 'sentry/utils/formatters';
+import getDuration from 'sentry/utils/duration/getDuration';
 import localStorage from 'sentry/utils/localStorage';
-import {
+import type {
   QuickTrace as QuickTraceType,
   QuickTraceEvent,
   TraceError,
@@ -34,6 +33,9 @@ import Projects from 'sentry/utils/projects';
 const FRONTEND_PLATFORMS: string[] = [...frontend, ...mobile];
 const BACKEND_PLATFORMS: string[] = [...backend, ...serverless];
 
+import type {Organization} from 'sentry/types/organization';
+import {generateLinkToEventInTraceView} from 'sentry/utils/discover/urls';
+
 import {
   DropdownContainer,
   DropdownItem,
@@ -42,6 +44,7 @@ import {
   ErrorNodeContent,
   EventNode,
   ExternalDropdownLink,
+  type NodeType,
   QuickTraceContainer,
   QuickTraceValue,
   SectionSubtext,
@@ -64,7 +67,7 @@ type QuickTraceProps = Pick<
 > & {
   event: Event;
   location: Location;
-  organization: OrganizationSummary;
+  organization: Organization;
   quickTrace: QuickTraceType;
 };
 
@@ -77,7 +80,8 @@ export default function QuickTrace({
   errorDest,
   transactionDest,
 }: QuickTraceProps) {
-  let parsedQuickTrace;
+  let parsedQuickTrace: any;
+  const traceSlug = event.contexts?.trace?.trace_id ?? '';
   const noTrace = <Fragment>{'\u2014'}</Fragment>;
   try {
     if (quickTrace.orphanErrors && quickTrace.orphanErrors.length > 0) {
@@ -97,9 +101,7 @@ export default function QuickTrace({
     return noTrace;
   }
 
-  const traceLength =
-    (quickTrace.trace && quickTrace.trace.length) ||
-    (quickTrace.orphanErrors && quickTrace.orphanErrors.length);
+  const traceLength = quickTrace.trace?.length || quickTrace.orphanErrors?.length;
   const {root, ancestors, parent, children, descendants, current} = parsedQuickTrace;
 
   const nodes: React.ReactNode[] = [];
@@ -107,6 +109,7 @@ export default function QuickTrace({
 
   const currentNode = (
     <EventNodeSelector
+      traceSlug={traceSlug}
       key="current-node"
       location={location}
       organization={organization}
@@ -124,6 +127,7 @@ export default function QuickTrace({
   if (root) {
     nodes.push(
       <EventNodeSelector
+        traceSlug={traceSlug}
         key="root-node"
         location={location}
         organization={organization}
@@ -142,6 +146,7 @@ export default function QuickTrace({
   if (isOrphanErrorNode) {
     nodes.push(
       <EventNodeSelector
+        traceSlug={traceSlug}
         key="root-node"
         location={location}
         organization={organization}
@@ -162,6 +167,7 @@ export default function QuickTrace({
   if (ancestors?.length) {
     nodes.push(
       <EventNodeSelector
+        traceSlug={traceSlug}
         key="ancestors-node"
         location={location}
         organization={organization}
@@ -180,6 +186,7 @@ export default function QuickTrace({
   if (parent) {
     nodes.push(
       <EventNodeSelector
+        traceSlug={traceSlug}
         key="parent-node"
         location={location}
         organization={organization}
@@ -244,6 +251,7 @@ export default function QuickTrace({
     nodes.push(<TraceConnector key="children-connector" />);
     nodes.push(
       <EventNodeSelector
+        traceSlug={traceSlug}
         key="children-node"
         location={location}
         organization={organization}
@@ -262,6 +270,7 @@ export default function QuickTrace({
     nodes.push(<TraceConnector key="descendants-connector" />);
     nodes.push(
       <EventNodeSelector
+        traceSlug={traceSlug}
         key="descendants-node"
         location={location}
         organization={organization}
@@ -279,18 +288,14 @@ export default function QuickTrace({
   return <QuickTraceContainer>{nodes}</QuickTraceContainer>;
 }
 
-function handleNode(key: string, organization: OrganizationSummary) {
+function handleNode(key: string, organization: Organization) {
   trackAnalytics('quick_trace.node.clicked', {
     organization: organization.id,
     node_key: key,
   });
 }
 
-function handleDropdownItem(
-  key: string,
-  organization: OrganizationSummary,
-  extra: boolean
-) {
+function handleDropdownItem(key: string, organization: Organization, extra: boolean) {
   const eventKey = extra
     ? 'quick_trace.dropdown.clicked_extra'
     : 'quick_trace.dropdown.clicked';
@@ -307,14 +312,16 @@ type EventNodeSelectorProps = {
   events: QuickTraceEvent[];
   location: Location;
   nodeKey: keyof typeof TOOLTIP_PREFIX;
-  organization: OrganizationSummary;
+  organization: Organization;
   text: React.ReactNode;
+  traceSlug: string;
   transactionDest: TransactionDestination;
   isOrphanErrorNode?: boolean;
   numEvents?: number;
 };
 
 function EventNodeSelector({
+  traceSlug,
   location,
   organization,
   events = [],
@@ -332,7 +339,7 @@ function EventNodeSelector({
     event => event.performance_issues ?? []
   );
 
-  let type: keyof Theme['tag'] = nodeKey === 'current' ? 'black' : 'white';
+  let type: NodeType = nodeKey === 'current' ? 'black' : 'white';
 
   const hasErrors = errors.length > 0 || perfIssues.length > 0;
 
@@ -387,18 +394,22 @@ function EventNodeSelector({
     const hoverText = totalErrors ? (
       t('View the error for this Transaction')
     ) : (
-      <SingleEventHoverText event={events[0]} />
+      <SingleEventHoverText event={events[0]!} />
     );
     const target = errors.length
-      ? generateSingleErrorTarget(errors[0], organization, location, errorDest)
+      ? generateSingleErrorTarget(errors[0]!, organization, location, errorDest)
       : perfIssues.length
-      ? generateSingleErrorTarget(perfIssues[0], organization, location, errorDest)
-      : generateSingleTransactionTarget(
-          events[0],
-          organization,
-          location,
-          transactionDest
-        );
+        ? generateSingleErrorTarget(perfIssues[0]!, organization, location, errorDest)
+        : generateLinkToEventInTraceView({
+            traceSlug,
+            eventId: events[0]!.event_id,
+            projectSlug: events[0]!.project_slug,
+            timestamp: events[0]!.timestamp,
+            location,
+            organization,
+            transactionName: events[0]!.transaction,
+            type: transactionDest,
+          });
     return (
       <StyledEventNode
         text={text}
@@ -419,8 +430,8 @@ function EventNodeSelector({
       errors.length && events.length
         ? 'events'
         : events.length
-        ? 'transactions'
-        : 'errors',
+          ? 'transactions'
+          : 'errors',
   });
   return (
     <DropdownContainer>
@@ -430,7 +441,7 @@ function EventNodeSelector({
         anchorRight={anchor === 'right'}
       >
         {totalErrors > 0 && (
-          <DropdownMenuHeader first>
+          <DropdownMenuHeader first header>
             {tn('Related Issue', 'Related Issues', totalErrors)}
           </DropdownMenuHeader>
         )}
@@ -455,17 +466,21 @@ function EventNodeSelector({
           );
         })}
         {events.length > 0 && (
-          <DropdownMenuHeader first={errors.length === 0}>
+          <DropdownMenuHeader first={errors.length === 0} header>
             {tn('Transaction', 'Transactions', events.length)}
           </DropdownMenuHeader>
         )}
         {events.slice(0, numEvents).map(event => {
-          const target = generateSingleTransactionTarget(
-            event,
-            organization,
+          const target = generateLinkToEventInTraceView({
+            traceSlug,
+            timestamp: event.timestamp,
+            projectSlug: event.project_slug,
+            eventId: event.event_id,
             location,
-            transactionDest
-          );
+            organization,
+            type: transactionDest,
+            transactionName: event.transaction,
+          });
           return (
             <DropdownNodeItem
               key={event.event_id}
@@ -485,7 +500,7 @@ function EventNodeSelector({
         })}
         {(errors.length > numEvents || events.length > numEvents) && (
           <DropdownItem
-            to={generateTraceTarget(currentEvent, organization)}
+            to={generateTraceTarget(currentEvent, organization, location)}
             allowDefaultEvent
             onSelect={() => handleDropdownItem(nodeKey, organization, true)}
           >
@@ -500,7 +515,7 @@ function EventNodeSelector({
 type DropdownNodeProps = {
   anchor: 'left' | 'right';
   event: TraceError | QuickTraceEvent | TracePerformanceIssue;
-  organization: OrganizationSummary;
+  organization: Organization;
   allowDefaultEvent?: boolean;
   onSelect?: (eventKey: any) => void;
   subtext?: string;
@@ -560,7 +575,7 @@ type EventNodeProps = {
   text: React.ReactNode;
   onClick?: (eventKey: any) => void;
   to?: LocationDescriptor;
-  type?: keyof Theme['tag'];
+  type?: NodeType;
 };
 
 function StyledEventNode({text, hoverText, to, onClick, type = 'white'}: EventNodeProps) {
@@ -638,8 +653,8 @@ class MissingServiceNode extends Component<MissingServiceProps, MissingServiceSt
     const docPlatform = getDocsPlatform(platform, true);
     const docsHref =
       docPlatform === null || docPlatform === 'javascript'
-        ? 'https://docs.sentry.io/platforms/javascript/performance/connect-services/'
-        : `https://docs.sentry.io/platforms/${docPlatform}/performance/connect-services`;
+        ? 'https://docs.sentry.io/platforms/javascript/tracing/trace-propagation/'
+        : `https://docs.sentry.io/platforms/${docPlatform}/tracing/trace-propagation/`;
     return (
       <Fragment>
         {connectorSide === 'left' && <TraceConnector dashed />}

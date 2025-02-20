@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, Generator, Mapping, Optional
+from collections.abc import Generator, Mapping
+from typing import Any
 
 from sentry.eventstore.models import GroupEvent
+from sentry.integrations.services.integration import RpcIntegration
+from sentry.models.rule import Rule
 from sentry.rules.actions.integrations.base import IntegrationEventAction
 from sentry.rules.actions.integrations.create_ticket.form import IntegrationNotifyServiceForm
 from sentry.rules.actions.integrations.create_ticket.utils import create_issue
-from sentry.rules.base import CallbackFuture, EventState
-from sentry.services.hybrid_cloud.integration import RpcIntegration
+from sentry.rules.base import CallbackFuture
 
 
 class TicketEventAction(IntegrationEventAction, abc.ABC):
     """Shared ticket actions"""
 
-    form_cls = IntegrationNotifyServiceForm
     integration_key = "integration"
+    link: str | None
+    rule: Rule
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super(IntegrationEventAction, self).__init__(*args, **kwargs)
@@ -81,8 +84,8 @@ class TicketEventAction(IntegrationEventAction, abc.ABC):
         pass
 
     def after(
-        self, event: GroupEvent, state: EventState, notification_uuid: Optional[str] = None
-    ) -> Generator[CallbackFuture, None, None]:
+        self, event: GroupEvent, notification_uuid: str | None = None
+    ) -> Generator[CallbackFuture]:
         integration_id = self.get_integration_id()
         key = f"{self.provider}:{integration_id}"
         yield self.future(
@@ -93,3 +96,6 @@ class TicketEventAction(IntegrationEventAction, abc.ABC):
             integration_id=integration_id,
             provider=self.provider,
         )
+
+    def get_form_instance(self) -> IntegrationNotifyServiceForm:
+        return IntegrationNotifyServiceForm(self.data, integrations=self.get_integrations())

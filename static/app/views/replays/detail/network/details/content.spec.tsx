@@ -1,3 +1,9 @@
+import {
+  ReplayRequestFrameFixture,
+  ReplayResourceFrameFixture,
+} from 'sentry-fixture/replay/replaySpanFrameData';
+import {ReplayRecordFixture} from 'sentry-fixture/replayRecord';
+
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
 import hydrateSpans from 'sentry/utils/replays/hydrateSpans';
@@ -17,23 +23,23 @@ const [
   img,
   fetchNoDataObj,
   fetchUrlSkipped,
-  fetchBodySkipped,
+  fetchEmptyBody,
   fetchWithHeaders,
   fetchWithRespBody,
-] = hydrateSpans(TestStubs.ReplayRecord(), [
-  TestStubs.Replay.ResourceFrame({
+] = hydrateSpans(ReplayRecordFixture(), [
+  ReplayResourceFrameFixture({
     op: 'resource.img',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
     description: '/static/img/logo.png',
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
     description: '/api/0/issues/1234',
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
@@ -45,7 +51,7 @@ const [
       response: {_meta: {warnings: ['URL_SKIPPED']}, headers: {}},
     },
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
@@ -54,18 +60,16 @@ const [
       method: 'GET',
       statusCode: 200,
       request: {
-        // @ts-expect-error
-        _meta: {warnings: ['BODY_SKIPPED']},
+        _meta: {warnings: []},
         headers: {accept: 'application/json'},
       },
       response: {
-        // @ts-expect-error
-        _meta: {warnings: ['BODY_SKIPPED']},
+        _meta: {warnings: []},
         headers: {'content-type': 'application/json'},
       },
     },
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
@@ -83,7 +87,7 @@ const [
       },
     },
   }),
-  TestStubs.Replay.RequestFrame({
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
@@ -105,12 +109,12 @@ const [
 ]);
 
 const mockItems = {
-  img,
-  fetchNoDataObj,
-  fetchUrlSkipped,
-  fetchBodySkipped,
-  fetchWithHeaders,
-  fetchWithRespBody,
+  img: img!,
+  fetchNoDataObj: fetchNoDataObj!,
+  fetchUrlSkipped: fetchUrlSkipped!,
+  fetchEmptyBody: fetchEmptyBody!,
+  fetchWithHeaders: fetchWithHeaders!,
+  fetchWithRespBody: fetchWithRespBody!,
 };
 
 function basicSectionProps() {
@@ -138,14 +142,17 @@ describe('NetworkDetailsContent', () => {
 
     describe('Unsupported Operation', () => {
       it.each([
-        {isSetup: false, itemName: 'img'},
-        {isSetup: true, itemName: 'img'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'img'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'img'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'img'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'img'},
       ])(
         'should render the `general` & `unsupported` sections when the span is not FETCH or XHR and isSetup=$isSetup. [$itemName]',
-        ({isSetup}) => {
+        ({isSetup, isCaptureBodySetup}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
               item={mockItems.img}
               visibleTab={visibleTab}
@@ -163,19 +170,25 @@ describe('NetworkDetailsContent', () => {
 
     describe('Supported Operation', () => {
       it.each([
-        {isSetup: false, itemName: 'fetchNoDataObj'},
-        {isSetup: false, itemName: 'fetchUrlSkipped'},
-        {isSetup: false, itemName: 'fetchBodySkipped'},
-        {isSetup: false, itemName: 'fetchWithHeaders'},
-        {isSetup: false, itemName: 'fetchWithRespBody'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchNoDataObj'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchUrlSkipped'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchEmptyBody'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchWithHeaders'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchWithRespBody'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchNoDataObj'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchUrlSkipped'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchEmptyBody'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchWithHeaders'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchWithRespBody'},
       ])(
         'should render the `general` & `setup` sections when isSetup=false, no matter the item. [$itemName]',
-        ({isSetup, itemName}) => {
+        ({isSetup, isCaptureBodySetup, itemName}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -189,16 +202,19 @@ describe('NetworkDetailsContent', () => {
       );
 
       it.each([
-        {isSetup: true, itemName: 'fetchNoDataObj'},
-        {isSetup: true, itemName: 'fetchUrlSkipped'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchNoDataObj'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchUrlSkipped'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchNoDataObj'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchUrlSkipped'},
       ])(
         'should render the `general` & `setup` sections when the item has no data. [$itemName]',
-        ({isSetup, itemName}) => {
+        ({isSetup, isCaptureBodySetup, itemName}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              isCaptureBodySetup={isCaptureBodySetup}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -212,17 +228,21 @@ describe('NetworkDetailsContent', () => {
       );
 
       it.each([
-        {isSetup: true, itemName: 'fetchBodySkipped'},
-        {isSetup: true, itemName: 'fetchWithHeaders'},
-        {isSetup: true, itemName: 'fetchWithRespBody'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchEmptyBody'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchWithHeaders'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchWithRespBody'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchEmptyBody'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchWithHeaders'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchWithRespBody'},
       ])(
         'should render the `general` & two `headers` sections, and always the setup section, when things are setup and the item has some data. [$itemName]',
-        ({isSetup, itemName}) => {
+        ({isSetup, isCaptureBodySetup, itemName}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -242,14 +262,17 @@ describe('NetworkDetailsContent', () => {
 
     describe('Unsupported Operation', () => {
       it.each([
-        {isSetup: false, itemName: 'img'},
-        {isSetup: true, itemName: 'img'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'img'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'img'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'img'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'img'},
       ])(
         'should render the `query params` & `unsupported` sections when the span is not FETCH or XHR and isSetup=$isSetup. [$itemName]',
-        ({isSetup}) => {
+        ({isSetup, isCaptureBodySetup}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
               item={mockItems.img}
               visibleTab={visibleTab}
@@ -267,19 +290,25 @@ describe('NetworkDetailsContent', () => {
 
     describe('Supported Operation', () => {
       it.each([
-        {isSetup: false, itemName: 'fetchNoDataObj'},
-        {isSetup: false, itemName: 'fetchUrlSkipped'},
-        {isSetup: false, itemName: 'fetchBodySkipped'},
-        {isSetup: false, itemName: 'fetchWithHeaders'},
-        {isSetup: false, itemName: 'fetchWithRespBody'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchNoDataObj'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchUrlSkipped'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchEmptyBody'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchWithHeaders'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchWithRespBody'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchNoDataObj'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchUrlSkipped'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchEmptyBody'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchWithHeaders'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchWithRespBody'},
       ])(
         'should render the `query params` & `setup` sections when isSetup is false, no matter the item. [$itemName]',
-        ({isSetup, itemName}) => {
+        ({isSetup, isCaptureBodySetup, itemName}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -293,18 +322,22 @@ describe('NetworkDetailsContent', () => {
       );
 
       it.each([
-        {isSetup: true, itemName: 'fetchNoDataObj'},
-        {isSetup: true, itemName: 'fetchUrlSkipped'},
-        {isSetup: true, itemName: 'fetchBodySkipped'},
-        {isSetup: true, itemName: 'fetchWithHeaders'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchNoDataObj'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchUrlSkipped'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchWithHeaders'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchNoDataObj'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchUrlSkipped'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchEmptyBody'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchWithHeaders'},
       ])(
         'should render the `query params` & `setup` sections when the item has no data. [$itemName]',
-        ({isSetup, itemName}) => {
+        ({isSetup, isCaptureBodySetup, itemName}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -317,14 +350,39 @@ describe('NetworkDetailsContent', () => {
         }
       );
 
-      it.each([{isSetup: true, itemName: 'fetchWithRespBody'}])(
-        'should render the `query params` & `request payload` sections when things are setup and the item has some data. [$itemName]',
-        ({isSetup, itemName}) => {
+      it.each([{isSetup: true, isCaptureBodySetup: true, itemName: 'fetchEmptyBody'}])(
+        'should render an empty `request body` when SDK option to capture network body is setup and the request body is empty.',
+        ({isSetup, isCaptureBodySetup, itemName}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
+              visibleTab={visibleTab}
+            />
+          );
+
+          expect(queryScreenState()).toStrictEqual({
+            dataSectionHeaders: ['Query String Parameters', 'Request BodySize: 0 B'],
+            isShowingUnsupported: false,
+            isShowingSetup: false,
+          });
+        }
+      );
+
+      it.each([
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchWithRespBody'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchWithRespBody'},
+      ])(
+        'should render the `query params` & `request payload` sections when things are setup and the item has some data. [$itemName]',
+        ({isSetup, isCaptureBodySetup, itemName}) => {
+          render(
+            <NetworkDetailsContent
+              {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
+              isSetup={isSetup}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -344,14 +402,17 @@ describe('NetworkDetailsContent', () => {
 
     describe('Unsupported Operation', () => {
       it.each([
-        {isSetup: false, itemName: 'img'},
-        {isSetup: true, itemName: 'img'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'img'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'img'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'img'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'img'},
       ])(
         'should render the `unsupported` section when the span is not FETCH or XHR and isSetup=$isSetup. [$itemName]',
-        ({isSetup}) => {
+        ({isSetup, isCaptureBodySetup}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
               item={mockItems.img}
               visibleTab={visibleTab}
@@ -369,19 +430,25 @@ describe('NetworkDetailsContent', () => {
 
     describe('Supported Operation', () => {
       it.each([
-        {isSetup: false, itemName: 'fetchNoDataObj'},
-        {isSetup: false, itemName: 'fetchUrlSkipped'},
-        {isSetup: false, itemName: 'fetchBodySkipped'},
-        {isSetup: false, itemName: 'fetchWithHeaders'},
-        {isSetup: false, itemName: 'fetchWithRespBody'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchNoDataObj'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchUrlSkipped'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchEmptyBody'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchWithHeaders'},
+        {isSetup: false, isCaptureBodySetup: true, itemName: 'fetchWithRespBody'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchNoDataObj'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchUrlSkipped'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchEmptyBody'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchWithHeaders'},
+        {isSetup: false, isCaptureBodySetup: false, itemName: 'fetchWithRespBody'},
       ])(
         'should render the `setup` section when isSetup is false, no matter the item. [$itemName]',
-        ({isSetup, itemName}) => {
+        ({isSetup, isCaptureBodySetup, itemName}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -395,18 +462,22 @@ describe('NetworkDetailsContent', () => {
       );
 
       it.each([
-        {isSetup: true, itemName: 'fetchNoDataObj'},
-        {isSetup: true, itemName: 'fetchUrlSkipped'},
-        {isSetup: true, itemName: 'fetchBodySkipped'},
-        {isSetup: true, itemName: 'fetchWithHeaders'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchNoDataObj'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchUrlSkipped'},
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchWithHeaders'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchNoDataObj'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchUrlSkipped'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchEmptyBody'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchWithHeaders'},
       ])(
         'should render the `setup` section when the item has no data. [$itemName]',
-        ({isSetup, itemName}) => {
+        ({isSetup, isCaptureBodySetup, itemName}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );
@@ -419,14 +490,39 @@ describe('NetworkDetailsContent', () => {
         }
       );
 
-      it.each([{isSetup: true, itemName: 'fetchWithRespBody'}])(
-        'should render the `response body` section when things are setup and the item has some data. [$itemName]',
-        ({isSetup, itemName}) => {
+      it.each([{isSetup: true, isCaptureBodySetup: true, itemName: 'fetchEmptyBody'}])(
+        'should render an empty `response body` when SDK option to capture network body is setup and the response body is empty.',
+        ({isSetup, isCaptureBodySetup, itemName}) => {
           render(
             <NetworkDetailsContent
               {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
               isSetup={isSetup}
-              item={mockItems[itemName]}
+              item={mockItems[itemName as keyof typeof mockItems]}
+              visibleTab={visibleTab}
+            />
+          );
+
+          expect(queryScreenState()).toStrictEqual({
+            dataSectionHeaders: ['Response BodySize: 0 B'],
+            isShowingUnsupported: false,
+            isShowingSetup: false,
+          });
+        }
+      );
+
+      it.each([
+        {isSetup: true, isCaptureBodySetup: true, itemName: 'fetchWithRespBody'},
+        {isSetup: true, isCaptureBodySetup: false, itemName: 'fetchWithRespBody'},
+      ])(
+        'should render the `response body` section when things are setup and the item has some data. [$itemName]',
+        ({isSetup, isCaptureBodySetup, itemName}) => {
+          render(
+            <NetworkDetailsContent
+              {...basicSectionProps()}
+              isCaptureBodySetup={isCaptureBodySetup}
+              isSetup={isSetup}
+              item={mockItems[itemName as keyof typeof mockItems]}
               visibleTab={visibleTab}
             />
           );

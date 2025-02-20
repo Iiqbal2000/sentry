@@ -1,34 +1,47 @@
-import {Location, Query} from 'history';
+import type {Location, Query} from 'history';
 import pick from 'lodash/pick';
 
 import {DEFAULT_RELATIVE_PERIODS} from 'sentry/constants';
 import {t} from 'sentry/locale';
+import type {Organization} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
 import EventView from 'sentry/utils/discover/eventView';
 import {isAggregateField} from 'sentry/utils/discover/fields';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
+import type {DomainView} from 'sentry/views/insights/pages/useFilters';
+import {getTransactionSummaryBaseUrl} from 'sentry/views/performance/transactionSummary/utils';
 
-import {SpanSort, SpanSortOption, SpanSortOthers, SpanSortPercentiles} from './types';
+import type {SpanSort, SpanSortOption} from './types';
+import {SpanSortOthers, SpanSortPercentiles} from './types';
 
-export function generateSpansRoute({orgSlug}: {orgSlug: string}): string {
-  return `/organizations/${orgSlug}/performance/summary/spans/`;
+export function generateSpansRoute({
+  organization,
+  view,
+}: {
+  organization: Organization;
+  view?: DomainView;
+}): string {
+  return `${getTransactionSummaryBaseUrl(organization, view)}/spans/`;
 }
 
 export function spansRouteWithQuery({
-  orgSlug,
+  organization,
   transaction,
   projectID,
   query,
+  view,
 }: {
-  orgSlug: string;
+  organization: Organization;
   query: Query;
   transaction: string;
   projectID?: string | string[];
+  view?: DomainView;
 }) {
   const pathname = generateSpansRoute({
-    orgSlug,
+    organization,
+    view,
   });
 
   return {
@@ -100,14 +113,14 @@ function getSuspectSpanSort(sort: string): SpanSortOption {
 
 export function getSuspectSpanSortFromLocation(
   location: Location,
-  sortKey: string = 'sort'
+  sortKey = 'sort'
 ): SpanSortOption {
   const sort = decodeScalar(location?.query?.[sortKey]) ?? DEFAULT_SORT;
   return getSuspectSpanSort(sort);
 }
 
 export function getSuspectSpanSortFromEventView(eventView: EventView): SpanSortOption {
-  const sort = eventView.sorts.length ? eventView.sorts[0].field : DEFAULT_SORT;
+  const sort = eventView.sorts.length ? eventView.sorts[0]!.field : DEFAULT_SORT;
   return getSuspectSpanSort(sort);
 }
 
@@ -151,7 +164,11 @@ export function generateSpansEventView({
       id: undefined,
       version: 2,
       name: transactionName,
-      fields: [...Object.values(SpanSortOthers), ...Object.values(SpanSortPercentiles)],
+      fields: [
+        ...Object.values(SpanSortOthers),
+        ...Object.values(SpanSortPercentiles),
+        'trace',
+      ],
       query: conditions.formatString(),
       projects: [],
     },

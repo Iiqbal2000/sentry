@@ -1,7 +1,6 @@
 import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import {useTheme} from '@emotion/react';
-import {Query} from 'history';
+import type {Query} from 'history';
 
 import EventsRequest from 'sentry/components/charts/eventsRequest';
 import {HeaderTitleLegend} from 'sentry/components/charts/styles';
@@ -9,29 +8,28 @@ import {getInterval, getSeriesSelection} from 'sentry/components/charts/utils';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {t} from 'sentry/locale';
-import {EventsStats, EventsStatsData, OrganizationSummary, Project} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {Series} from 'sentry/types/echarts';
+import type {
+  EventsStats,
+  EventsStatsData,
+  OrganizationSummary,
+} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import {DURATION_UNITS, SIZE_UNITS} from 'sentry/utils/discover/fieldRenderers';
 import {getAggregateAlias} from 'sentry/utils/discover/fields';
 import {useMetricsCardinalityContext} from 'sentry/utils/performance/contexts/metricsCardinality';
 import TrendsDiscoverQuery from 'sentry/utils/performance/trends/trendsDiscoverQuery';
 import useApi from 'sentry/utils/useApi';
 import {useLocation} from 'sentry/utils/useLocation';
-import useRouter from 'sentry/utils/useRouter';
-import {
-  TrendChangeType,
-  TrendFunctionField,
-  TrendView,
-} from 'sentry/views/performance/trends/types';
-import {
-  generateTrendFunctionAsString,
-  modifyTrendView,
-  normalizeTrends,
-} from 'sentry/views/performance/trends/utils';
-import {ViewProps} from 'sentry/views/performance/types';
-import {getSelectedTransaction} from 'sentry/views/performance/utils';
+import {useNavigate} from 'sentry/utils/useNavigate';
+import type {TrendFunctionField, TrendView} from 'sentry/views/performance/trends/types';
+import {TrendChangeType} from 'sentry/views/performance/trends/types';
+import {modifyTrendView, normalizeTrends} from 'sentry/views/performance/trends/utils';
+import generateTrendFunctionAsString from 'sentry/views/performance/trends/utils/generateTrendFunctionAsString';
+import type {ViewProps} from 'sentry/views/performance/types';
+import {getSelectedTransaction} from 'sentry/views/performance/utils/getSelectedTransaction';
 
 import Content from './content';
 
@@ -62,7 +60,7 @@ function TrendChart({
   end: propsEnd,
   projects,
 }: Props) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const location = useLocation();
   const api = useApi();
   const theme = useTheme();
@@ -86,7 +84,7 @@ function TrendChart({
         unselectedSeries: unselected,
       },
     };
-    browserHistory.push(to);
+    navigate(to);
   }
 
   const start = propsStart ? getUtcToLocalDateObject(propsStart) : null;
@@ -104,7 +102,6 @@ function TrendChart({
 
   const contentCommonProps = {
     theme,
-    router,
     start,
     end,
     utc,
@@ -158,6 +155,7 @@ function TrendChart({
     if (seriesName) {
       const unit = meta?.units?.[getAggregateAlias(seriesName)];
       // Scale series values to milliseconds or bytes depending on units from meta
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       scale = (unit && (DURATION_UNITS[unit] ?? SIZE_UNITS[unit])) ?? 1;
     }
 
@@ -185,9 +183,7 @@ function TrendChart({
           withBreakpoint
         >
           {({isLoading, trendsData}) => {
-            const events = normalizeTrends(
-              (trendsData && trendsData.events && trendsData.events.data) || []
-            );
+            const events = normalizeTrends(trendsData?.events?.data || []);
 
             // keep trend change type as regression until the backend can support passing the type
             const selectedTransaction = getSelectedTransaction(
@@ -218,7 +214,7 @@ function TrendChart({
             );
 
             const metricsTimeFrame =
-              transactionEvent && transactionEvent.start && transactionEvent.end
+              transactionEvent?.start && transactionEvent.end
                 ? {start: transactionEvent.start * 1000, end: transactionEvent.end * 1000}
                 : undefined;
 

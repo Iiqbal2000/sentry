@@ -1,4 +1,4 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
@@ -9,7 +9,7 @@ describe('withConfig HoC', function () {
     jest.clearAllMocks();
   });
 
-  function MyComponent(props) {
+  function MyComponent(props: any) {
     return <span>{props.experimentAssignment}</span>;
   }
 
@@ -19,7 +19,7 @@ describe('withConfig HoC', function () {
       // will evalulate to -1 assignment
       experiment: 'orgExperiment',
     });
-    render(<Container organization={Organization()} />);
+    render(<Container organization={OrganizationFixture()} />);
 
     expect(screen.getByText('-1')).toBeInTheDocument();
   });

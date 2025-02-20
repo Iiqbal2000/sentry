@@ -1,5 +1,4 @@
 import {useState} from 'react';
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import Feature from 'sentry/components/acl/feature';
@@ -16,18 +15,19 @@ import PanelHeader from 'sentry/components/panels/panelHeader';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import BuilderBreadCrumbs from 'sentry/views/alerts/builder/builderBreadCrumbs';
 import {Dataset} from 'sentry/views/alerts/rules/metric/types';
 import {AlertRuleType} from 'sentry/views/alerts/types';
 
+import type {AlertType, WizardRuleTemplate} from './options';
 import {
-  AlertType,
   AlertWizardAlertNames,
+  AlertWizardExtraContent,
   AlertWizardRuleTemplates,
   getAlertWizardCategories,
-  WizardRuleTemplate,
 } from './options';
 import {AlertWizardPanelContent} from './panelContent';
 import RadioPanelGroup from './radioPanelGroup';
@@ -36,7 +36,7 @@ type RouteParams = {
   projectId?: string;
 };
 
-type AlertWizardProps = RouteComponentProps<RouteParams, {}> & {
+type AlertWizardProps = RouteComponentProps<RouteParams> & {
   organization: Organization;
   projectId: string;
 };
@@ -57,18 +57,23 @@ function AlertWizard({organization, params, location, projectId}: AlertWizardPro
 
   function renderCreateAlertButton() {
     let metricRuleTemplate: Readonly<WizardRuleTemplate> | undefined =
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       AlertWizardRuleTemplates[alertOption];
     const isMetricAlert = !!metricRuleTemplate;
     const isTransactionDataset = metricRuleTemplate?.dataset === Dataset.TRANSACTIONS;
 
-    if (
-      organization.features.includes('alert-crash-free-metrics') &&
-      metricRuleTemplate?.dataset === Dataset.SESSIONS
-    ) {
+    // If theres anything using the legacy sessions dataset, we need to convert it to metrics
+    if (metricRuleTemplate?.dataset === Dataset.SESSIONS) {
       metricRuleTemplate = {...metricRuleTemplate, dataset: Dataset.METRICS};
     }
 
-    const renderNoAccess = p => (
+    if (metricRuleTemplate?.dataset === Dataset.ERRORS) {
+      // Pre-fill is:unresolved for error metric alerts
+      // Filters out events in issues that are archived or resolved
+      metricRuleTemplate = {...metricRuleTemplate, query: 'is:unresolved'};
+    }
+
+    const renderNoAccess = (p: any) => (
       <Hovercard
         body={
           <FeatureDisabled
@@ -88,8 +93,8 @@ function AlertWizard({organization, params, location, projectId}: AlertWizardPro
           isTransactionDataset
             ? ['organizations:incidents', 'organizations:performance-view']
             : isMetricAlert
-            ? ['organizations:incidents']
-            : []
+              ? ['organizations:incidents']
+              : []
         }
         requireAll
         organization={organization}
@@ -112,7 +117,13 @@ function AlertWizard({organization, params, location, projectId}: AlertWizardPro
               priority="primary"
               to={{
                 pathname: `/organizations/${organization.slug}/alerts/new/${
-                  isMetricAlert ? AlertRuleType.METRIC : AlertRuleType.ISSUE
+                  isMetricAlert
+                    ? AlertRuleType.METRIC
+                    : alertOption === 'uptime_monitor'
+                      ? AlertRuleType.UPTIME
+                      : alertOption === 'crons_monitor'
+                        ? AlertRuleType.CRONS
+                        : AlertRuleType.ISSUE
                 }/`,
                 query: {
                   ...(metricRuleTemplate ? metricRuleTemplate : {}),
@@ -150,14 +161,20 @@ function AlertWizard({organization, params, location, projectId}: AlertWizardPro
           <WizardBody>
             <WizardOptions>
               {getAlertWizardCategories(organization).map(
-                ({categoryHeading, options}) => (
+                ({categoryHeading, options}: any) => (
                   <div key={categoryHeading}>
                     <CategoryTitle>{categoryHeading} </CategoryTitle>
-                    <RadioPanelGroup
-                      choices={options.map(alertType => {
-                        return [alertType, AlertWizardAlertNames[alertType]];
+                    <WizardGroupedOptions
+                      choices={options.map((alertType: any) => {
+                        return [
+                          alertType,
+                          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+                          AlertWizardAlertNames[alertType],
+                          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+                          AlertWizardExtraContent[alertType],
+                        ];
                       })}
-                      onChange={handleChangeAlertOption}
+                      onChange={option => handleChangeAlertOption(option as AlertType)}
                       value={alertOption}
                       label="alert-option"
                     />
@@ -202,7 +219,7 @@ const StyledHeaderContent = styled(Layout.HeaderContent)`
 `;
 
 const CategoryTitle = styled('h2')`
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
   font-size: ${p => p.theme.fontSizeExtraLarge};
   margin-bottom: ${space(1)} !important;
 `;
@@ -224,6 +241,7 @@ const WizardOptions = styled('div')`
 
 const WizardImage = styled('img')`
   max-height: 300px;
+  margin-bottom: ${space(2)};
 `;
 
 const WizardPanel = styled(Panel)<{visible?: boolean}>`
@@ -282,6 +300,12 @@ const WizardButtonContainer = styled('div')`
   justify-content: flex-end;
   a:not(:last-child) {
     margin-right: ${space(1)};
+  }
+`;
+
+const WizardGroupedOptions = styled(RadioPanelGroup)`
+  label {
+    grid-template-columns: repeat(3, max-content);
   }
 `;
 

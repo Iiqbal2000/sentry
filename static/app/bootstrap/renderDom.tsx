@@ -1,9 +1,10 @@
-import {render} from 'react-dom';
+import type React from 'react';
+import {createRoot} from 'react-dom/client';
 
-export function renderDom(
-  Component: React.ComponentType,
+export function renderDom<T extends React.ComponentType<any>>(
+  Component: T,
   container: string,
-  props: Record<string, any> = {}
+  props: React.ComponentProps<T>
 ) {
   const rootEl = document.querySelector(container);
 
@@ -13,5 +14,6 @@ export function renderDom(
     return;
   }
 
-  render(<Component {...props} />, rootEl);
+  const root = createRoot(rootEl);
+  root.render(<Component {...props} />);
 }

@@ -1,18 +1,10 @@
-from typing import Mapping, Set
-
 from sentry.sentry_metrics.configuration import UseCaseKey
-from sentry.sentry_metrics.indexer.base import FetchType, Metadata, UseCaseKeyCollection
+from sentry.sentry_metrics.indexer.base import UseCaseKeyCollection
 from sentry.sentry_metrics.indexer.cache import CachingIndexer
 from sentry.sentry_metrics.indexer.postgres.postgres_v2 import PGStringIndexerV2, indexer_cache
 from sentry.sentry_metrics.use_case_id_registry import UseCaseID
 from sentry.testutils.cases import TestCase
 from sentry.utils.cache import cache
-
-
-def assert_fetch_type_for_tag_string_set(
-    meta: Mapping[str, Metadata], fetch_type: FetchType, str_set: Set[str]
-):
-    assert all([meta[string].fetch_type == fetch_type for string in str_set])
 
 
 class PostgresIndexerV2Test(TestCase):
@@ -33,11 +25,11 @@ class PostgresIndexerV2Test(TestCase):
         """
         key = f"{self.use_case_id.value}:123:oop"
 
-        assert indexer_cache.get(key) is None
+        assert indexer_cache.get("br", key) is None
 
         assert isinstance(self.indexer.indexer, PGStringIndexerV2)
         self.indexer.indexer._get_db_records(
             UseCaseKeyCollection({self.use_case_id: {123: {"oop"}}})
         )
 
-        assert indexer_cache.get(key) is None
+        assert indexer_cache.get("br", key) is None

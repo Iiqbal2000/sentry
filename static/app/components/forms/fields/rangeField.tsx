@@ -1,8 +1,9 @@
 import FormField from 'sentry/components/forms/formField';
-import {Slider, SliderProps} from 'sentry/components/slider';
+import type {SliderProps} from 'sentry/components/slider';
+import {Slider} from 'sentry/components/slider';
 
 // XXX(epurkhiser): This is wrong, it should not be inheriting these props
-import {InputFieldProps} from './inputField';
+import type {InputFieldProps} from './inputField';
 
 export interface RangeFieldProps
   extends Omit<SliderProps, 'value' | 'defaultValue' | 'disabled' | 'error'>,
@@ -21,7 +22,7 @@ export interface RangeFieldProps
     > {
   disabled?: boolean | ((props: Omit<RangeFieldProps, 'formatMessageValue'>) => boolean);
   disabledReason?: React.ReactNode;
-  formatMessageValue?: false | Function;
+  formatMessageValue?: false | typeof defaultFormatMessageValue;
 }
 
 function defaultFormatMessageValue(value: number | '', {formatLabel}: RangeFieldProps) {
@@ -51,7 +52,7 @@ function RangeField({
         onBlur,
         value,
         ...fieldProps
-      }) => (
+      }: any) => (
         <Slider
           {...fieldProps}
           aria-label={label}

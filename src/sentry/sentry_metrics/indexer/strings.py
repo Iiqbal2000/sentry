@@ -1,4 +1,4 @@
-from typing import Collection, Dict, Mapping, Optional, Set
+from collections.abc import Collection, Mapping
 
 from django.conf import settings
 
@@ -90,6 +90,17 @@ TRANSACTION_METRICS_NAMES = {
     "g:transactions/alert@none": PREFIX + 135,
     "d:transactions/duration_light@millisecond": PREFIX + 136,
     "c:transactions/usage@none": PREFIX + 137,
+    "d:transactions/measurements.score.cls@ratio": PREFIX + 138,
+    "d:transactions/measurements.score.fcp@ratio": PREFIX + 139,
+    "d:transactions/measurements.score.fid@ratio": PREFIX + 140,
+    "d:transactions/measurements.score.lcp@ratio": PREFIX + 141,
+    "d:transactions/measurements.score.ttfb@ratio": PREFIX + 142,
+    "d:transactions/measurements.score.total@ratio": PREFIX + 143,
+    "d:transactions/measurements.score.weight.cls@ratio": PREFIX + 144,
+    "d:transactions/measurements.score.weight.fcp@ratio": PREFIX + 145,
+    "d:transactions/measurements.score.weight.fid@ratio": PREFIX + 146,
+    "d:transactions/measurements.score.weight.lcp@ratio": PREFIX + 147,
+    "d:transactions/measurements.score.weight.ttfb@ratio": PREFIX + 148,
     # Last possible index: 199
 }
 
@@ -159,12 +170,36 @@ SHARED_TAG_STRINGS = {
     "span.main_thread": PREFIX + 255,
     "device.class": PREFIX + 256,
     "resource.render_blocking_status": PREFIX + 257,
+    "ttid": PREFIX + 258,
+    "ttfd": PREFIX + 259,
     # More Transactions
     "has_profile": PREFIX + 260,
     "query_hash": PREFIX + 261,
     "failure": PREFIX + 262,
     # Escalating Issues
     "group": PREFIX + 263,
+    # Resource span
+    "file_extension": PREFIX + 264,
+    "app_start_type": PREFIX + 265,  # Mobile app start type
+    # Profiles
+    "function": PREFIX + 266,  # Function name
+    "package": PREFIX
+    + 267,  # it could be either a package or a module, but in profiling we don't make a distinction
+    "fingerprint": PREFIX + 268,  # takes into account function name and package
+    "is_application": PREFIX + 269,
+    "platform": PREFIX + 270,
+    "os.version": PREFIX + 271,
+    # Performance Score
+    "sentry.score_profile_version": PREFIX + 272,
+    # Metric stats
+    "mri": PREFIX + 273,
+    "mri.type": PREFIX + 274,
+    "mri.namespace": PREFIX + 275,
+    "outcome.id": PREFIX + 276,
+    "outcome.reason": PREFIX + 277,
+    "cardinality.window": PREFIX + 278,
+    "cardinality.limit": PREFIX + 279,
+    "cardinality.scope": PREFIX + 280,
     # GENERAL/MISC (don't have a category)
     "": PREFIX + 1000,
 }
@@ -183,8 +218,20 @@ SPAN_METRICS_NAMES = {
     "d:spans/frames_frozen@none": PREFIX + 407,
     "d:spans/frames_slow@none": PREFIX + 408,
     "d:spans/http.response_content_length@byte": PREFIX + 409,
-    "d:spans/http.decoded_response_body_length@byte": PREFIX + 410,
+    "d:spans/http.decoded_response_content_length@byte": PREFIX + 410,
     "d:spans/http.response_transfer_size@byte": PREFIX + 411,
+    "c:spans/count_per_op@none": PREFIX + 412,
+    "c:spans/count_per_segment@none": PREFIX + 413,
+    "d:spans/webvital.score.total@ratio": PREFIX + 414,
+    "d:spans/webvital.score.inp@ratio": PREFIX + 415,
+    "d:spans/webvital.score.weight.inp@ratio": PREFIX + 416,
+    "d:spans/webvital.inp@millisecond": PREFIX + 417,
+    "c:spans/usage@none": PREFIX + 418,
+    "g:spans/self_time@millisecond": PREFIX + 419,
+    "g:spans/self_time_light@millisecond": PREFIX + 420,
+    "g:spans/total_time@millisecond": PREFIX + 421,
+    "c:spans/count_per_root_project@none": PREFIX + 422,
+    # Last possible index: 499
 }
 
 # 500-599
@@ -192,11 +239,31 @@ ESCALATING_ISSUES_METRIC_NAMES = {
     "c:escalating_issues/event_ingested@none": PREFIX + 500,
 }
 
+# 600-699
+PROFILING_METRIC_NAMES = {
+    "d:profiles/function.duration@millisecond": PREFIX + 600,
+}
+
+# 700-799
+BUNDLE_ANALYSIS_METRIC_NAMES = {
+    "d:bundle_analysis/bundle_size@byte": PREFIX + 700,
+}
+
+# 800-899
+METRIC_STATS_METRIC_NAMES = {
+    "c:metric_stats/volume@none": PREFIX + 800,
+    "g:metric_stats/cardinality@none": PREFIX + 801,
+}
+
+
 SHARED_STRINGS = {
     **SESSION_METRIC_NAMES,
     **TRANSACTION_METRICS_NAMES,
     **SPAN_METRICS_NAMES,
     **ESCALATING_ISSUES_METRIC_NAMES,
+    **PROFILING_METRIC_NAMES,
+    **BUNDLE_ANALYSIS_METRIC_NAMES,
+    **METRIC_STATS_METRIC_NAMES,
     **SHARED_TAG_STRINGS,
 }
 REVERSE_SHARED_STRINGS = {v: k for k, v in SHARED_STRINGS.items()}
@@ -214,7 +281,7 @@ class StaticStringIndexer(StringIndexer):
         self.indexer = indexer
 
     def bulk_record(
-        self, strings: Mapping[UseCaseID, Mapping[OrgId, Set[str]]]
+        self, strings: Mapping[UseCaseID, Mapping[OrgId, set[str]]]
     ) -> UseCaseKeyResults:
         static_keys = UseCaseKeyCollection(strings)
         static_key_results = UseCaseKeyResults()
@@ -239,13 +306,13 @@ class StaticStringIndexer(StringIndexer):
 
         return static_key_results.merge(indexer_results)
 
-    def record(self, use_case_id: UseCaseID, org_id: int, string: str) -> Optional[int]:
+    def record(self, use_case_id: UseCaseID, org_id: int, string: str) -> int | None:
         if string in SHARED_STRINGS:
             return SHARED_STRINGS[string]
         return self.indexer.record(use_case_id=use_case_id, org_id=org_id, string=string)
 
     @metric_path_key_compatible_resolve
-    def resolve(self, use_case_id: UseCaseID, org_id: int, string: str) -> Optional[int]:
+    def resolve(self, use_case_id: UseCaseID, org_id: int, string: str) -> int | None:
         # TODO: remove this metric after investigation is over
         if use_case_id is UseCaseID.ESCALATING_ISSUES:
             metrics.incr("sentry_metrics.indexer.string_indexer_resolve_escalating_issues")
@@ -254,7 +321,7 @@ class StaticStringIndexer(StringIndexer):
         return self.indexer.resolve(use_case_id, org_id, string)
 
     @metric_path_key_compatible_rev_resolve
-    def reverse_resolve(self, use_case_id: UseCaseID, org_id: int, id: int) -> Optional[str]:
+    def reverse_resolve(self, use_case_id: UseCaseID, org_id: int, id: int) -> str | None:
         if id in REVERSE_SHARED_STRINGS:
             return REVERSE_SHARED_STRINGS[id]
 
@@ -271,7 +338,7 @@ class StaticStringIndexer(StringIndexer):
     def bulk_reverse_resolve(
         self, use_case_id: UseCaseID, org_id: int, ids: Collection[int]
     ) -> Mapping[int, str]:
-        shared_strings: Dict[int, str] = {}
+        shared_strings: dict[int, str] = {}
         unresolved_ids = []
         for ident in ids:
             if ident in REVERSE_SHARED_STRINGS:
@@ -286,12 +353,12 @@ class StaticStringIndexer(StringIndexer):
 
         return {**org_strings, **shared_strings}
 
-    def resolve_shared_org(self, string: str) -> Optional[int]:
+    def resolve_shared_org(self, string: str) -> int | None:
         if string in SHARED_STRINGS:
             return SHARED_STRINGS[string]
         return None
 
-    def reverse_shared_org_resolve(self, id: int) -> Optional[str]:
+    def reverse_shared_org_resolve(self, id: int) -> str | None:
         if id in REVERSE_SHARED_STRINGS:
             return REVERSE_SHARED_STRINGS[id]
         return None

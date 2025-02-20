@@ -3,8 +3,9 @@ import {act, render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 import Carousel from 'sentry/components/carousel';
 
 describe('Carousel', function () {
-  let intersectionOnbserverCb: (entries: Partial<IntersectionObserverEntry>[]) => void =
-    jest.fn();
+  let intersectionOnbserverCb: (
+    entries: Array<Partial<IntersectionObserverEntry>>
+  ) => void = jest.fn();
 
   window.IntersectionObserver = class IntersectionObserver {
     root = null;
@@ -66,10 +67,10 @@ describe('Carousel', function () {
     const rightButton = screen.getByRole('button', {name: 'Scroll right'});
     expect(screen.queryByRole('button', {name: 'Scroll left'})).not.toBeInTheDocument();
 
-    // Test scroll into view, the 2nd element should have it's 'scrollIntoView' called
-    elements[1].scrollIntoView = jest.fn();
+    // Test scroll into view, the 2nd element should have its 'scrollIntoView' called
+    elements[1]!.scrollIntoView = jest.fn();
     await userEvent.click(rightButton);
-    expect(elements[1].scrollIntoView).toHaveBeenCalled();
+    expect(elements[1]!.scrollIntoView).toHaveBeenCalled();
   });
 
   it('shows left arrow when elements exist to the left', async function () {
@@ -99,10 +100,10 @@ describe('Carousel', function () {
     const leftButton = screen.getByRole('button', {name: 'Scroll left'});
     expect(screen.queryByRole('button', {name: 'Scroll right'})).not.toBeInTheDocument();
 
-    // Test scroll into view, the 1st element should have it's 'scrollIntoView' called
-    elements[0].scrollIntoView = jest.fn();
+    // Test scroll into view, the 1st element should have its 'scrollIntoView' called
+    elements[0]!.scrollIntoView = jest.fn();
     await userEvent.click(leftButton);
-    expect(elements[0].scrollIntoView).toHaveBeenCalled();
+    expect(elements[0]!.scrollIntoView).toHaveBeenCalled();
   });
 
   it('skips an element when it is past the visibleRatio', async function () {
@@ -132,9 +133,9 @@ describe('Carousel', function () {
     const rightButton = screen.getByRole('button', {name: 'Scroll right'});
     expect(screen.queryByRole('button', {name: 'Scroll left'})).not.toBeInTheDocument();
 
-    // Test scroll into view, the 2nd element should have it's 'scrollIntoView' called
-    elements[2].scrollIntoView = jest.fn();
+    // Test scroll into view, the 2nd element should have its 'scrollIntoView' called
+    elements[2]!.scrollIntoView = jest.fn();
     await userEvent.click(rightButton);
-    expect(elements[2].scrollIntoView).toHaveBeenCalled();
+    expect(elements[2]!.scrollIntoView).toHaveBeenCalled();
   });
 });

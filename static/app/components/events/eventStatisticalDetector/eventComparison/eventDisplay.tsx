@@ -1,8 +1,10 @@
 import {useEffect, useState} from 'react';
+import {useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 
+import {Button, LinkButton} from 'sentry/components/button';
 import {CompactSelect} from 'sentry/components/compactSelect';
-import DateTime from 'sentry/components/dateTime';
+import {DateTime} from 'sentry/components/dateTime';
 import EmptyStateWarning from 'sentry/components/emptyStateWarning';
 import {EventTags} from 'sentry/components/events/eventTags';
 import {MINIMAP_HEIGHT} from 'sentry/components/events/interfaces/spans/constants';
@@ -16,19 +18,24 @@ import OpsBreakdown from 'sentry/components/events/opsBreakdown';
 import Link from 'sentry/components/links/link';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import TextOverflow from 'sentry/components/textOverflow';
+import {Tooltip} from 'sentry/components/tooltip';
+import {IconChevron, IconOpen} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {EventTransaction, Group, Project} from 'sentry/types';
+import type {EventTransaction} from 'sentry/types/event';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
 import {useDiscoverQuery} from 'sentry/utils/discover/discoverQuery';
 import EventView from 'sentry/utils/discover/eventView';
 import {DiscoverDatasets} from 'sentry/utils/discover/types';
-import {eventDetailsRoute, generateEventSlug} from 'sentry/utils/discover/urls';
+import {generateLinkToEventInTraceView} from 'sentry/utils/discover/urls';
 import {getShortEventId} from 'sentry/utils/events';
 import {useApiQuery} from 'sentry/utils/queryClient';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
-import {GroupEventActions} from 'sentry/views/issueDetails/groupEventCarousel';
+
+const BUTTON_ICON_SIZE = 'sm';
+const BUTTON_SIZE = 'sm';
 
 export function getSampleEventQuery({
   transaction,
@@ -39,7 +46,7 @@ export function getSampleEventQuery({
   transaction: string;
   addUpperBound?: boolean;
 }) {
-  const baseQuery = `event.type:transaction transaction:"${transaction}" transaction.duration:>=${
+  const baseQuery = `event.type:transaction transaction:["${transaction}"] transaction.duration:>=${
     durationBaseline * 0.5
   }ms`;
 
@@ -92,19 +99,41 @@ function useFetchSampleEvents({
     eventView,
     location,
     orgSlug: organization.slug,
-    limit: 5,
+    limit: 20,
   });
 }
 
-type EventDisplayProps = {
+interface NavButtonProps {
+  disabled: boolean;
+  icon: React.ReactNode;
+  onPaginate: () => void;
+  title: string;
+}
+
+function NavButton({title, disabled, icon, onPaginate}: NavButtonProps) {
+  return (
+    <Tooltip title={title} disabled={disabled} skipWrapper>
+      <div>
+        <StyledNavButton
+          size={BUTTON_SIZE}
+          aria-label={title}
+          icon={icon}
+          disabled={disabled}
+          onClick={onPaginate}
+        />
+      </div>
+    </Tooltip>
+  );
+}
+
+interface EventDisplayProps {
   durationBaseline: number;
   end: number;
   eventSelectLabel: string;
-  group: Group;
   project: Project;
   start: number;
   transaction: string;
-};
+}
 
 function EventDisplay({
   eventSelectLabel,
@@ -113,13 +142,13 @@ function EventDisplay({
   end,
   transaction,
   durationBaseline,
-  group,
 }: EventDisplayProps) {
-  const location = useLocation();
+  const theme = useTheme();
   const organization = useOrganization();
+  const location = useLocation();
   const [selectedEventId, setSelectedEventId] = useState<string>('');
 
-  const {data, isLoading, isError} = useFetchSampleEvents({
+  const {data, isPending, isError} = useFetchSampleEvents({
     start,
     end,
     transaction,
@@ -136,15 +165,20 @@ function EventDisplay({
 
   useEffect(() => {
     if (defined(eventIds) && eventIds.length > 0 && !selectedEventId) {
-      setSelectedEventId(eventIds[0]);
+      setSelectedEventId(eventIds[0]!);
     }
   }, [eventIds, selectedEventId]);
+
+  const eventIdIndex = eventIds?.findIndex(eventId => eventId === selectedEventId);
+  const hasNext =
+    defined(eventIdIndex) && defined(eventIds) && eventIdIndex + 1 < eventIds.length;
+  const hasPrev = defined(eventIdIndex) && eventIdIndex - 1 >= 0;
 
   if (isError) {
     return null;
   }
 
-  if (isLoading || isFetching) {
+  if (isPending || isFetching) {
     return <LoadingIndicator />;
   }
 
@@ -159,43 +193,80 @@ function EventDisplay({
   }
 
   const waterfallModel = new WaterfallModel(eventData);
+  const traceSlug = eventData.contexts?.trace?.trace_id ?? '';
+  const fullEventTarget = generateLinkToEventInTraceView({
+    eventId: eventData.id,
+    projectSlug: project.slug,
+    traceSlug,
+    timestamp: eventData.endTimestamp,
+    location,
+    organization,
+  });
   return (
     <EventDisplayContainer>
       <div>
-        <StyledEventSelectorControlBar>
-          <CompactSelect
-            size="sm"
-            disabled={false}
-            options={eventIds.map(id => ({
-              value: id,
-              label: id,
-              details: <DateTime date={data?.data.find(d => d.id === id)?.timestamp} />,
-            }))}
-            value={selectedEventId}
-            onChange={({value}) => setSelectedEventId(value)}
-            triggerLabel={
-              <ButtonLabelWrapper>
-                <TextOverflow>
-                  {eventSelectLabel}:{' '}
-                  <SelectionTextWrapper>
-                    {getShortEventId(selectedEventId)}
-                  </SelectionTextWrapper>
-                </TextOverflow>
-              </ButtonLabelWrapper>
-            }
-          />
-          <GroupEventActions event={eventData} group={group} projectSlug={project.slug} />
-        </StyledEventSelectorControlBar>
+        <StyledControlBar>
+          <StyledEventControls>
+            <CompactSelect
+              size="sm"
+              disabled={false}
+              options={eventIds.map(id => ({
+                value: id,
+                label: id,
+                details: <DateTime date={data?.data.find(d => d.id === id)?.timestamp} />,
+              }))}
+              value={selectedEventId}
+              onChange={({value}) => setSelectedEventId(value)}
+              triggerLabel={
+                <ButtonLabelWrapper>
+                  <TextOverflow>
+                    {eventSelectLabel}:{' '}
+                    <SelectionTextWrapper>
+                      {getShortEventId(selectedEventId)}
+                    </SelectionTextWrapper>
+                  </TextOverflow>
+                </ButtonLabelWrapper>
+              }
+            />
+            <LinkButton
+              title={t('Full Event Details')}
+              size={BUTTON_SIZE}
+              to={fullEventTarget}
+              aria-label={t('Full Event Details')}
+              icon={<IconOpen />}
+            />
+          </StyledEventControls>
+          <div>
+            <NavButtons>
+              <NavButton
+                title={t('Previous Event')}
+                disabled={!hasPrev}
+                icon={<IconChevron direction="left" size={BUTTON_ICON_SIZE} />}
+                onPaginate={() => {
+                  if (hasPrev) {
+                    setSelectedEventId(eventIds[eventIdIndex - 1]!);
+                  }
+                }}
+              />
+              <NavButton
+                title={t('Next Event')}
+                disabled={!hasNext}
+                icon={<IconChevron direction="right" size={BUTTON_ICON_SIZE} />}
+                onPaginate={() => {
+                  if (hasNext) {
+                    setSelectedEventId(eventIds[eventIdIndex + 1]!);
+                  }
+                }}
+              />
+            </NavButtons>
+          </div>
+        </StyledControlBar>
         <ComparisonContentWrapper>
-          <Link
-            to={eventDetailsRoute({
-              eventSlug: generateEventSlug({project: project.slug, id: selectedEventId}),
-              orgSlug: organization.slug,
-            })}
-          >
+          <Link to={fullEventTarget}>
             <MinimapContainer>
               <MinimapPositioningContainer>
                 <ActualMinimap
+                  theme={theme}
                   spans={waterfallModel.getWaterfall({
                     viewStart: 0,
                     viewEnd: 1,
@@ -215,12 +286,7 @@ function EventDisplay({
         </ComparisonContentWrapper>
       </div>
 
-      <EventTags
-        event={eventData}
-        organization={organization}
-        projectSlug={project.slug}
-        location={location}
-      />
+      <EventTags event={eventData} projectSlug={project.slug} />
     </EventDisplayContainer>
   );
 }
@@ -241,7 +307,12 @@ const ButtonLabelWrapper = styled('span')`
   grid-template-columns: 1fr auto;
 `;
 
-const StyledEventSelectorControlBar = styled('div')`
+const StyledControlBar = styled('div')`
+  display: flex;
+  justify-content: space-between;
+`;
+
+const StyledEventControls = styled('div')`
   display: flex;
   align-items: center;
   gap: 8px;
@@ -266,19 +337,47 @@ const MinimapContainer = styled('div')`
 `;
 
 const ComparisonContentWrapper = styled('div')`
-  border: ${({theme}) => `1px solid ${theme.border}`};
-  border-radius: ${({theme}) => theme.borderRadius};
+  border: ${p => `1px solid ${p.theme.border}`};
+  border-radius: ${p => p.theme.borderRadius};
   overflow: hidden;
 `;
 
 const EmptyStateWrapper = styled('div')`
-  border: ${({theme}) => `1px solid ${theme.border}`};
-  border-radius: ${({theme}) => theme.borderRadius};
+  border: ${p => `1px solid ${p.theme.border}`};
+  border-radius: ${p => p.theme.borderRadius};
   display: flex;
   justify-content: center;
   align-items: center;
 `;
 
 const SelectionTextWrapper = styled('span')`
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
+`;
+
+const StyledNavButton = styled(Button)`
+  border-radius: 0;
+`;
+
+const NavButtons = styled('div')`
+  display: flex;
+
+  > * {
+    &:not(:last-child) {
+      ${StyledNavButton} {
+        border-right: none;
+      }
+    }
+
+    &:first-child {
+      ${StyledNavButton} {
+        border-radius: ${p => p.theme.borderRadius} 0 0 ${p => p.theme.borderRadius};
+      }
+    }
+
+    &:last-child {
+      ${StyledNavButton} {
+        border-radius: 0 ${p => p.theme.borderRadius} ${p => p.theme.borderRadius} 0;
+      }
+    }
+  }
 `;

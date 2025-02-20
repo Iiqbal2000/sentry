@@ -2,17 +2,18 @@ import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
 import {BarChart} from 'sentry/components/charts/barChart';
-import {DateTimeObject} from 'sentry/components/charts/utils';
+import type {DateTimeObject} from 'sentry/components/charts/utils';
 import CollapsePanel, {COLLAPSE_COUNT} from 'sentry/components/collapsePanel';
 import LoadingError from 'sentry/components/loadingError';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
-import PanelTable from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import Placeholder from 'sentry/components/placeholder';
 import {IconArrow} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {Organization, Project} from 'sentry/types';
-import {formatPercentage} from 'sentry/utils/formatters';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
 import {useApiQuery} from 'sentry/utils/queryClient';
 import type {ColorOrAlias} from 'sentry/utils/theme';
 
@@ -46,7 +47,7 @@ export function TeamUnresolvedIssues({
 }: TeamUnresolvedIssuesProps) {
   const {
     data: periodIssues = {},
-    isLoading,
+    isPending,
     isError,
     refetch,
   } = useApiQuery<ProjectReleaseCount>(
@@ -65,6 +66,9 @@ export function TeamUnresolvedIssues({
   function getTotalUnresolved(projectId: number): number {
     const entries = Object.values(periodIssues?.[projectId] ?? {});
     const total = entries.reduce((acc, current) => acc + current.unresolved, 0);
+    if (total === 0) {
+      return 0;
+    }
 
     return Math.round(total / entries.length);
   }
@@ -75,8 +79,10 @@ export function TeamUnresolvedIssues({
   > = {};
   for (const projectId of Object.keys(periodIssues)) {
     const periodAvg = getTotalUnresolved(Number(projectId));
-    const projectPeriodEntries = Object.values(periodIssues?.[projectId] ?? {});
-    const today = projectPeriodEntries[projectPeriodEntries.length - 1]?.unresolved ?? 0;
+    const projectPeriodEntries = Object.entries(periodIssues?.[projectId] ?? {}).sort(
+      (a, b) => new Date(b[0]).getTime() - new Date(a[0]).getTime()
+    );
+    const today = projectPeriodEntries[0]?.[1]?.unresolved ?? 0;
     const percentChange = (today - periodAvg) / periodAvg;
     projectTotals[projectId] = {
       projectId,
@@ -99,13 +105,16 @@ export function TeamUnresolvedIssues({
     )
   );
   // Total by day for all projects
-  const totalByDay = allData.reduce((acc, [bucket, unresolved]) => {
-    if (acc[bucket] === undefined) {
-      acc[bucket] = 0;
-    }
-    acc[bucket] += unresolved;
-    return acc;
-  }, {});
+  const totalByDay = allData.reduce(
+    (acc, [bucket, unresolved]) => {
+      if (acc[bucket] === undefined) {
+        acc[bucket] = 0;
+      }
+      acc[bucket] += unresolved;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
 
   const seriesData = sortSeriesByDay(convertDayValueObjectToSeries(totalByDay));
 
@@ -116,8 +125,8 @@ export function TeamUnresolvedIssues({
   return (
     <div>
       <ChartWrapper>
-        {isLoading && <Placeholder height="200px" />}
-        {!isLoading && (
+        {isPending && <Placeholder height="200px" />}
+        {!isPending && (
           <BarChart
             style={{height: 190}}
             isGroupedByDate
@@ -141,7 +150,7 @@ export function TeamUnresolvedIssues({
           <Fragment>
             <StyledPanelTable
               isEmpty={projects.length === 0}
-              isLoading={isLoading}
+              isLoading={isPending}
               headers={[
                 t('Project'),
                 <RightAligned key="last">
@@ -152,7 +161,12 @@ export function TeamUnresolvedIssues({
               ]}
             >
               {groupedProjects.map(({project}, idx) => {
-                const totals = projectTotals[project.id] ?? {};
+                const totals = projectTotals[project.id] ?? {
+                  percentChange: 0,
+                  periodAvg: undefined,
+                  projectId: undefined,
+                  today: undefined,
+                };
 
                 if (idx >= COLLAPSE_COUNT && !isExpanded) {
                   return null;
@@ -172,8 +186,8 @@ export function TeamUnresolvedIssues({
                           totals.percentChange === 0
                             ? 'subText'
                             : totals.percentChange > 0
-                            ? 'errorText'
-                            : 'successText'
+                              ? 'errorText'
+                              : 'successText'
                         }
                       >
                         {formatPercentage(
@@ -190,7 +204,7 @@ export function TeamUnresolvedIssues({
                 );
               })}
             </StyledPanelTable>
-            {!isLoading && showMoreButton}
+            {!isPending && showMoreButton}
           </Fragment>
         )}
       </CollapsePanel>

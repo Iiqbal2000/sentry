@@ -2,43 +2,41 @@ import * as Sentry from '@sentry/react';
 import trimStart from 'lodash/trimStart';
 
 import {doEventsRequest} from 'sentry/actionCreators/events';
-import {Client, ResponseMeta} from 'sentry/api';
+import type {Client, ResponseMeta} from 'sentry/api';
 import {isMultiSeriesStats} from 'sentry/components/charts/utils';
 import Link from 'sentry/components/links/link';
 import {Tooltip} from 'sentry/components/tooltip';
 import {t} from 'sentry/locale';
-import {
+import type {PageFilters, SelectValue} from 'sentry/types/core';
+import type {TagCollection} from 'sentry/types/group';
+import type {
   EventsStats,
+  GroupedMultiSeriesEventsStats,
   MultiSeriesEventsStats,
   Organization,
-  PageFilters,
-  SelectValue,
-  TagCollection,
-} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
-import {CustomMeasurementCollection} from 'sentry/utils/customMeasurements/customMeasurements';
-import {EventsTableData, TableData} from 'sentry/utils/discover/discoverQuery';
-import {MetaType} from 'sentry/utils/discover/eventView';
+import type {CustomMeasurementCollection} from 'sentry/utils/customMeasurements/customMeasurements';
+import {getTimeStampFromTableDateField} from 'sentry/utils/dates';
+import type {EventsTableData, TableData} from 'sentry/utils/discover/discoverQuery';
+import type {MetaType} from 'sentry/utils/discover/eventView';
+import type {RenderFunctionBaggage} from 'sentry/utils/discover/fieldRenderers';
+import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
+import type {AggregationOutputType, QueryFieldValue} from 'sentry/utils/discover/fields';
 import {
-  getFieldRenderer,
-  RenderFunctionBaggage,
-} from 'sentry/utils/discover/fieldRenderers';
-import {
-  AggregationOutputType,
   errorsAndTransactionsAggregateFunctionOutputType,
   getAggregateAlias,
   isEquation,
   isEquationAlias,
   isLegalYAxisType,
-  QueryFieldValue,
   SPAN_OP_BREAKDOWN_FIELDS,
   stripEquationPrefix,
 } from 'sentry/utils/discover/fields';
-import {
+import type {
+  DiscoverQueryExtras,
   DiscoverQueryRequestParams,
-  doDiscoverQuery,
 } from 'sentry/utils/discover/genericDiscoverQuery';
+import {doDiscoverQuery} from 'sentry/utils/discover/genericDiscoverQuery';
 import {Container} from 'sentry/utils/discover/styles';
 import {TOP_N} from 'sentry/utils/discover/types';
 import {
@@ -49,10 +47,13 @@ import {getShortEventId} from 'sentry/utils/events';
 import {FieldKey} from 'sentry/utils/fields';
 import {getMeasurements} from 'sentry/utils/measurements/measurements';
 import {MEPState} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
-import {shouldUseOnDemandMetrics} from 'sentry/views/dashboards/widgetBuilder/onDemandMetricWidget/utils';
-import {FieldValueOption} from 'sentry/views/discover/table/queryField';
-import {FieldValue, FieldValueKind} from 'sentry/views/discover/table/types';
+import type {OnDemandControlContext} from 'sentry/utils/performance/contexts/onDemandControl';
+import {shouldUseOnDemandMetrics} from 'sentry/utils/performance/contexts/onDemandControl';
+import type {FieldValueOption} from 'sentry/views/discover/table/queryField';
+import type {FieldValue} from 'sentry/views/discover/table/types';
+import {FieldValueKind} from 'sentry/views/discover/table/types';
 import {generateFieldOptions} from 'sentry/views/discover/utils';
+import {TraceViewSources} from 'sentry/views/performance/newTraceDetails/traceHeader/breadcrumbs';
 import {getTraceDetailsUrl} from 'sentry/views/performance/traceDetails/utils';
 import {
   createUnnamedTransactionsDiscoverTarget,
@@ -60,21 +61,21 @@ import {
   UNPARAMETERIZED_TRANSACTION,
 } from 'sentry/views/performance/utils';
 
-import {DisplayType, Widget, WidgetQuery} from '../types';
+import type {Widget, WidgetQuery} from '../types';
+import {DisplayType, WidgetType} from '../types';
 import {
   eventViewFromWidget,
   getDashboardsMEPQueryParams,
   getNumEquations,
   getWidgetInterval,
+  hasDatasetSelector,
 } from '../utils';
+import {transformEventsResponseToSeries} from '../utils/transformEventsResponseToSeries';
 import {EventsSearchBar} from '../widgetBuilder/buildSteps/filterResultsStep/eventsSearchBar';
 import {CUSTOM_EQUATION_VALUE} from '../widgetBuilder/buildSteps/sortByStep';
-import {
-  flattenMultiSeriesDataWithGrouping,
-  transformSeries,
-} from '../widgetCard/widgetQueries';
 
-import {DatasetConfig, handleOrderByReset} from './base';
+import type {DatasetConfig} from './base';
+import {handleOrderByReset} from './base';
 
 const DEFAULT_WIDGET_QUERY: WidgetQuery = {
   name: '',
@@ -86,12 +87,16 @@ const DEFAULT_WIDGET_QUERY: WidgetQuery = {
   orderby: '-count()',
 };
 
-export type SeriesWithOrdering = [order: number, series: Series];
+const DEFAULT_FIELD: QueryFieldValue = {
+  function: ['count', '', undefined, undefined],
+  kind: FieldValueKind.FUNCTION,
+};
 
 export const ErrorsAndTransactionsConfig: DatasetConfig<
-  EventsStats | MultiSeriesEventsStats,
+  EventsStats | MultiSeriesEventsStats | GroupedMultiSeriesEventsStats,
   TableData | EventsTableData
 > = {
+  defaultField: DEFAULT_FIELD,
   defaultWidgetQuery: DEFAULT_WIDGET_QUERY,
   enableEquations: true,
   getCustomFieldRenderer: getCustomEventsFieldRenderer,
@@ -100,7 +105,8 @@ export const ErrorsAndTransactionsConfig: DatasetConfig<
   filterYAxisAggregateParams,
   filterYAxisOptions,
   getTableFieldOptions: getEventsTableFieldOptions,
-  getTimeseriesSortOptions,
+  getTimeseriesSortOptions: (organization, widgetQuery, tags) =>
+    getTimeseriesSortOptions(organization, widgetQuery, tags, getEventsTableFieldOptions),
   getTableSortOptions,
   getGroupByFieldOptions: getEventsTableFieldOptions,
   handleOrderByReset,
@@ -114,15 +120,28 @@ export const ErrorsAndTransactionsConfig: DatasetConfig<
   ],
   getTableRequest: (
     api: Client,
+    widget: Widget,
     query: WidgetQuery,
     organization: Organization,
     pageFilters: PageFilters,
+    onDemandControlContext?: OnDemandControlContext,
     limit?: number,
     cursor?: string,
     referrer?: string,
     mepSetting?: MEPState | null
   ) => {
     const url = `/organizations/${organization.slug}/events/`;
+
+    const useOnDemandMetrics = shouldUseOnDemandMetrics(
+      organization,
+      widget,
+      onDemandControlContext
+    );
+    const queryExtras = {
+      useOnDemandMetrics,
+      ...getQueryExtraForSplittingDiscover(widget, organization, !!useOnDemandMetrics),
+      onDemandType: 'dynamic_query',
+    };
     return getEventsRequest(
       url,
       api,
@@ -132,7 +151,8 @@ export const ErrorsAndTransactionsConfig: DatasetConfig<
       limit,
       cursor,
       referrer,
-      mepSetting
+      mepSetting,
+      queryExtras
     );
   },
   getSeriesRequest: getEventsSeriesRequest,
@@ -142,14 +162,17 @@ export const ErrorsAndTransactionsConfig: DatasetConfig<
   getSeriesResultType,
 };
 
-function getTableSortOptions(_organization: Organization, widgetQuery: WidgetQuery) {
+export function getTableSortOptions(
+  _organization: Organization,
+  widgetQuery: WidgetQuery
+) {
   const {columns, aggregates} = widgetQuery;
-  const options: SelectValue<string>[] = [];
+  const options: Array<SelectValue<string>> = [];
   let equations = 0;
   [...aggregates, ...columns]
     .filter(field => !!field)
     .forEach(field => {
-      let alias;
+      let alias: any;
       const label = stripEquationPrefix(field);
       // Equations are referenced via a standard alias following this pattern
       if (isEquation(field)) {
@@ -163,7 +186,7 @@ function getTableSortOptions(_organization: Organization, widgetQuery: WidgetQue
   return options;
 }
 
-function filterSeriesSortOptions(columns: Set<string>) {
+export function filterSeriesSortOptions(columns: Set<string>) {
   return (option: FieldValueOption) => {
     if (
       option.value.kind === FieldValueKind.FUNCTION ||
@@ -179,10 +202,11 @@ function filterSeriesSortOptions(columns: Set<string>) {
   };
 }
 
-function getTimeseriesSortOptions(
+export function getTimeseriesSortOptions(
   organization: Organization,
   widgetQuery: WidgetQuery,
-  tags?: TagCollection
+  tags?: TagCollection,
+  getFieldOptions: typeof getEventsTableFieldOptions = getEventsTableFieldOptions
 ) {
   const options: Record<string, SelectValue<FieldValue>> = {};
   options[`field:${CUSTOM_EQUATION_VALUE}`] = {
@@ -197,7 +221,7 @@ function getTimeseriesSortOptions(
   [...widgetQuery.aggregates, ...widgetQuery.columns]
     .filter(field => !!field)
     .forEach(field => {
-      let alias;
+      let alias: any;
       const label = stripEquationPrefix(field);
       // Equations are referenced via a standard alias following this pattern
       if (isEquation(field)) {
@@ -215,7 +239,7 @@ function getTimeseriesSortOptions(
       }
     });
 
-  const fieldOptions = getEventsTableFieldOptions(organization, tags);
+  const fieldOptions = getFieldOptions(organization, tags);
 
   return {...options, ...fieldOptions};
 }
@@ -241,7 +265,7 @@ function getEventsTableFieldOptions(
   });
 }
 
-function transformEventsResponseToTable(
+export function transformEventsResponseToTable(
   data: TableData | EventsTableData,
   _widgetQuery: WidgetQuery
 ): TableData {
@@ -250,12 +274,12 @@ function transformEventsResponseToTable(
   const {fields, ...otherMeta} = (data as EventsTableData).meta ?? {};
   tableData = {
     ...data,
-    meta: {...fields, ...otherMeta},
+    meta: {...fields, ...otherMeta, fields},
   } as TableData;
-  return tableData as TableData;
+  return tableData;
 }
 
-function filterYAxisAggregateParams(
+export function filterYAxisAggregateParams(
   fieldValue: QueryFieldValue,
   displayType: DisplayType
 ) {
@@ -291,7 +315,7 @@ function filterYAxisAggregateParams(
   };
 }
 
-function filterYAxisOptions(displayType: DisplayType) {
+export function filterYAxisOptions(displayType: DisplayType) {
   return (option: FieldValueOption) => {
     // Only validate function names for timeseries widgets and
     // world map widgets.
@@ -313,69 +337,30 @@ function filterYAxisOptions(displayType: DisplayType) {
   };
 }
 
-function transformEventsResponseToSeries(
-  data: EventsStats | MultiSeriesEventsStats,
-  widgetQuery: WidgetQuery
-): Series[] {
-  let output: Series[] = [];
-  const queryAlias = widgetQuery.name;
-
-  if (isMultiSeriesStats(data)) {
-    let seriesWithOrdering: SeriesWithOrdering[] = [];
-    const isMultiSeriesDataWithGrouping =
-      widgetQuery.aggregates.length > 1 && widgetQuery.columns.length;
-
-    // Convert multi-series results into chartable series. Multi series results
-    // are created when multiple yAxis are used. Convert the timeseries
-    // data into a multi-series data set.  As the server will have
-    // replied with a map like: {[titleString: string]: EventsStats}
-    if (isMultiSeriesDataWithGrouping) {
-      seriesWithOrdering = flattenMultiSeriesDataWithGrouping(data, queryAlias);
-    } else {
-      seriesWithOrdering = Object.keys(data).map((seriesName: string) => {
-        const prefixedName = queryAlias ? `${queryAlias} : ${seriesName}` : seriesName;
-        const seriesData: EventsStats = data[seriesName];
-        return [
-          seriesData.order || 0,
-          transformSeries(seriesData, prefixedName, seriesName),
-        ];
-      });
-    }
-
-    output = [
-      ...seriesWithOrdering
-        .sort((itemA, itemB) => itemA[0] - itemB[0])
-        .map(item => item[1]),
-    ];
-  } else {
-    const field = widgetQuery.aggregates[0];
-    const prefixedName = queryAlias ? `${queryAlias} : ${field}` : field;
-    const transformed = transformSeries(data, prefixedName, field);
-    output.push(transformed);
-  }
-
-  return output;
-}
-
 // Get the series result type from the EventsStats meta
 function getSeriesResultType(
-  data: EventsStats | MultiSeriesEventsStats,
+  data: EventsStats | MultiSeriesEventsStats | GroupedMultiSeriesEventsStats,
   widgetQuery: WidgetQuery
 ): Record<string, AggregationOutputType> {
-  const field = widgetQuery.aggregates[0];
+  const field = widgetQuery.aggregates[0]!;
   const resultTypes = {};
   // Need to use getAggregateAlias since events-stats still uses aggregate alias format
   if (isMultiSeriesStats(data)) {
     Object.keys(data).forEach(
-      key => (resultTypes[key] = data[key].meta?.fields[getAggregateAlias(key)])
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      key => (resultTypes[key] = data[key]!.meta?.fields[getAggregateAlias(key)])
     );
   } else {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     resultTypes[field] = data.meta?.fields[getAggregateAlias(field)];
   }
   return resultTypes;
 }
 
-function renderEventIdAsLinkable(data, {eventView, organization}: RenderFunctionBaggage) {
+export function renderEventIdAsLinkable(
+  data: any,
+  {eventView, organization}: RenderFunctionBaggage
+) {
   const id: string | unknown = data?.id;
   if (!eventView || typeof id !== 'string') {
     return null;
@@ -384,7 +369,7 @@ function renderEventIdAsLinkable(data, {eventView, organization}: RenderFunction
   const eventSlug = generateEventSlug(data);
 
   const target = eventDetailsRouteWithEventView({
-    orgSlug: organization.slug,
+    organization,
     eventSlug,
     eventView,
   });
@@ -398,38 +383,60 @@ function renderEventIdAsLinkable(data, {eventView, organization}: RenderFunction
   );
 }
 
-function renderTraceAsLinkable(
-  data,
-  {eventView, organization, location}: RenderFunctionBaggage
-) {
-  const id: string | unknown = data?.trace;
-  if (!eventView || typeof id !== 'string') {
-    return null;
-  }
-  const dateSelection = eventView.normalizeDateSelection(location);
-  const target = getTraceDetailsUrl(organization, String(data.trace), dateSelection, {});
+export function renderTraceAsLinkable(widget?: Widget) {
+  return function (
+    data: any,
+    {eventView, organization, location}: RenderFunctionBaggage
+  ) {
+    const id: string | unknown = data?.trace;
+    if (!eventView || typeof id !== 'string') {
+      return null;
+    }
+    const dateSelection = eventView.normalizeDateSelection(location);
+    const target = getTraceDetailsUrl({
+      organization,
+      traceSlug: String(data.trace),
+      dateSelection,
+      timestamp: getTimeStampFromTableDateField(data['max(timestamp)'] ?? data.timestamp),
+      location: widget
+        ? {
+            ...location,
+            query: {
+              ...location.query,
+              widgetId: widget.id,
+              dashboardId: widget.dashboardId,
+            },
+          }
+        : location,
+      source: TraceViewSources.DASHBOARDS,
+    });
 
-  return (
-    <Tooltip title={t('View Trace')}>
-      <Link data-test-id="view-trace" to={target}>
-        <Container>{getShortEventId(id)}</Container>
-      </Link>
-    </Tooltip>
-  );
+    return (
+      <Tooltip title={t('View Trace')}>
+        <Link data-test-id="view-trace" to={target}>
+          <Container>{getShortEventId(id)}</Container>
+        </Link>
+      </Tooltip>
+    );
+  };
 }
 
-export function getCustomEventsFieldRenderer(field: string, meta: MetaType) {
+export function getCustomEventsFieldRenderer(
+  field: string,
+  meta: MetaType,
+  widget?: Widget
+) {
   if (field === 'id') {
     return renderEventIdAsLinkable;
   }
 
   if (field === 'trace') {
-    return renderTraceAsLinkable;
+    return renderTraceAsLinkable(widget);
   }
 
   // When title or transaction are << unparameterized >>, link out to discover showing unparameterized transactions
   if (['title', 'transaction'].includes(field)) {
-    return function (data, baggage) {
+    return function (data: any, baggage: any) {
       if (data[field] === UNPARAMETERIZED_TRANSACTION) {
         return (
           <Container>
@@ -451,7 +458,7 @@ export function getCustomEventsFieldRenderer(field: string, meta: MetaType) {
   return getFieldRenderer(field, meta, false);
 }
 
-function getEventsRequest(
+export function getEventsRequest(
   url: string,
   api: Client,
   query: WidgetQuery,
@@ -460,7 +467,8 @@ function getEventsRequest(
   limit?: number,
   cursor?: string,
   referrer?: string,
-  mepSetting?: MEPState | null
+  mepSetting?: MEPState | null,
+  queryExtras?: DiscoverQueryExtras
 ) {
   const isMEPEnabled = defined(mepSetting) && mepSetting !== MEPState.TRANSACTIONS_ONLY;
 
@@ -471,6 +479,7 @@ function getEventsRequest(
     cursor,
     referrer,
     ...getDashboardsMEPQueryParams(isMEPEnabled),
+    ...queryExtras,
   };
 
   if (query.orderby) {
@@ -501,17 +510,22 @@ function getEventsSeriesRequest(
   queryIndex: number,
   organization: Organization,
   pageFilters: PageFilters,
+  onDemandControlContext?: OnDemandControlContext,
   referrer?: string,
   mepSetting?: MEPState | null
 ) {
-  const widgetQuery = widget.queries[queryIndex];
+  const widgetQuery = widget.queries[queryIndex]!;
   const {displayType, limit} = widget;
   const {environments, projects} = pageFilters;
   const {start, end, period: statsPeriod} = pageFilters.datetime;
-  const interval = getWidgetInterval(displayType, {start, end, period: statsPeriod});
+  const interval = getWidgetInterval(
+    displayType,
+    {start, end, period: statsPeriod},
+    '1m'
+  );
   const isMEPEnabled = defined(mepSetting) && mepSetting !== MEPState.TRANSACTIONS_ONLY;
 
-  let requestData;
+  let requestData: any;
   if (displayType === DisplayType.TOP_N) {
     requestData = {
       organization,
@@ -589,16 +603,28 @@ function getEventsSeriesRequest(
     }
   }
 
-  if (shouldUseOnDemandMetrics(organization, widget)) {
-    return doOnDemandMetricsRequest(api, requestData);
+  if (shouldUseOnDemandMetrics(organization, widget, onDemandControlContext)) {
+    requestData.queryExtras = {
+      ...requestData.queryExtras,
+      ...getQueryExtraForSplittingDiscover(widget, organization, true),
+    };
+    return doOnDemandMetricsRequest(api, requestData, widget.widgetType);
+  }
+
+  if (organization.features.includes('performance-discover-dataset-selector')) {
+    requestData.queryExtras = {
+      ...requestData.queryExtras,
+      ...getQueryExtraForSplittingDiscover(widget, organization, false),
+    };
   }
 
   return doEventsRequest<true>(api, requestData);
 }
 
-async function doOnDemandMetricsRequest(
-  api,
-  requestData
+export async function doOnDemandMetricsRequest(
+  api: any,
+  requestData: any,
+  widgetType: any
 ): Promise<
   [EventsStats | MultiSeriesEventsStats, string | undefined, ResponseMeta | undefined]
 > {
@@ -610,13 +636,30 @@ async function doOnDemandMetricsRequest(
 
     const response = await doEventsRequest<false>(api, {
       ...requestData,
-      useOnDemandMetrics: true,
+      queryExtras: {
+        ...requestData.queryExtras,
+        useOnDemandMetrics: true,
+        onDemandType: 'dynamic_query',
+      },
       dataset: 'metricsEnhanced',
       generatePathname: isEditing ? fetchEstimatedStats : undefined,
     });
 
-    response[0] = {...response[0], isMetricsData: true, isExtrapolatedData: isEditing};
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+    response[0] = {...response[0]};
 
+    if (
+      hasDatasetSelector(requestData.organization) &&
+      widgetType === WidgetType.DISCOVER
+    ) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      const meta = response[0].meta ?? {};
+      meta.discoverSplitDecision = 'transaction-like';
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      response[0] = {...response[0], ...{meta}};
+    }
+
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     return [response[0], response[1], response[2]];
   } catch (err) {
     Sentry.captureMessage('Failed to fetch metrics estimation stats', {extra: err});
@@ -625,7 +668,10 @@ async function doOnDemandMetricsRequest(
 }
 
 // Checks fieldValue to see what function is being used and only allow supported custom measurements
-function filterAggregateParams(option: FieldValueOption, fieldValue?: QueryFieldValue) {
+export function filterAggregateParams(
+  option: FieldValueOption,
+  fieldValue?: QueryFieldValue
+) {
   if (
     (option.value.kind === FieldValueKind.CUSTOM_MEASUREMENT &&
       fieldValue?.kind === 'function' &&
@@ -637,3 +683,36 @@ function filterAggregateParams(option: FieldValueOption, fieldValue?: QueryField
   }
   return true;
 }
+
+const getQueryExtraForSplittingDiscover = (
+  widget: Widget,
+  organization: Organization,
+  useOnDemandMetrics: boolean
+) => {
+  // We want to send the dashboardWidgetId on the request if we're in the Widget
+  // Builder with the selector feature flag
+  const isEditing = location.pathname.endsWith('/edit/');
+  const hasDiscoverSelector = organization.features.includes(
+    'performance-discover-dataset-selector'
+  );
+
+  if (!hasDiscoverSelector) {
+    if (
+      !useOnDemandMetrics ||
+      !organization.features.includes('performance-discover-widget-split-ui')
+    ) {
+      return {};
+    }
+    if (widget.id) {
+      return {dashboardWidgetId: widget.id};
+    }
+
+    return {};
+  }
+
+  if (isEditing && widget.id) {
+    return {dashboardWidgetId: widget.id};
+  }
+
+  return {};
+};

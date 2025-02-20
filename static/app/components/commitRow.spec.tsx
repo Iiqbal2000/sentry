@@ -3,13 +3,15 @@ import {textWithMarkupMatcher} from 'sentry-test/utils';
 
 import {openInviteMembersModal} from 'sentry/actionCreators/modal';
 import {CommitRow} from 'sentry/components/commitRow';
-import {Commit, Repository, RepositoryStatus, User} from 'sentry/types';
+import type {Commit, Repository} from 'sentry/types/integrations';
+import {RepositoryStatus} from 'sentry/types/integrations';
+import type {User} from 'sentry/types/user';
 
 jest.mock('sentry/components/hovercard', () => {
   return {
     Header: ({children}: {children: React.ReactNode}) => children,
     Body: ({children}: {children: React.ReactNode}) => children,
-    Hovercard: ({body}) => {
+    Hovercard: ({body}: any) => {
       return body;
     },
   };
@@ -58,7 +60,7 @@ describe('commitRow', () => {
       },
     } as Commit;
 
-    render(<CommitRow commit={commit} />, {context: TestStubs.routerContext()});
+    render(<CommitRow commit={commit} />);
     expect(
       screen.getByText(
         textWithMarkupMatcher(

@@ -6,13 +6,13 @@ from sentry.db.models import (
     BaseModel,
     BoundedAutoField,
     BoundedBigIntegerField,
-    control_silo_only_model,
+    control_silo_model,
     sane_repr,
 )
 from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignKey
 
 
-@control_silo_only_model
+@control_silo_model
 class OrganizationMemberTeamReplica(BaseModel):
     """
     Identifies relationships between organization members and the teams they are on.
@@ -21,8 +21,8 @@ class OrganizationMemberTeamReplica(BaseModel):
     __relocation_scope__ = RelocationScope.Excluded
 
     id = BoundedAutoField(primary_key=True)
-    team_id = HybridCloudForeignKey("sentry.Team", on_delete="cascade")
-    organization_id = HybridCloudForeignKey("sentry.Organization", on_delete="cascade")
+    team_id = HybridCloudForeignKey("sentry.Team", on_delete="CASCADE")
+    organization_id = HybridCloudForeignKey("sentry.Organization", on_delete="CASCADE")
     organizationmember_id = BoundedBigIntegerField(db_index=True)
     organizationmemberteam_id = BoundedBigIntegerField(db_index=True)
     is_active = models.BooleanField()

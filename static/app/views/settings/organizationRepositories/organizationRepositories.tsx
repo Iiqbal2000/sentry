@@ -1,5 +1,5 @@
 import AlertLink from 'sentry/components/alertLink';
-import {Button} from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
 import EmptyMessage from 'sentry/components/emptyMessage';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Panel from 'sentry/components/panels/panel';
@@ -8,8 +8,8 @@ import PanelHeader from 'sentry/components/panels/panelHeader';
 import RepositoryRow from 'sentry/components/repositoryRow';
 import {IconCommit} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import {Organization, Repository, RepositoryStatus} from 'sentry/types';
-import useApi from 'sentry/utils/useApi';
+import type {Repository, RepositoryStatus} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import TextBlock from 'sentry/views/settings/components/text/textBlock';
 
@@ -20,8 +20,6 @@ type Props = {
 };
 
 function OrganizationRepositories({itemList, onRepositoryChange, organization}: Props) {
-  const api = useApi();
-
   const hasItemList = itemList && itemList.length > 0;
 
   return (
@@ -53,7 +51,6 @@ function OrganizationRepositories({itemList, onRepositoryChange, organization}: 
             <div>
               {itemList.map(repo => (
                 <RepositoryRow
-                  api={api}
                   key={repo.id}
                   repository={repo}
                   showProvider
@@ -73,9 +70,9 @@ function OrganizationRepositories({itemList, onRepositoryChange, organization}: 
               'Adding one or more repositories will enable enhanced releases and the ability to resolve Sentry Issues via git message.'
             )}
             action={
-              <Button external href="https://docs.sentry.io/learn/releases/">
+              <LinkButton external href="https://docs.sentry.io/learn/releases/">
                 {t('Learn more')}
-              </Button>
+              </LinkButton>
             }
           />
         </Panel>

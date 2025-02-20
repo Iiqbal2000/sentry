@@ -2,15 +2,9 @@ import cloneDeep from 'lodash/cloneDeep';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
 
-import {DashboardDetails} from './types';
+import type {DashboardDetails} from './types';
 
-const deleteProperties = [
-  'createdBy',
-  'dateCreated',
-  'id',
-  'dashboardId',
-  'widgetId',
-] as const;
+type ExcludedProperties = 'createdBy' | 'dateCreated' | 'id' | 'dashboardId' | 'widgetId';
 
 async function exportDashboard() {
   try {
@@ -35,7 +29,7 @@ async function exportDashboard() {
   }
 }
 
-function getAPIParams(structure) {
+function getAPIParams(structure: any) {
   const url = window.location.href;
   const regex = {
     base_url: /(\/\/)(.*?)(\/)/,
@@ -44,6 +38,7 @@ function getAPIParams(structure) {
   };
 
   for (const attr in regex) {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     const match = url.match(regex[attr]);
     if (match?.length) {
       structure[attr] = match.length >= 3 ? match[2] : null;
@@ -55,8 +50,8 @@ function getAPIParams(structure) {
 
 function normalizeData(
   source: DashboardDetails
-): Omit<DashboardDetails, (typeof deleteProperties)[number]> {
-  const payload: Omit<DashboardDetails, (typeof deleteProperties)[number]> = {
+): Omit<DashboardDetails, ExcludedProperties> {
+  const payload: Omit<DashboardDetails, ExcludedProperties> = {
     title: '',
     filters: {},
     projects: [],
@@ -72,11 +67,14 @@ function normalizeData(
       if (['widgets'].includes(property)) {
         // get the object properties so that we can loop through them
         const type = getPropertyStructure(property);
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         data = normalizeNestedObject(source[property], type);
       } else {
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         data = source[property];
       }
 
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       payload[property] = data;
     }
   }
@@ -84,7 +82,7 @@ function normalizeData(
   return payload;
 }
 
-function normalizeNestedObject(object, structure) {
+function normalizeNestedObject(object: any, structure: any) {
   const nestedObjectArray: any[] = [];
 
   for (const index in object) {
@@ -112,7 +110,7 @@ function normalizeNestedObject(object, structure) {
   return nestedObjectArray;
 }
 
-function getPropertyStructure(property) {
+function getPropertyStructure(property: any) {
   let structure = {};
 
   switch (property) {
@@ -145,7 +143,7 @@ function getPropertyStructure(property) {
   return structure;
 }
 
-function downloadObjectAsJson(exportObj, exportName) {
+function downloadObjectAsJson(exportObj: any, exportName: any) {
   const dataStr = `data:text/json;charset=utf-8,${encodeURIComponent(
     JSON.stringify(exportObj)
   )}`;
@@ -157,7 +155,7 @@ function downloadObjectAsJson(exportObj, exportName) {
   downloadAnchorNode.remove();
 }
 
-function cleanTitle(title) {
+function cleanTitle(title: any) {
   const regex = /[^a-z0-9]/gi;
   const formattedTitle = title.replace(regex, '-');
   const date = new Date();

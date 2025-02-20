@@ -1,5 +1,9 @@
-import {browserHistory} from 'react-router';
-import {Organization} from 'sentry-fixture/organization';
+import {ConfigFixture} from 'sentry-fixture/config';
+import {EventFixture} from 'sentry-fixture/event';
+import {GroupFixture} from 'sentry-fixture/group';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {RouterFixture} from 'sentry-fixture/routerFixture';
+import {UserFixture} from 'sentry-fixture/user';
 
 import {render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary';
 
@@ -8,7 +12,9 @@ import * as useMedia from 'sentry/utils/useMedia';
 import {GroupEventCarousel} from 'sentry/views/issueDetails/groupEventCarousel';
 
 describe('GroupEventCarousel', () => {
-  const testEvent = TestStubs.Event({
+  const router = RouterFixture();
+
+  const testEvent = EventFixture({
     id: 'event-id',
     size: 7,
     dateCreated: '2019-03-20T00:00:00.000Z',
@@ -23,7 +29,7 @@ describe('GroupEventCarousel', () => {
 
   const defaultProps = {
     event: testEvent,
-    group: TestStubs.Group({id: 'group-id'}),
+    group: GroupFixture({id: 'group-id'}),
     projectSlug: 'project-slug',
   };
 
@@ -40,18 +46,21 @@ describe('GroupEventCarousel', () => {
   });
 
   describe('recommended event ui', () => {
-    const recommendedUser = TestStubs.User({
+    const recommendedUser = UserFixture({
       options: {
+        ...UserFixture().options,
         defaultIssueEvent: 'recommended',
       },
     });
-    const latestUser = TestStubs.User({
+    const latestUser = UserFixture({
       options: {
+        ...UserFixture().options,
         defaultIssueEvent: 'latest',
       },
     });
-    const oldestUser = TestStubs.User({
+    const oldestUser = UserFixture({
       options: {
+        ...UserFixture().options,
         defaultIssueEvent: 'oldest',
       },
     });
@@ -59,12 +68,12 @@ describe('GroupEventCarousel', () => {
     it('can navigate to the oldest event', async () => {
       jest.spyOn(useMedia, 'default').mockReturnValue(true);
 
-      render(<GroupEventCarousel {...defaultProps} />);
+      render(<GroupEventCarousel {...defaultProps} />, {router});
 
       await userEvent.click(screen.getByRole('button', {name: /recommended/i}));
       await userEvent.click(screen.getByRole('option', {name: /oldest/i}));
 
-      expect(browserHistory.push).toHaveBeenCalledWith({
+      expect(router.push).toHaveBeenCalledWith({
         pathname: '/organizations/org-slug/issues/group-id/events/oldest/',
         query: {referrer: 'oldest-event'},
       });
@@ -73,30 +82,27 @@ describe('GroupEventCarousel', () => {
     it('can navigate to the latest event', async () => {
       jest.spyOn(useMedia, 'default').mockReturnValue(true);
 
-      render(<GroupEventCarousel {...defaultProps} />);
+      render(<GroupEventCarousel {...defaultProps} />, {router});
 
       await userEvent.click(screen.getByRole('button', {name: /recommended/i}));
       await userEvent.click(screen.getByRole('option', {name: /latest/i}));
 
-      expect(browserHistory.push).toHaveBeenCalledWith({
+      expect(router.push).toHaveBeenCalledWith({
         pathname: '/organizations/org-slug/issues/group-id/events/latest/',
         query: {referrer: 'latest-event'},
       });
     });
 
     it('can navigate to the recommended event', async () => {
+      const newRouter = RouterFixture({params: {eventId: 'latest'}});
       jest.spyOn(useMedia, 'default').mockReturnValue(true);
 
-      render(<GroupEventCarousel {...defaultProps} />, {
-        router: {
-          params: {eventId: 'latest'},
-        },
-      });
+      render(<GroupEventCarousel {...defaultProps} />, {router: newRouter});
 
       await userEvent.click(screen.getByRole('button', {name: /latest/i}));
       await userEvent.click(screen.getByRole('option', {name: /recommended/i}));
 
-      expect(browserHistory.push).toHaveBeenCalledWith({
+      expect(newRouter.push).toHaveBeenCalledWith({
         pathname: '/organizations/org-slug/issues/group-id/events/recommended/',
         query: {referrer: 'recommended-event'},
       });
@@ -107,34 +113,36 @@ describe('GroupEventCarousel', () => {
 
       render(<GroupEventCarousel {...singleEventProps} />);
 
-      expect(await screen.getByRole('button', {name: 'Recommended'})).toBeDisabled();
+      expect(await screen.findByRole('button', {name: 'Recommended'})).toBeDisabled();
     });
 
     it('if user default is recommended, it will show it as default', async () => {
-      ConfigStore.loadInitialData(TestStubs.Config({user: recommendedUser}));
+      ConfigStore.loadInitialData(ConfigFixture({user: recommendedUser}));
       jest.spyOn(useMedia, 'default').mockReturnValue(true);
 
       render(<GroupEventCarousel {...singleEventProps} />);
 
-      expect(await screen.getByText('Recommended')).toBeInTheDocument();
+      expect(
+        await screen.findByRole('button', {name: 'Recommended'})
+      ).toBeInTheDocument();
     });
 
     it('if user default is latest, it will show it as default', async () => {
-      ConfigStore.loadInitialData(TestStubs.Config({user: latestUser}));
+      ConfigStore.loadInitialData(ConfigFixture({user: latestUser}));
       jest.spyOn(useMedia, 'default').mockReturnValue(true);
 
       render(<GroupEventCarousel {...singleEventProps} />);
 
-      expect(await screen.getByText('Latest')).toBeInTheDocument();
+      expect(await screen.findByRole('button', {name: 'Latest'})).toBeInTheDocument();
     });
 
     it('if user default is oldest, it will show it as default', async () => {
-      ConfigStore.loadInitialData(TestStubs.Config({user: oldestUser}));
+      ConfigStore.loadInitialData(ConfigFixture({user: oldestUser}));
       jest.spyOn(useMedia, 'default').mockReturnValue(true);
 
       render(<GroupEventCarousel {...singleEventProps} />);
 
-      expect(await screen.getByText('Oldest')).toBeInTheDocument();
+      expect(await screen.findByRole('button', {name: 'Oldest'})).toBeInTheDocument();
     });
   });
 
@@ -172,7 +180,7 @@ describe('GroupEventCarousel', () => {
 
   it('links to full event details when org has discover', async () => {
     render(<GroupEventCarousel {...defaultProps} />, {
-      organization: Organization({features: ['discover-basic']}),
+      organization: OrganizationFixture({features: ['discover-basic']}),
     });
 
     await userEvent.click(screen.getByRole('button', {name: /event actions/i}));
@@ -188,10 +196,10 @@ describe('GroupEventCarousel', () => {
     render(<GroupEventCarousel {...defaultProps} />);
 
     await userEvent.click(screen.getByRole('button', {name: /event actions/i}));
-    await userEvent.click(screen.getByRole('menuitemradio', {name: 'JSON (7 B)'}));
+    await userEvent.click(screen.getByRole('menuitemradio', {name: 'JSON (7.0 B)'}));
 
     expect(window.open).toHaveBeenCalledWith(
-      `/api/0/projects/org-slug/project-slug/events/event-id/json/`
+      `https://us.sentry.io/api/0/projects/org-slug/project-slug/events/event-id/json/`
     );
   });
 });

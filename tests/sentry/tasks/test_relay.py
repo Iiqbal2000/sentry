@@ -7,7 +7,6 @@ from django.db import router, transaction
 
 from sentry.db.postgres.transactions import in_test_hide_transaction_boundary
 from sentry.models.options.project_option import ProjectOption
-from sentry.models.project import Project
 from sentry.models.projectkey import ProjectKey, ProjectKeyStatus
 from sentry.relay.projectconfig_cache.redis import RedisProjectConfigCache
 from sentry.relay.projectconfig_debounce_cache.redis import RedisProjectConfigDebounceCache
@@ -18,6 +17,7 @@ from sentry.tasks.relay import (
     schedule_build_project_config,
     schedule_invalidate_project_config,
 )
+from sentry.testutils.helpers.task_runner import BurstTaskRunner
 from sentry.testutils.hybrid_cloud import simulated_transaction_watermarks
 from sentry.testutils.pytest.fixtures import django_db_all
 
@@ -25,15 +25,6 @@ from sentry.testutils.pytest.fixtures import django_db_all
 def _cache_keys_for_project(project):
     for key in ProjectKey.objects.filter(project_id=project.id):
         yield key.public_key
-
-
-def _cache_keys_for_org(org):
-    # The `ProjectKey` model doesn't have any attribute we can use to filter by
-    # org, and the `Project` model doesn't have a project key exposed. So using
-    # the org we fetch the project, and then the project key.
-    for proj in Project.objects.filter(organization_id=org.id):
-        for key in ProjectKey.objects.filter(project_id=proj.id):
-            yield key.public_key
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +35,7 @@ def disable_auto_on_commit():
 
 
 @pytest.fixture
-def emulate_transactions(burst_task_runner, django_capture_on_commit_callbacks):
+def emulate_transactions(django_capture_on_commit_callbacks):
     # This contraption helps in testing the usage of `transaction.on_commit` in
     # schedule_build_project_config. Normally tests involving transactions would
     # require us to use the transactional testcase (or
@@ -52,7 +43,7 @@ def emulate_transactions(burst_task_runner, django_capture_on_commit_callbacks):
     # in test speed and we're trying to keep our testcases fast.
     @contextlib.contextmanager
     def inner(assert_num_callbacks=1):
-        with burst_task_runner() as burst:
+        with BurstTaskRunner() as burst:
             with django_capture_on_commit_callbacks(execute=True) as callbacks:
                 yield
 
@@ -69,15 +60,15 @@ def emulate_transactions(burst_task_runner, django_capture_on_commit_callbacks):
             # exited, not while they are being registered
             assert len(callbacks) == assert_num_callbacks
 
-        # Callbacks have been executed, job(s) should've been scheduled now, so
-        # let's execute them.
-        #
-        # Note: We can't directly assert that the data race has not occured, as
-        # there are no real DB transactions available in this testcase. The
-        # entire test runs in one transaction because that's how pytest-django
-        # sets up things unless one uses
-        # pytest.mark.django_db(transaction=True).
-        burst(max_jobs=20)
+            # Callbacks have been executed, job(s) should've been scheduled now, so
+            # let's execute them.
+            #
+            # Note: We can't directly assert that the data race has not occured, as
+            # there are no real DB transactions available in this testcase. The
+            # entire test runs in one transaction because that's how pytest-django
+            # sets up things unless one uses
+            # pytest.mark.django_db(transaction=True).
+            burst(max_jobs=20)
 
     return inner
 
@@ -197,10 +188,10 @@ def test_project_update_option(
 ):
     # Put something in the cache, otherwise triggers/the invalidation task won't compute
     # anything.
-    redis_cache.set_many({default_projectkey.public_key: "dummy"})
+    redis_cache.set_many({default_projectkey.public_key: {"dummy": "dummy"}})
 
     # XXX: there should only be one hook triggered, regardless of debouncing
-    with emulate_transactions(assert_num_callbacks=4):
+    with emulate_transactions(assert_num_callbacks=2):
         default_project.update_option(
             "sentry:relay_pii_config", '{"applications": {"$string": ["@creditcard:mask"]}}'
         )
@@ -234,10 +225,10 @@ def test_project_delete_option(
 ):
     # Put something in the cache, otherwise triggers/the invalidation task won't compute
     # anything.
-    redis_cache.set_many({default_projectkey.public_key: "dummy"})
+    redis_cache.set_many({default_projectkey.public_key: {"dummy": "dummy"}})
 
     # XXX: there should only be one hook triggered, regardless of debouncing
-    with emulate_transactions(assert_num_callbacks=3):
+    with emulate_transactions(assert_num_callbacks=1):
         default_project.delete_option("sentry:relay_pii_config")
 
     assert redis_cache.get(default_projectkey)["config"]["piiConfig"] == {}
@@ -279,7 +270,7 @@ def test_invalidation_project_deleted(
     project_id = default_project.id
 
     # Delete the project normally, this will delete it from the cache
-    with emulate_transactions(assert_num_callbacks=6):
+    with emulate_transactions(assert_num_callbacks=4):
         default_project.delete()
     assert redis_cache.get(project_key)["disabled"]
 
@@ -338,7 +329,7 @@ def test_db_transaction(
 ):
     # Put something in the cache, otherwise triggers/the invalidation task won't compute
     # anything.
-    redis_cache.set_many({default_projectkey.public_key: "dummy"})
+    redis_cache.set_many({default_projectkey.public_key: {"dummy": "dummy"}})
 
     with task_runner(), transaction.atomic(router.db_for_write(ProjectOption)):
         default_project.update_option(
@@ -347,7 +338,7 @@ def test_db_transaction(
 
         # Assert that cache entry hasn't been created yet, only after the
         # transaction has committed.
-        assert redis_cache.get(default_projectkey.public_key) == "dummy"
+        assert redis_cache.get(default_projectkey.public_key) == {"dummy": "dummy"}
 
     assert redis_cache.get(default_projectkey.public_key)["config"]["piiConfig"] == {
         "applications": {"$string": ["@creditcard:mask"]}
@@ -510,7 +501,6 @@ class TestInvalidationTask:
 @django_db_all(transaction=True)
 def test_invalidate_hierarchy(
     monkeypatch,
-    burst_task_runner,
     default_project,
     default_projectkey,
     redis_cache,
@@ -519,7 +509,7 @@ def test_invalidate_hierarchy(
     django_cache,
 ):
     # Put something in the cache, otherwise the invalidation task won't compute anything.
-    redis_cache.set_many({default_projectkey.public_key: "dummy"})
+    redis_cache.set_many({default_projectkey.public_key: {"dummy": "dummy"}})
 
     orig_apply_async = invalidate_project_config.apply_async
     calls = []
@@ -530,7 +520,7 @@ def test_invalidate_hierarchy(
 
     monkeypatch.setattr(invalidate_project_config, "apply_async", proxy)
 
-    with burst_task_runner() as run:
+    with BurstTaskRunner() as run:
         schedule_invalidate_project_config(
             organization_id=default_project.organization.id, trigger="test"
         )

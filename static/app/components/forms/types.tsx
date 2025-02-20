@@ -1,11 +1,11 @@
-import {createFilter} from 'react-select';
-
-import type {AlertProps} from 'sentry/components/alert';
-import {ChoiceMapperProps} from 'sentry/components/forms/fields/choiceMapperField';
-import {SelectAsyncFieldProps} from 'sentry/components/forms/fields/selectAsyncField';
-import FormModel from 'sentry/components/forms/model';
-import {SliderProps} from 'sentry/components/slider';
-import {AvatarProject, Project, SelectValue} from 'sentry/types';
+import type {AlertProps} from 'sentry/components/core/alert';
+import type {createFilter} from 'sentry/components/forms/controls/reactSelectWrapper';
+import type {ChoiceMapperProps} from 'sentry/components/forms/fields/choiceMapperField';
+import type {SelectAsyncFieldProps} from 'sentry/components/forms/fields/selectAsyncField';
+import type FormModel from 'sentry/components/forms/model';
+import type {SliderProps} from 'sentry/components/slider';
+import type {SelectValue} from 'sentry/types/core';
+import type {AvatarProject, Project} from 'sentry/types/project';
 
 export const FieldType = [
   'array',
@@ -42,11 +42,11 @@ interface BaseField {
   autosize?: boolean;
   choices?:
     | ((props: {[key: string]: any}) => void)
-    | readonly Readonly<[number | string, React.ReactNode]>[];
-  confirm?: {[key: string]: React.ReactNode};
+    | ReadonlyArray<Readonly<[number | string, React.ReactNode]>>;
+  confirm?: {[key: string]: React.ReactNode | boolean};
   defaultValue?: FieldValue;
   disabled?: boolean | ((props: any) => boolean);
-  disabledReason?: React.ReactNode;
+  disabledReason?: React.ReactNode | ((props: any) => React.ReactNode);
   extraHelp?: string;
   flexibleControlStateSize?: boolean;
   formatLabel?: (value: number | '') => React.ReactNode;
@@ -54,8 +54,8 @@ interface BaseField {
    * Function to format the value displayed in the undo toast. May also be
    * specified as false to disable showing the changed fields in the toast.
    */
-  formatMessageValue?: Function | false;
-  getData?: (data: object) => object;
+  formatMessageValue?: boolean | ((props: any) => React.ReactNode);
+  getData?: (data: Record<PropertyKey, unknown>) => Record<PropertyKey, unknown>;
   getValue?: (value: FieldValue) => any;
   help?: React.ReactNode | ((props: any) => React.ReactNode);
   hideLabel?: boolean;
@@ -122,7 +122,7 @@ type SelectControlType = {type: 'choice' | 'select'} & {
   filterOption?: ReturnType<typeof createFilter>;
   multiple?: boolean;
   noOptionsMessage?: () => string;
-  options?: SelectValue<any>[];
+  options?: Array<SelectValue<any>>;
 };
 
 type TextareaType = {type: 'textarea'} & {
@@ -153,7 +153,7 @@ export interface TableType {
   /**
    * An object with of column labels (headers) for the table.
    */
-  columnLabels: object;
+  columnLabels: Record<PropertyKey, React.ReactNode>;
   type: 'table';
   /**
    * The confirmation message before a a row is deleted
@@ -190,6 +190,10 @@ export type SentryProjectSelectorType = {
   avatarSize?: number;
 };
 
+export type SentryOrganizationRoleSelectorType = {
+  type: 'sentry_organization_role_selector';
+};
+
 export type SelectAsyncType = {
   type: 'select_async';
 } & SelectAsyncFieldProps;
@@ -204,6 +208,7 @@ export type Field = (
   | TableType
   | ProjectMapperType
   | SentryProjectSelectorType
+  | SentryOrganizationRoleSelectorType
   | SelectAsyncType
   | ChoiceMapperType
   | {type: (typeof FieldType)[number]}
@@ -212,7 +217,7 @@ export type Field = (
 ) &
   BaseField;
 
-export type FieldObject = Field | Function;
+export type FieldObject = Field | (() => React.ReactNode);
 
 export type JsonFormObject = {
   fields: FieldObject[];

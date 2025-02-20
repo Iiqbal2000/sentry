@@ -1,27 +1,28 @@
 import {Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 import startCase from 'lodash/startCase';
 
 import Access from 'sentry/components/acl/access';
-import {Alert, AlertProps} from 'sentry/components/alert';
+import Tag from 'sentry/components/badge/tag';
+import type {AlertProps} from 'sentry/components/core/alert';
+import {Alert} from 'sentry/components/core/alert';
 import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import EmptyMessage from 'sentry/components/emptyMessage';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Panel from 'sentry/components/panels/panel';
-import Tag from 'sentry/components/tag';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconClose, IconDocs, IconGeneric, IconGithub, IconProject} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import PluginIcon from 'sentry/plugins/components/pluginIcon';
 import {space} from 'sentry/styles/space';
-import {
+import type {
   IntegrationFeature,
   IntegrationInstallationStatus,
   IntegrationType,
-  Organization,
-} from 'sentry/types';
-import {
+} from 'sentry/types/integrations';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {
   IntegrationAnalyticsKey,
   IntegrationEventParameters,
 } from 'sentry/utils/analytics/integrations';
@@ -48,10 +49,10 @@ type State = {
 
 type Props = {
   organization: Organization;
-} & RouteComponentProps<{integrationSlug: string}, {}> &
+} & RouteComponentProps<{integrationSlug: string}> &
   DeprecatedAsyncComponent['props'];
 
-class AbstractIntegrationDetailedView<
+abstract class AbstractIntegrationDetailedView<
   P extends Props = Props,
   S extends State = State,
 > extends DeprecatedAsyncComponent<P, S> {
@@ -61,7 +62,7 @@ class AbstractIntegrationDetailedView<
     super.componentDidMount();
     const {location} = this.props;
     const value = location.query.tab === 'configurations' ? 'configurations' : 'overview';
-    // eslint-disable-next-line react/no-did-mount-set-state
+
     this.setState({tab: value});
   }
 
@@ -183,10 +184,7 @@ class AbstractIntegrationDetailedView<
   }
 
   // Returns the list of configurations for the integration
-  renderConfigurations() {
-    // Allow children to implement this
-    throw new Error('Not implemented');
-  }
+  abstract renderConfigurations(): React.ReactNode;
 
   /**
    * Actually implemented methods below
@@ -250,7 +248,6 @@ class AbstractIntegrationDetailedView<
   renderRequestIntegrationButton() {
     return (
       <RequestIntegrationButton
-        organization={this.props.organization}
         name={this.integrationName}
         slug={this.integrationSlug}
         type={this.integrationType}
@@ -353,11 +350,13 @@ class AbstractIntegrationDetailedView<
             />
             {this.renderPermissions()}
             {this.alerts.map((alert, i) => (
-              <Alert key={i} type={alert.type} showIcon>
-                <span
-                  dangerouslySetInnerHTML={{__html: singleLineRenderer(alert.text)}}
-                />
-              </Alert>
+              <Alert.Container key={i}>
+                <Alert key={i} type={alert.type} showIcon>
+                  <span
+                    dangerouslySetInnerHTML={{__html: singleLineRenderer(alert.text)}}
+                  />
+                </Alert>
+              </Alert.Container>
             ))}
           </FlexContainer>
           <Metadata>
@@ -423,7 +422,7 @@ const NameContainer = styled('div')`
 `;
 
 const Name = styled('div')`
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   font-size: 1.4em;
   margin-bottom: ${space(0.5)};
 `;
@@ -433,7 +432,7 @@ const IconCloseCircle = styled(IconClose)`
   margin-right: ${space(1)};
 `;
 
-const DisabledNotice = styled(({reason, ...p}: {reason: React.ReactNode}) => (
+export const DisabledNotice = styled(({reason, ...p}: {reason: React.ReactNode}) => (
   <div
     style={{
       display: 'flex',
@@ -498,7 +497,7 @@ const CreatedContainer = styled('div')`
   text-transform: uppercase;
   padding-bottom: ${space(1)};
   color: ${p => p.theme.gray300};
-  font-weight: 600;
+  font-weight: ${p => p.theme.fontWeightBold};
   font-size: 12px;
 `;
 

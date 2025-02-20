@@ -1,72 +1,152 @@
-import {Fragment, useEffect, useState} from 'react';
+import {Fragment, useEffect, useMemo, useRef, useState} from 'react';
 import styled from '@emotion/styled';
 
 import HighlightTopRightPattern from 'sentry-images/pattern/highlight-top-right.svg';
 
-import {Button} from 'sentry/components/button';
-import {DropdownMenu, MenuItemProps} from 'sentry/components/dropdownMenu';
+import {Alert} from 'sentry/components/alert';
+import {LinkButton} from 'sentry/components/button';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
+import useDrawer from 'sentry/components/globalDrawer';
 import IdBadge from 'sentry/components/idBadge';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import useOnboardingDocs from 'sentry/components/onboardingWizard/useOnboardingDocs';
-import OnboardingStep from 'sentry/components/sidebar/onboardingStep';
+import {Step} from 'sentry/components/onboarding/gettingStartedDoc/step';
+import type {DocsParams} from 'sentry/components/onboarding/gettingStartedDoc/types';
+import {ProductSolution} from 'sentry/components/onboarding/gettingStartedDoc/types';
+import {useLoadGettingStarted} from 'sentry/components/onboarding/gettingStartedDoc/utils/useLoadGettingStarted';
+import {shouldShowPerformanceTasks} from 'sentry/components/onboardingWizard/filterSupportedTasks';
 import SidebarPanel from 'sentry/components/sidebar/sidebarPanel';
-import {CommonSidebarProps, SidebarPanelKey} from 'sentry/components/sidebar/types';
+import type {CommonSidebarProps} from 'sentry/components/sidebar/types';
+import {SidebarPanelKey} from 'sentry/components/sidebar/types';
 import {withoutPerformanceSupport} from 'sentry/data/platformCategories';
-import platforms from 'sentry/data/platforms';
+import platforms, {otherPlatform} from 'sentry/data/platforms';
 import {t, tct} from 'sentry/locale';
+import ConfigStore from 'sentry/stores/configStore';
 import PageFiltersStore from 'sentry/stores/pageFiltersStore';
+import SidebarPanelStore from 'sentry/stores/sidebarPanelStore';
 import {useLegacyStore} from 'sentry/stores/useLegacyStore';
 import pulsingIndicatorStyles from 'sentry/styles/pulsingIndicator';
 import {space} from 'sentry/styles/space';
-import {Project} from 'sentry/types';
+import type {Project} from 'sentry/types/project';
 import EventWaiter from 'sentry/utils/eventWaiter';
 import useApi from 'sentry/utils/useApi';
+import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import usePrevious from 'sentry/utils/usePrevious';
 import useProjects from 'sentry/utils/useProjects';
 
-import {filterProjects, generateDocKeys, isPlatformSupported} from './utils';
+import {filterProjects} from './utils';
 
-function PerformanceOnboardingSidebar(props: CommonSidebarProps) {
-  const {currentPanel, collapsed, hidePanel, orientation} = props;
-  const isActive = currentPanel === SidebarPanelKey.PERFORMANCE_ONBOARDING;
+function decodeProjectIds(projectIds: unknown): string[] | null {
+  if (Array.isArray(projectIds)) {
+    return projectIds;
+  }
+
+  if (typeof projectIds === 'string') {
+    return [projectIds];
+  }
+
+  return null;
+}
+
+export function usePerformanceOnboardingDrawer() {
   const organization = useOrganization();
+  const currentPanel = useLegacyStore(SidebarPanelStore);
+  const isActive = currentPanel === SidebarPanelKey.PERFORMANCE_ONBOARDING;
+  const hasProjectAccess = organization.access.includes('project:read');
+  const initialPathname = useRef<string | null>(null);
+
+  const {openDrawer} = useDrawer();
+
+  useEffect(() => {
+    if (isActive && hasProjectAccess) {
+      initialPathname.current = window.location.pathname;
+
+      openDrawer(() => <DrawerContent />, {
+        ariaLabel: t('Boost Performance'),
+        // Prevent the drawer from closing when the query params change
+        shouldCloseOnLocationChange: location =>
+          location.pathname !== initialPathname.current,
+      });
+    }
+  }, [isActive, hasProjectAccess, openDrawer]);
+}
+
+function DrawerContent() {
+  useEffect(() => {
+    return () => {
+      SidebarPanelStore.hidePanel();
+    };
+  }, []);
+
+  return <SidebarContent />;
+}
+
+/**
+ * @deprecated Use usePerformanceOnboardingDrawer instead.
+ */
+function LegacyPerformanceOnboardingSidebar(props: CommonSidebarProps) {
+  const {currentPanel, collapsed, hidePanel, orientation} = props;
+  const organization = useOrganization();
+  const isActive = currentPanel === SidebarPanelKey.PERFORMANCE_ONBOARDING;
   const hasProjectAccess = organization.access.includes('project:read');
 
+  if (!isActive || !hasProjectAccess) {
+    return null;
+  }
+
+  return (
+    <TaskSidebarPanel
+      orientation={orientation}
+      collapsed={collapsed}
+      hidePanel={hidePanel}
+    >
+      <SidebarContent />
+    </TaskSidebarPanel>
+  );
+}
+
+function SidebarContent() {
+  const location = useLocation<{project: string[] | null}>();
   const {projects, initiallyLoaded: projectsLoaded} = useProjects();
 
   const [currentProject, setCurrentProject] = useState<Project | undefined>(undefined);
 
-  const {selection, isReady} = useLegacyStore(PageFiltersStore);
+  const {selection} = useLegacyStore(PageFiltersStore);
 
   const {projectsWithoutFirstTransactionEvent, projectsForOnboarding} =
     filterProjects(projects);
+
+  const priorityProjectIds: Set<string> | null = useMemo(() => {
+    const decodedProjectIds = decodeProjectIds(location.query.project);
+    return decodedProjectIds === null ? null : new Set(decodedProjectIds);
+  }, [location.query.project]);
 
   useEffect(() => {
     if (
       currentProject ||
       projects.length === 0 ||
-      !isReady ||
-      !isActive ||
       projectsWithoutFirstTransactionEvent.length <= 0
     ) {
       return;
     }
+
     // Establish current project
+    if (priorityProjectIds) {
+      const projectMap: Record<string, Project> = projects.reduce((acc, project) => {
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+        acc[project.id] = project;
+        return acc;
+      }, {});
 
-    const projectMap: Record<string, Project> = projects.reduce((acc, project) => {
-      acc[project.id] = project;
-      return acc;
-    }, {});
-
-    if (selection.projects.length) {
-      const projectSelection = selection.projects.map(
-        projectId => projectMap[String(projectId)]
-      );
+      const priorityProjects: Project[] = [];
+      priorityProjectIds.forEach(projectId => {
+        priorityProjects.push(projectMap[String(projectId)]!);
+      });
 
       // Among the project selection, find a project that has performance onboarding docs support, and has not sent
       // a first transaction event.
-      const maybeProject = projectSelection.find(project =>
+      const maybeProject = priorityProjects.find(project =>
         projectsForOnboarding.includes(project)
       );
       if (maybeProject) {
@@ -75,7 +155,7 @@ function PerformanceOnboardingSidebar(props: CommonSidebarProps) {
       }
 
       // Among the project selection, find a project that has not sent a first transaction event
-      const maybeProjectFallback = projectSelection.find(project =>
+      const maybeProjectFallback = priorityProjects.find(project =>
         projectsWithoutFirstTransactionEvent.includes(project)
       );
       if (maybeProjectFallback) {
@@ -96,23 +176,26 @@ function PerformanceOnboardingSidebar(props: CommonSidebarProps) {
   }, [
     selection.projects,
     projects,
-    isActive,
-    isReady,
     projectsForOnboarding,
     projectsWithoutFirstTransactionEvent,
     currentProject,
+    priorityProjectIds,
   ]);
 
+  // The panel shouldn't be activated in this case, but if so we'll show a message
+  if (projects?.length > 0 && !shouldShowPerformanceTasks(projects)) {
+    return (
+      <Alert type="info">{t("Performance isn't supported for your projects.")}</Alert>
+    );
+  }
+
   if (
-    !isActive ||
-    !hasProjectAccess ||
     currentProject === undefined ||
     !projectsLoaded ||
     !projects ||
-    projects.length <= 0 ||
-    projectsWithoutFirstTransactionEvent.length <= 0
+    projects.length <= 0
   ) {
-    return null;
+    return <LoadingIndicator />;
   }
 
   const items: MenuItemProps[] = projectsWithoutFirstTransactionEvent.reduce(
@@ -127,7 +210,7 @@ function PerformanceOnboardingSidebar(props: CommonSidebarProps) {
         },
       };
 
-      if (currentProject.id === project.id) {
+      if (priorityProjectIds?.has(String(project.id))) {
         acc.unshift(itemProps);
       } else {
         acc.push(itemProps);
@@ -139,11 +222,7 @@ function PerformanceOnboardingSidebar(props: CommonSidebarProps) {
   );
 
   return (
-    <TaskSidebarPanel
-      orientation={orientation}
-      collapsed={collapsed}
-      hidePanel={hidePanel}
-    >
+    <Fragment>
       <TopRightBackgroundImage src={HighlightTopRightPattern} />
       <TaskList>
         <Heading>{t('Boost Performance')}</Heading>
@@ -162,15 +241,17 @@ function PerformanceOnboardingSidebar(props: CommonSidebarProps) {
         />
         <OnboardingContent currentProject={currentProject} />
       </TaskList>
-    </TaskSidebarPanel>
+    </Fragment>
   );
 }
 
 function OnboardingContent({currentProject}: {currentProject: Project}) {
   const api = useApi();
   const organization = useOrganization();
-  const previousProject = usePrevious(currentProject);
+  const {isSelfHosted, urlPrefix} = useLegacyStore(ConfigStore);
   const [received, setReceived] = useState<boolean>(false);
+
+  const previousProject = usePrevious(currentProject);
 
   useEffect(() => {
     if (previousProject.id !== currentProject.id) {
@@ -182,12 +263,13 @@ function OnboardingContent({currentProject}: {currentProject: Project}) {
     ? platforms.find(p => p.id === currentProject.platform)
     : undefined;
 
-  const docKeys = currentPlatform ? generateDocKeys(currentPlatform.id) : [];
-  const {docContents, isLoading, hasOnboardingContents} = useOnboardingDocs({
-    project: currentProject,
-    docKeys,
-    isPlatformSupported: isPlatformSupported(currentPlatform),
+  const {isLoading, docs, dsn, projectKeyId} = useLoadGettingStarted({
+    platform: currentPlatform || otherPlatform,
+    orgSlug: organization.slug,
+    projSlug: currentProject.slug,
+    productType: 'performance',
   });
+  const performanceDocs = docs?.performanceOnboarding;
 
   if (isLoading) {
     return <LoadingIndicator />;
@@ -207,15 +289,15 @@ function OnboardingContent({currentProject}: {currentProject: Project}) {
           )}
         </div>
         <div>
-          <Button size="sm" href="https://docs.sentry.io/platforms/" external>
+          <LinkButton size="sm" href="https://docs.sentry.io/platforms/" external>
             {t('Go to Sentry Documentation')}
-          </Button>
+          </LinkButton>
         </div>
       </Fragment>
     );
   }
 
-  if (!currentPlatform || !hasOnboardingContents) {
+  if (!currentPlatform || !performanceDocs || !dsn || !projectKeyId) {
     return (
       <Fragment>
         <div>
@@ -225,59 +307,85 @@ function OnboardingContent({currentProject}: {currentProject: Project}) {
           )}
         </div>
         <div>
-          <Button
+          <LinkButton
             size="sm"
             href="https://docs.sentry.io/product/performance/getting-started/"
             external
           >
             {t('Go to documentation')}
-          </Button>
+          </LinkButton>
         </div>
       </Fragment>
     );
   }
 
+  const docParams: DocsParams<any> = {
+    api,
+    projectKeyId,
+    dsn,
+    organization,
+    platformKey: currentProject.platform || 'other',
+    projectId: currentProject.id,
+    projectSlug: currentProject.slug,
+    isFeedbackSelected: false,
+    isPerformanceSelected: true,
+    isProfilingSelected: false,
+    isReplaySelected: false,
+    sourcePackageRegistries: {
+      isLoading: false,
+      data: undefined,
+    },
+    platformOptions: [ProductSolution.PERFORMANCE_MONITORING],
+    newOrg: false,
+    feedbackOptions: {},
+    urlPrefix,
+    isSelfHosted,
+  };
+
+  const steps = [
+    ...performanceDocs.install(docParams),
+    ...performanceDocs.configure(docParams),
+    ...performanceDocs.verify(docParams),
+  ];
+
   return (
     <Fragment>
-      <div>
-        {tct(
-          `Adding Performance to your [platform] project is simple. Make sure you've got these basics down.`,
-          {platform: currentPlatform?.name || currentProject.slug}
-        )}
-      </div>
-      {docKeys.map((docKey, index) => {
-        let footer: React.ReactNode = null;
-
-        if (index === docKeys.length - 1) {
-          footer = (
-            <EventWaiter
-              api={api}
-              organization={organization}
-              project={currentProject}
-              eventType="transaction"
-              onIssueReceived={() => {
-                setReceived(true);
-              }}
-            >
-              {() => (received ? <EventReceivedIndicator /> : <EventWaitingIndicator />)}
-            </EventWaiter>
-          );
-        }
-        return (
-          <div key={index}>
-            <OnboardingStep
-              docContent={docContents[docKey]}
-              docKey={docKey}
-              prefix="perf"
-              project={currentProject}
-            />
-            {footer}
-          </div>
-        );
-      })}
+      {performanceDocs.introduction && (
+        <Introduction>{performanceDocs.introduction(docParams)}</Introduction>
+      )}
+      <Steps>
+        {steps.map(step => {
+          return <Step key={step.title ?? step.type} {...step} />;
+        })}
+      </Steps>
+      <EventWaiter
+        api={api}
+        organization={organization}
+        project={currentProject}
+        eventType="transaction"
+        onIssueReceived={() => {
+          setReceived(true);
+        }}
+      >
+        {() => (received ? <EventReceivedIndicator /> : <EventWaitingIndicator />)}
+      </EventWaiter>
     </Fragment>
   );
 }
+
+const Steps = styled('div')`
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-bottom: ${space(1)};
+`;
+
+const Introduction = styled('div')`
+  display: flex;
+  flex-direction: column;
+  margin-top: ${space(2)};
+  margin-bottom: ${space(2)};
+`;
 
 const TaskSidebarPanel = styled(SidebarPanel)`
   width: 450px;
@@ -304,7 +412,7 @@ const Heading = styled('div')`
   color: ${p => p.theme.activeText};
   font-size: ${p => p.theme.fontSizeExtraSmall};
   text-transform: uppercase;
-  font-weight: 600;
+  font-weight: ${p => p.theme.fontWeightBold};
   line-height: 1;
   margin-top: ${space(3)};
 `;
@@ -346,4 +454,4 @@ const EventReceivedIndicator = styled((p: React.HTMLAttributes<HTMLDivElement>) 
   color: ${p => p.theme.successText};
 `;
 
-export default PerformanceOnboardingSidebar;
+export default LegacyPerformanceOnboardingSidebar;

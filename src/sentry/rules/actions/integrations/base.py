@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import abc
-from typing import List
-
-from django import forms
 
 from sentry import analytics
 from sentry.eventstore.models import GroupEvent
-from sentry.models.organization import OrganizationStatus
-from sentry.models.rule import Rule
-from sentry.rules.actions import EventAction
-from sentry.services.hybrid_cloud.integration import (
+from sentry.integrations.services.integration import (
     RpcIntegration,
     RpcOrganizationIntegration,
     integration_service,
 )
+from sentry.models.organization import OrganizationStatus
+from sentry.models.rule import Rule
+from sentry.rules.actions import EventAction
 
 INTEGRATION_KEY = "integration"
 
@@ -50,7 +47,7 @@ class IntegrationEventAction(EventAction, abc.ABC):
         _name: str = integration.name
         return _name
 
-    def get_integrations(self) -> List[RpcIntegration]:
+    def get_integrations(self) -> list[RpcIntegration]:
         return integration_service.get_integrations(
             organization_id=self.project.organization_id,
             status=OrganizationStatus.ACTIVE,
@@ -83,9 +80,6 @@ class IntegrationEventAction(EventAction, abc.ABC):
         return integration_service.get_organization_integration(
             integration_id=self.get_integration_id(), organization_id=self.project.organization_id
         )
-
-    def get_form_instance(self) -> forms.Form:
-        return self.form_cls(self.data, integrations=self.get_integrations())
 
     def record_notification_sent(
         self,

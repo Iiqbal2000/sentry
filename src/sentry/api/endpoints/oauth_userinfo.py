@@ -3,11 +3,12 @@ from rest_framework.authentication import get_authorization_header
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import Endpoint, control_silo_endpoint
 from sentry.api.exceptions import ParameterValidationError, ResourceDoesNotExist, SentryAPIException
 from sentry.models.apitoken import ApiToken
-from sentry.models.useremail import UserEmail
+from sentry.users.models.useremail import UserEmail
 
 
 class InsufficientScopesError(SentryAPIException):
@@ -19,8 +20,9 @@ class InsufficientScopesError(SentryAPIException):
 @control_silo_endpoint
 class OAuthUserInfoEndpoint(Endpoint):
     publish_status = {
-        "GET": ApiPublishStatus.UNKNOWN,
+        "GET": ApiPublishStatus.PRIVATE,
     }
+    owner = ApiOwner.ENTERPRISE
     authentication_classes = ()
     permission_classes = ()
 
@@ -39,7 +41,7 @@ class OAuthUserInfoEndpoint(Endpoint):
             raise InsufficientScopesError
 
         user = token_details.user
-        user_output = {"sub": user.id}
+        user_output: dict[str, object] = {"sub": user.id}
         if "profile" in scopes:
             profile_details = {
                 "name": user.name,

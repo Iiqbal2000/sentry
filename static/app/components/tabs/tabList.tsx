@@ -1,39 +1,52 @@
 import {useContext, useEffect, useMemo, useRef, useState} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {AriaTabListOptions, useTabList} from '@react-aria/tabs';
+import type {AriaTabListOptions} from '@react-aria/tabs';
+import {useTabList} from '@react-aria/tabs';
 import {useCollection} from '@react-stately/collections';
 import {ListCollection} from '@react-stately/list';
-import {TabListStateOptions, useTabListState} from '@react-stately/tabs';
-import {Node, Orientation} from '@react-types/shared';
+import type {TabListStateOptions} from '@react-stately/tabs';
+import {useTabListState} from '@react-stately/tabs';
+import type {Node, Orientation} from '@react-types/shared';
 
-import {CompactSelect, SelectOption} from 'sentry/components/compactSelect';
+import type {SelectOption} from 'sentry/components/compactSelect';
+import {CompactSelect} from 'sentry/components/compactSelect';
 import DropdownButton from 'sentry/components/dropdownButton';
 import {IconEllipsis} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
+import {useNavigate} from 'sentry/utils/useNavigate';
 
 import {TabsContext} from './index';
-import {Item, TabListItemProps} from './item';
-import {Tab} from './tab';
+import type {TabListItemProps} from './item';
+import {Item} from './item';
+import {type BaseTabProps, Tab} from './tab';
 import {tabsShouldForwardProp} from './utils';
 
 /**
  * Uses IntersectionObserver API to detect overflowing tabs. Returns an array
  * containing of keys of overflowing tabs.
  */
-function useOverflowTabs({
+export function useOverflowTabs({
   tabListRef,
   tabItemsRef,
   tabItems,
+  disabled,
 }: {
+  /**
+   * Prevent tabs from being put in the overflow menu.
+   */
+  disabled: boolean | undefined;
   tabItems: TabListItemProps[];
-  tabItemsRef: React.RefObject<Record<React.Key, HTMLLIElement | null>>;
+  tabItemsRef: React.RefObject<Record<string | number, HTMLLIElement | null>>;
   tabListRef: React.RefObject<HTMLUListElement>;
 }) {
-  const [overflowTabs, setOverflowTabs] = useState<React.Key[]>([]);
+  const [overflowTabs, setOverflowTabs] = useState<Array<string | number>>([]);
 
   useEffect(() => {
+    if (disabled) {
+      return () => {};
+    }
+
     const options = {
       root: tabListRef.current,
       // Nagative right margin to account for overflow menu's trigger button
@@ -66,7 +79,7 @@ function useOverflowTabs({
     );
 
     return () => observer.disconnect();
-  }, [tabListRef, tabItemsRef]);
+  }, [tabListRef, tabItemsRef, disabled]);
 
   const tabItemKeyToHiddenMap = tabItems.reduce(
     (acc, next) => ({
@@ -78,7 +91,34 @@ function useOverflowTabs({
 
   // Tabs that are hidden will be rendered with display: none so won't intersect,
   // but we don't want to show them in the overflow menu
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   return overflowTabs.filter(tabKey => !tabItemKeyToHiddenMap[tabKey]);
+}
+
+export function OverflowMenu({state, overflowMenuItems, disabled}: any) {
+  return (
+    <TabListOverflowWrap>
+      <CompactSelect
+        options={overflowMenuItems}
+        value={[...state.selectionManager.selectedKeys][0]}
+        onChange={opt => state.setSelectedKey(opt.value)}
+        disabled={disabled}
+        position="bottom-end"
+        size="sm"
+        offset={4}
+        trigger={triggerProps => (
+          <OverflowMenuTrigger
+            {...triggerProps}
+            size="sm"
+            borderless
+            showChevron={false}
+            icon={<IconEllipsis />}
+            aria-label={t('More tabs')}
+          />
+        )}
+      />
+    </TabListOverflowWrap>
+  );
 }
 
 export interface TabListProps
@@ -87,18 +127,22 @@ export interface TabListProps
   className?: string;
   hideBorder?: boolean;
   outerWrapStyles?: React.CSSProperties;
+  variant?: BaseTabProps['variant'];
 }
 
 interface BaseTabListProps extends TabListProps {
   items: TabListItemProps[];
+  variant?: BaseTabProps['variant'];
 }
 
 function BaseTabList({
   hideBorder = false,
   className,
   outerWrapStyles,
+  variant = 'flat',
   ...props
 }: BaseTabListProps) {
+  const navigate = useNavigate();
   const tabListRef = useRef<HTMLUListElement>(null);
   const {rootProps, setTabListState} = useContext(TabsContext);
   const {
@@ -108,6 +152,7 @@ function BaseTabList({
     disabled,
     orientation = 'horizontal',
     keyboardActivation = 'manual',
+    disableOverflow,
     ...otherRootProps
   } = rootProps;
 
@@ -115,7 +160,7 @@ function BaseTabList({
   const ariaProps = {
     selectedKey: value,
     defaultSelectedKey: defaultValue,
-    onSelectionChange: key => {
+    onSelectionChange: (key: any) => {
       onChange?.(key);
 
       // If the newly selected tab is a tab link, then navigate to the specified link
@@ -123,7 +168,7 @@ function BaseTabList({
       if (!linkTo) {
         return;
       }
-      browserHistory.push(linkTo);
+      navigate(linkTo);
     },
     isDisabled: disabled,
     keyboardActivation,
@@ -139,11 +184,12 @@ function BaseTabList({
   }, [state.disabledKeys, state.selectedItem, state.selectedKey, props.children]);
 
   // Detect tabs that overflow from the wrapper and put them in an overflow menu
-  const tabItemsRef = useRef<Record<React.Key, HTMLLIElement | null>>({});
+  const tabItemsRef = useRef<Record<string | number, HTMLLIElement | null>>({});
   const overflowTabs = useOverflowTabs({
     tabListRef,
     tabItemsRef,
     tabItems: props.items,
+    disabled: disableOverflow,
   });
 
   const overflowMenuItems = useMemo(() => {
@@ -153,7 +199,7 @@ function BaseTabList({
       (a, b) => sortedKeys.indexOf(a) - sortedKeys.indexOf(b)
     );
 
-    return sortedOverflowTabs.flatMap<SelectOption<React.Key>>(key => {
+    return sortedOverflowTabs.flatMap<SelectOption<string | number>>(key => {
       const item = state.collection.getItem(key);
 
       if (!item) {
@@ -177,6 +223,7 @@ function BaseTabList({
         hideBorder={hideBorder}
         className={className}
         ref={tabListRef}
+        variant={variant}
       >
         {[...state.collection].map(item => (
           <Tab
@@ -186,32 +233,17 @@ function BaseTabList({
             orientation={orientation}
             overflowing={orientation === 'horizontal' && overflowTabs.includes(item.key)}
             ref={element => (tabItemsRef.current[item.key] = element)}
+            variant={variant}
           />
         ))}
       </TabListWrap>
 
       {orientation === 'horizontal' && overflowMenuItems.length > 0 && (
-        <TabListOverflowWrap>
-          <CompactSelect
-            options={overflowMenuItems}
-            value={[...state.selectionManager.selectedKeys][0]}
-            onChange={opt => state.setSelectedKey(opt.value)}
-            disabled={disabled}
-            position="bottom-end"
-            size="sm"
-            offset={4}
-            trigger={triggerProps => (
-              <OverflowMenuTrigger
-                {...triggerProps}
-                size="sm"
-                borderless
-                showChevron={false}
-                icon={<IconEllipsis />}
-                aria-label={t('More tabs')}
-              />
-            )}
-          />
-        </TabListOverflowWrap>
+        <OverflowMenu
+          state={state}
+          overflowMenuItems={overflowMenuItems}
+          disabled={disabled}
+        />
       )}
     </TabListOuterWrap>
   );
@@ -220,10 +252,10 @@ function BaseTabList({
 const collectionFactory = (nodes: Iterable<Node<any>>) => new ListCollection(nodes);
 
 /**
- * To be used as a direct child of the <Tabs /> component. See example usage
+ * To be used as a direct child of the `<Tabs />` component. See example usage
  * in tabs.stories.js
  */
-export function TabList({items, ...props}: TabListProps) {
+export function TabList({items, variant, ...props}: TabListProps) {
   /**
    * Initial, unfiltered list of tab items.
    */
@@ -244,8 +276,13 @@ export function TabList({items, ...props}: TabListProps) {
   );
 
   return (
-    <BaseTabList items={parsedItems} disabledKeys={disabledKeys} {...props}>
-      {item => <Item {...item} />}
+    <BaseTabList
+      items={parsedItems}
+      disabledKeys={disabledKeys}
+      variant={variant}
+      {...props}
+    >
+      {item => <Item {...item} key={item.key} />}
     </BaseTabList>
   );
 }
@@ -259,6 +296,7 @@ const TabListOuterWrap = styled('div')`
 const TabListWrap = styled('ul', {shouldForwardProp: tabsShouldForwardProp})<{
   hideBorder: boolean;
   orientation: Orientation;
+  variant: BaseTabProps['variant'];
 }>`
   position: relative;
   display: grid;
@@ -272,7 +310,7 @@ const TabListWrap = styled('ul', {shouldForwardProp: tabsShouldForwardProp})<{
       ? `
         grid-auto-flow: column;
         justify-content: start;
-        gap: ${space(2)};
+        gap: ${p.variant === 'filled' || p.variant === 'floating' ? 0 : space(2)};
         ${!p.hideBorder && `border-bottom: solid 1px ${p.theme.border};`}
       `
       : `

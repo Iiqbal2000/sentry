@@ -63,7 +63,7 @@ const options: NonNullable<
 ];
 
 describe('SearchBarAction', () => {
-  let handleFilter;
+  let handleFilter!: jest.Mock;
 
   beforeEach(() => {
     handleFilter = jest.fn();
@@ -98,7 +98,7 @@ describe('SearchBarAction', () => {
     expect(screen.getAllByText('Error')[1]).toBeInTheDocument();
   });
 
-  it('Without Options', () => {
+  it('Without Options', async () => {
     render(
       <SearchBarAction
         filterOptions={[]}
@@ -109,12 +109,13 @@ describe('SearchBarAction', () => {
       />
     );
 
+    expect(await screen.findByTestId('input-trailing-items')).toBeInTheDocument();
     expect(screen.queryByText('Types')).not.toBeInTheDocument();
     expect(screen.queryByText('Levels')).not.toBeInTheDocument();
   });
 
   it('With Option Type only', async () => {
-    const typeOptions = options[0];
+    const typeOptions = options[0]!;
     render(
       <SearchBarAction
         filterOptions={[typeOptions]}
@@ -150,7 +151,7 @@ describe('SearchBarAction', () => {
   });
 
   it('With Option Level only', async () => {
-    const levelOptions = options[1];
+    const levelOptions = options[1]!;
     render(
       <SearchBarAction
         filterOptions={[levelOptions]}

@@ -1,5 +1,6 @@
 import {trimPackage} from 'sentry/components/events/interfaces/frame/utils';
-import {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import type {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import type {ProfilingFormatterUnit} from 'sentry/utils/profiling/units/units';
 
 import {Profile} from './profile/profile';
 import {SampledProfile} from './profile/sampledProfile';
@@ -12,8 +13,8 @@ function sortByTotalWeight(a: CallTreeNode, b: CallTreeNode) {
   return b.totalWeight - a.totalWeight;
 }
 
-function sortAlphabetically(a: CallTreeNode, b: CallTreeNode) {
-  return a.frame.name.localeCompare(b.frame.name);
+export function sortFlamegraphAlphabetically(a: CallTreeNode, b: CallTreeNode) {
+  return (a.frame.name + a.frame.file).localeCompare(b.frame.name + b.frame.file);
 }
 
 function makeTreeSort(sortFn: (a: CallTreeNode, b: CallTreeNode) => number) {
@@ -25,22 +26,21 @@ function makeTreeSort(sortFn: (a: CallTreeNode, b: CallTreeNode) => number) {
 
       next.children.sort(sortFn);
 
-      for (let i = 0; i < next.children.length; i++) {
-        queue.push(next.children[i]);
+      for (const child of next.children) {
+        queue.push(child);
       }
     }
   };
 }
 
-const alphabeticTreeSort = makeTreeSort(sortAlphabetically);
+const alphabeticTreeSort = makeTreeSort(sortFlamegraphAlphabetically);
 const leftHeavyTreeSort = makeTreeSort(sortByTotalWeight);
 
 export class Flamegraph {
   profile: Profile;
-  frames: ReadonlyArray<FlamegraphFrame> = [];
-  profileIndex: number;
+  frames: readonly FlamegraphFrame[] = [];
 
-  inverted: boolean = false;
+  inverted = false;
   sort: 'left heavy' | 'alphabetical' | 'call order' = 'call order';
 
   depth = 0;
@@ -56,18 +56,19 @@ export class Flamegraph {
     children: [],
   };
 
+  unit: ProfilingFormatterUnit;
   formatter: (value: number) => string;
   timelineFormatter: (value: number) => string;
 
   static Empty(): Flamegraph {
-    return new Flamegraph(Profile.Empty, 0, {
+    return new Flamegraph(Profile.Empty, {
       inverted: false,
       sort: 'call order',
     });
   }
 
   static Example(): Flamegraph {
-    return new Flamegraph(SampledProfile.Example, 0, {
+    return new Flamegraph(SampledProfile.Example, {
       inverted: false,
       sort: 'call order',
     });
@@ -83,7 +84,7 @@ export class Flamegraph {
       sort?: Flamegraph['sort'];
     }
   ): Flamegraph {
-    return new Flamegraph(from.profile, from.profileIndex, {
+    return new Flamegraph(from.profile, {
       inverted,
       sort,
     });
@@ -91,7 +92,6 @@ export class Flamegraph {
 
   constructor(
     profile: Profile,
-    profileIndex: number,
     {
       inverted = false,
       sort = 'call order',
@@ -107,7 +107,6 @@ export class Flamegraph {
 
     // @TODO check if we can get rid of this profile reference
     this.profile = profile;
-    this.profileIndex = profileIndex;
 
     // If a custom config space is provided, use it and draw the chart in it
     switch (this.sort) {
@@ -131,6 +130,7 @@ export class Flamegraph {
         throw new TypeError(`Unknown flamechart sort type: ${this.sort}`);
     }
 
+    this.unit = profile.unit;
     this.formatter = makeFormatter(profile.unit);
     this.timelineFormatter = makeTimelineFormatter(profile.unit);
 
@@ -140,6 +140,10 @@ export class Flamegraph {
     );
 
     this.root.node.totalWeight += weight;
+    this.root.node.aggregate_duration_ns = this.root.children.reduce(
+      (acc, frame) => acc + frame.node.aggregate_duration_ns,
+      0
+    );
     this.root.end = this.root.start + weight;
     this.root.frame.totalWeight += weight;
 
@@ -156,10 +160,10 @@ export class Flamegraph {
         this.profile.unit === 'nanoseconds'
           ? 1e9
           : this.profile.unit === 'microseconds'
-          ? 1e6
-          : this.profile.unit === 'milliseconds'
-          ? 1e3
-          : 1;
+            ? 1e6
+            : this.profile.unit === 'milliseconds'
+              ? 1e3
+              : 1;
     }
 
     this.configSpace = new Rect(0, 0, width, this.depth);
@@ -303,7 +307,7 @@ export class Flamegraph {
 
   findAllMatchingFramesBy(
     query: string,
-    fields: (keyof FlamegraphFrame['frame'])[]
+    fields: Array<keyof FlamegraphFrame['frame']>
   ): FlamegraphFrame[] {
     const matches: FlamegraphFrame[] = [];
     if (!fields.length) {
@@ -311,18 +315,18 @@ export class Flamegraph {
     }
 
     if (fields.length === 1) {
-      for (let i = 0; i < this.frames.length; i++) {
-        if (this.frames[i].frame[fields[0]] === query) {
-          matches.push(this.frames[i]);
+      for (const item of this.frames) {
+        if (item.frame[fields[0]!] === query) {
+          matches.push(item);
         }
       }
       return matches;
     }
 
-    for (let i = 0; i < this.frames.length; i++) {
+    for (const item of this.frames) {
       for (let j = fields.length; j--; ) {
-        if (this.frames[i].frame[fields[j]] === query) {
-          matches.push(this.frames[i]);
+        if (item.frame[fields[j]!] === query) {
+          matches.push(item);
         }
       }
     }
@@ -335,15 +339,15 @@ export class Flamegraph {
 
     const matches: FlamegraphFrame[] = [];
 
-    for (let i = 0; i < this.frames.length; i++) {
+    for (const item of this.frames) {
       if (
-        this.frames[i].frame.name === frameName &&
+        item.frame.name === frameName &&
         // the framePackage can match either the package or the module
         // this is an artifact of how we previously used image
-        (tryTrimPackage(this.frames[i].frame.package) === framePackage ||
-          this.frames[i].frame.module === framePackage)
+        (tryTrimPackage(item.frame.package) === framePackage ||
+          item.frame.module === framePackage)
       ) {
-        matches.push(this.frames[i]);
+        matches.push(item);
       }
     }
 

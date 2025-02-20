@@ -2,7 +2,7 @@ import PanelAlert from 'sentry/components/panels/panelAlert';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconInfo} from 'sentry/icons';
 import {tct} from 'sentry/locale';
-import {OrgRole, TeamRole} from 'sentry/types';
+import type {OrgRole, TeamRole} from 'sentry/types/organization';
 
 type Props = {
   orgRole: OrgRole['id'] | undefined;
@@ -31,7 +31,7 @@ export function RoleOverwritePanelAlert(props: Props) {
   }
 
   return (
-    <PanelAlert data-test-id="alert-role-overwrite">
+    <PanelAlert data-test-id="alert-role-overwrite" type="info">
       {getOverwriteString(props)}
     </PanelAlert>
   );
@@ -64,7 +64,7 @@ export function getOverwriteString(props: Props) {
     {
       selfNoun: isSelf ? 'Your' : "This user's",
       selfPronoun: isSelf ? 'you' : 'them',
-      article: 'AEIOU'.includes(orgRoleObj.name[0]) ? 'an' : 'a',
+      article: 'AEIOU'.includes(orgRoleObj.name[0]!) ? 'an' : 'a',
       orgRole: <strong>{orgRoleObj.name}</strong>,
       teamRole: <strong>{teamRoleObj.name}</strong>,
     }

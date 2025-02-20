@@ -1,18 +1,31 @@
-import {render, screen} from 'sentry-test/reactTestingLibrary';
+import {renderWithOnboardingLayout} from 'sentry-test/onboarding/renderWithOnboardingLayout';
+import {screen} from 'sentry-test/reactTestingLibrary';
+import {textWithMarkupMatcher} from 'sentry-test/utils';
 
-import {StepTitle} from 'sentry/components/onboarding/gettingStartedDoc/step';
+import {ProductSolution} from 'sentry/components/onboarding/gettingStartedDoc/types';
 
-import {GettingStartedWithIris, steps} from './iris';
+import docs from './iris';
 
-describe('GettingStartedWithIris', function () {
-  it('renders doc correctly', function () {
-    render(<GettingStartedWithIris dsn="test-dsn" projectSlug="test-project" />);
+describe('iris onboarding docs', function () {
+  it('renders errors onboarding docs correctly', function () {
+    renderWithOnboardingLayout(docs);
 
-    // Steps
-    for (const step of steps()) {
-      expect(
-        screen.getByRole('heading', {name: step.title ?? StepTitle[step.type]})
-      ).toBeInTheDocument();
+    // Renders main headings
+    expect(screen.getByRole('heading', {name: 'Install'})).toBeInTheDocument();
+    expect(screen.getByRole('heading', {name: 'Configure SDK'})).toBeInTheDocument();
+    expect(screen.getByRole('heading', {name: 'Usage'})).toBeInTheDocument();
+  });
+
+  it('renders performance onboarding docs correctly', async function () {
+    renderWithOnboardingLayout(docs, {
+      selectedProducts: [ProductSolution.PERFORMANCE_MONITORING],
+    });
+
+    const elements = await screen.findAllByText(
+      textWithMarkupMatcher(/TracesSampleRate/)
+    );
+    for (const element of elements) {
+      expect(element).toBeInTheDocument();
     }
   });
 });

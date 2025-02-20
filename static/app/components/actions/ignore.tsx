@@ -6,18 +6,15 @@ import ButtonBar from 'sentry/components/buttonBar';
 import {openConfirmModal} from 'sentry/components/confirm';
 import CustomIgnoreCountModal from 'sentry/components/customIgnoreCountModal';
 import CustomIgnoreDurationModal from 'sentry/components/customIgnoreDurationModal';
-import {DropdownMenu, MenuItemProps} from 'sentry/components/dropdownMenu';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconChevron} from 'sentry/icons';
 import {t, tn} from 'sentry/locale';
-import {
-  GroupStatus,
-  GroupStatusResolution,
-  GroupSubstatus,
-  IgnoredStatusDetails,
-  SelectValue,
-} from 'sentry/types';
-import {getDuration} from 'sentry/utils/formatters';
+import type {SelectValue} from 'sentry/types/core';
+import type {GroupStatusResolution, IgnoredStatusDetails} from 'sentry/types/group';
+import {GroupStatus, GroupSubstatus} from 'sentry/types/group';
+import getDuration from 'sentry/utils/duration/getDuration';
 
 const ONE_HOUR = 60;
 
@@ -34,7 +31,7 @@ const IGNORE_DURATIONS = [
 
 const IGNORE_COUNTS = [1, 10, 100, 1000, 10000, 100000];
 
-const IGNORE_WINDOWS: SelectValue<number>[] = [
+const IGNORE_WINDOWS: Array<SelectValue<number>> = [
   {value: ONE_HOUR, label: t('per hour')},
   {value: ONE_HOUR * 24, label: t('per day')},
   {value: ONE_HOUR * 24 * 7, label: t('per week')},
@@ -269,7 +266,7 @@ function IgnoreActions({
             {...triggerProps}
             aria-label={t('Ignore options')}
             size={size}
-            icon={<IconChevron direction="down" size="xs" />}
+            icon={<IconChevron direction="down" />}
             disabled={disabled}
           />
         )}
@@ -285,11 +282,11 @@ export default IgnoreActions;
 
 const IgnoreButton = styled(Button)`
   box-shadow: none;
-  border-radius: ${p => p.theme.borderRadiusLeft};
+  border-radius: ${p => p.theme.borderRadius} 0 0 ${p => p.theme.borderRadius};
 `;
 
 const DropdownTrigger = styled(Button)`
   box-shadow: none;
-  border-radius: ${p => p.theme.borderRadiusRight};
+  border-radius: 0 ${p => p.theme.borderRadius} ${p => p.theme.borderRadius} 0;
   border-left: none;
 `;

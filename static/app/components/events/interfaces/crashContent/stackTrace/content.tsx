@@ -1,17 +1,19 @@
 import {cloneElement, Fragment, useState} from 'react';
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import GuideAnchor from 'sentry/components/assistant/guideAnchor';
-import {FrameSourceMapDebuggerData} from 'sentry/components/events/interfaces/sourceMapsDebuggerModal';
+import type {FrameSourceMapDebuggerData} from 'sentry/components/events/interfaces/sourceMapsDebuggerModal';
 import Panel from 'sentry/components/panels/panel';
 import {t} from 'sentry/locale';
-import {Frame, Organization, PlatformKey} from 'sentry/types';
-import {Event} from 'sentry/types/event';
-import {StackTraceMechanism, StacktraceType} from 'sentry/types/stacktrace';
+import type {Event, Frame} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
+import type {PlatformKey} from 'sentry/types/project';
+import type {StackTraceMechanism, StacktraceType} from 'sentry/types/stacktrace';
 import {defined} from 'sentry/utils';
 import withOrganization from 'sentry/utils/withOrganization';
 
-import DeprecatedLine, {DeprecatedLineProps} from '../../frame/deprecatedLine';
+import type {DeprecatedLineProps} from '../../frame/deprecatedLine';
+import DeprecatedLine from '../../frame/deprecatedLine';
 import {
   findImageForAddress,
   getHiddenFrameIndices,
@@ -37,6 +39,7 @@ type Props = {
   hideIcon?: boolean;
   hideSourceMapDebugger?: boolean;
   isHoverPreviewed?: boolean;
+  isStackTracePreview?: boolean;
   lockAddress?: string;
   maxDepth?: number;
   mechanism?: StackTraceMechanism | null;
@@ -74,16 +77,16 @@ function Content({
     return (
       includeSystemFrames ||
       frame.inApp ||
-      (nextFrame && nextFrame.inApp) ||
+      nextFrame?.inApp ||
       // the last non-app frame
       (!frame.inApp && !nextFrame)
     );
   }
 
   function setInitialFrameMap(): {[frameIndex: number]: boolean} {
-    const indexMap = {};
+    const indexMap: Record<string, boolean> = {};
     (data.frames ?? []).forEach((frame, frameIdx) => {
-      const nextFrame = (data.frames ?? [])[frameIdx + 1];
+      const nextFrame = (data.frames ?? [])[frameIdx + 1]!;
       const repeatedFrame = isRepeatedFrame(frame, nextFrame);
       if (frameIsVisible(frame, nextFrame) && !repeatedFrame && !frame.inApp) {
         indexMap[frameIdx] = false;
@@ -94,9 +97,9 @@ function Content({
 
   function getInitialFrameCounts(): {[frameIndex: number]: number} {
     let count = 0;
-    const countMap = {};
+    const countMap: Record<string, number> = {};
     (data.frames ?? []).forEach((frame, frameIdx) => {
-      const nextFrame = (data.frames ?? [])[frameIdx + 1];
+      const nextFrame = (data.frames ?? [])[frameIdx + 1]!;
       const repeatedFrame = isRepeatedFrame(frame, nextFrame);
       if (frameIsVisible(frame, nextFrame) && !repeatedFrame && !frame.inApp) {
         countMap[frameIdx] = count;
@@ -115,8 +118,8 @@ function Content({
       return false;
     }
 
-    const lastFrame = frames[frames.length - 1];
-    const penultimateFrame = frames[frames.length - 2];
+    const lastFrame = frames[frames.length - 1]!;
+    const penultimateFrame = frames[frames.length - 2]!;
 
     return penultimateFrame.inApp && !lastFrame.inApp;
   }
@@ -144,12 +147,8 @@ function Content({
   };
 
   function renderOmittedFrames(firstFrameOmitted: any, lastFrameOmitted: any) {
-    const props = {
-      className: 'frame frames-omitted',
-      key: 'omitted',
-    };
     return (
-      <li {...props}>
+      <li key="omitted" className="frame frames-omitted">
         {t(
           'Frames %d until %d were omitted and not available.',
           firstFrameOmitted,
@@ -202,7 +201,7 @@ function Content({
   let convertedFrames = frames
     .map((frame, frameIndex) => {
       const prevFrame = frames[frameIndex - 1];
-      const nextFrame = frames[frameIndex + 1];
+      const nextFrame = frames[frameIndex + 1]!;
       const repeatedFrame = isRepeatedFrame(frame, nextFrame);
 
       if (repeatedFrame) {
@@ -213,7 +212,7 @@ function Content({
         (frameIsVisible(frame, nextFrame) && !repeatedFrame) ||
         hiddenFrameIndices.includes(frameIndex)
       ) {
-        const frameProps: DeprecatedLineProps = {
+        const frameProps: Omit<DeprecatedLineProps, 'config'> = {
           event,
           data: frame,
           isExpanded: expandFirstFrame && lastFrameIndex === frameIndex,
@@ -281,7 +280,7 @@ function Content({
 
   if (convertedFrames.length > 0 && registers) {
     const lastFrame = convertedFrames.length - 1;
-    convertedFrames[lastFrame] = cloneElement(convertedFrames[lastFrame], {
+    convertedFrames[lastFrame] = cloneElement(convertedFrames[lastFrame]!, {
       registers,
     });
   }
@@ -297,20 +296,37 @@ function Content({
   const platformIcon = stackTracePlatformIcon(platform, data.frames ?? []);
 
   return (
-    <Wrapper className={wrapperClassName} data-test-id="stack-trace-content">
-      {!hideIcon && <StacktracePlatformIcon platform={platformIcon} />}
-      <GuideAnchor target="stack_trace">
+    <Wrapper>
+      {hideIcon ? null : <StacktracePlatformIcon platform={platformIcon} />}
+      <StackTraceContentPanel
+        className={wrapperClassName}
+        data-test-id="stack-trace-content"
+        hideIcon={hideIcon}
+      >
         <StyledList data-test-id="frames">
           {!newestFirst ? convertedFrames : [...convertedFrames].reverse()}
         </StyledList>
-      </GuideAnchor>
+      </StackTraceContentPanel>
     </Wrapper>
   );
 }
 
-const Wrapper = styled(Panel)`
+const Wrapper = styled('div')`
   position: relative;
-  border-top-left-radius: 0;
+`;
+
+export const StackTraceContentPanel = styled(Panel)<{hideIcon?: boolean}>`
+  position: relative;
+  overflow: hidden;
+
+  ${p =>
+    !p.hideIcon &&
+    css`
+      border-top-left-radius: 0;
+      @media (max-width: ${p.theme.breakpoints.medium}) {
+        border-top-left-radius: ${p.theme.borderRadius};
+      }
+    `}
 `;
 
 const StyledList = styled('ul')`

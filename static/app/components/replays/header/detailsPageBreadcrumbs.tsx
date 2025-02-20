@@ -1,22 +1,23 @@
 import {Fragment} from 'react';
 
-import Breadcrumbs from 'sentry/components/breadcrumbs';
+import {Breadcrumbs} from 'sentry/components/breadcrumbs';
 import ProjectBadge from 'sentry/components/idBadge/projectBadge';
-import HeaderPlaceholder from 'sentry/components/replays/header/headerPlaceholder';
+import Placeholder from 'sentry/components/placeholder';
 import {t} from 'sentry/locale';
 import EventView from 'sentry/utils/discover/eventView';
 import {getShortEventId} from 'sentry/utils/events';
 import {useLocation} from 'sentry/utils/useLocation';
+import useOrganization from 'sentry/utils/useOrganization';
 import useProjects from 'sentry/utils/useProjects';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
+import {makeReplaysPathname} from 'sentry/views/replays/pathnames';
 import type {ReplayRecord} from 'sentry/views/replays/types';
 
 type Props = {
-  orgSlug: string;
   replayRecord: ReplayRecord | undefined;
 };
 
-function DetailsPageBreadcrumbs({orgSlug, replayRecord}: Props) {
+function DetailsPageBreadcrumbs({replayRecord}: Props) {
+  const organization = useOrganization();
   const location = useLocation();
   const eventView = EventView.fromLocation(location);
 
@@ -26,7 +27,7 @@ function DetailsPageBreadcrumbs({orgSlug, replayRecord}: Props) {
   const labelTitle = replayRecord ? (
     <Fragment>{getShortEventId(replayRecord?.id)}</Fragment>
   ) : (
-    <HeaderPlaceholder width="100%" height="16px" />
+    <Placeholder width="100%" height="16px" />
   );
 
   return (
@@ -34,14 +35,20 @@ function DetailsPageBreadcrumbs({orgSlug, replayRecord}: Props) {
       crumbs={[
         {
           to: {
-            pathname: normalizeUrl(`/organizations/${orgSlug}/replays/`),
+            pathname: makeReplaysPathname({
+              path: '/',
+              organization,
+            }),
             query: eventView.generateQueryStringObject(),
           },
           label: t('Session Replay'),
         },
         {
           to: {
-            pathname: normalizeUrl(`/organizations/${orgSlug}/replays/`),
+            pathname: makeReplaysPathname({
+              path: '/',
+              organization,
+            }),
             query: {
               ...eventView.generateQueryStringObject(),
               project: replayRecord?.project_id,

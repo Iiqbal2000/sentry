@@ -1,3 +1,5 @@
+import {ProjectFixture} from 'sentry-fixture/project';
+
 import {render} from 'sentry-test/reactTestingLibrary';
 
 import IntervalSelector from 'sentry/components/charts/intervalSelector';
@@ -5,13 +7,13 @@ import EventView from 'sentry/utils/discover/eventView';
 import {DisplayModes} from 'sentry/utils/discover/types';
 
 describe('IntervalSelector', function () {
-  const project = TestStubs.Project();
+  const project = ProjectFixture();
   const eventView = EventView.fromSavedQuery({
     id: '',
     name: 'test query',
     version: 2,
     fields: ['transaction', 'count()'],
-    projects: [project.id],
+    projects: [parseInt(project.id, 10)],
   });
   it('resets small interval', function () {
     let interval: string | undefined = '1s';
@@ -27,7 +29,7 @@ describe('IntervalSelector', function () {
       />
     );
     render(intervalSelector);
-    expect(interval).toEqual('4h');
+    expect(interval).toBe('4h');
   });
   it('resets large interval', function () {
     eventView.interval = '1h';
@@ -40,7 +42,7 @@ describe('IntervalSelector', function () {
       />
     );
     render(intervalSelector);
-    expect(eventView.interval).toEqual('1m');
+    expect(eventView.interval).toBe('1m');
   });
   it('leaves default interval alone', function () {
     eventView.interval = undefined;
@@ -54,6 +56,6 @@ describe('IntervalSelector', function () {
       />
     );
     render(intervalSelector);
-    expect(interval).toEqual('not called');
+    expect(interval).toBe('not called');
   });
 });

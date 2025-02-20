@@ -1,13 +1,14 @@
 import {useMemo} from 'react';
 import styled from '@emotion/styled';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
 import {EventDisplay} from 'sentry/components/events/eventStatisticalDetector/eventComparison/eventDisplay';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Event, Group, Project} from 'sentry/types';
-
-import {DataSection} from '../../styles';
+import type {Event} from 'sentry/types/event';
+import type {Project} from 'sentry/types/project';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
 
 const COMPARISON_DESCRIPTION = t(
   'To better understand what happened before and after this regression, compare a baseline event with a regressed event. Look for any significant shape changes, operation percentage changes, and tag differences.'
@@ -15,19 +16,20 @@ const COMPARISON_DESCRIPTION = t(
 
 type EventComparisonProps = {
   event: Event;
-  group: Group;
   project: Project;
 };
 
-function EventComparison({event, project, group}: EventComparisonProps) {
+function EventComparison({event, project}: EventComparisonProps) {
   const now = useMemo(() => Date.now(), []);
   const retentionPeriodMs = moment().subtract(90, 'days').valueOf();
   const {aggregateRange1, aggregateRange2, dataStart, breakpoint, transaction} =
     event?.occurrence?.evidenceData ?? {};
 
   return (
-    <DataSection>
-      <strong>{t('Compare Events:')}</strong>
+    <InterimSection
+      type={SectionKey.REGRESSION_EVENT_COMPARISON}
+      title={t('Compare Events')}
+    >
       <p>{COMPARISON_DESCRIPTION}</p>
       <StyledGrid>
         <StyledGridItem position="left">
@@ -38,7 +40,6 @@ function EventComparison({event, project, group}: EventComparisonProps) {
             end={breakpoint * 1000}
             transaction={transaction}
             durationBaseline={aggregateRange1}
-            group={group}
           />
         </StyledGridItem>
         <StyledGridItem position="right">
@@ -49,11 +50,10 @@ function EventComparison({event, project, group}: EventComparisonProps) {
             end={now}
             transaction={transaction}
             durationBaseline={aggregateRange2}
-            group={group}
           />
         </StyledGridItem>
       </StyledGrid>
-    </DataSection>
+    </InterimSection>
   );
 }
 

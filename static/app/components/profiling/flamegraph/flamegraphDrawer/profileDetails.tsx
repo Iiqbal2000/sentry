@@ -5,26 +5,27 @@ import {PlatformIcon} from 'platformicons';
 import OrganizationAvatar from 'sentry/components/avatar/organizationAvatar';
 import ProjectAvatar from 'sentry/components/avatar/projectAvatar';
 import {Button} from 'sentry/components/button';
-import DateTime from 'sentry/components/dateTime';
+import {DateTime} from 'sentry/components/dateTime';
 import ProjectBadge from 'sentry/components/idBadge/projectBadge';
 import Link from 'sentry/components/links/link';
 import Version from 'sentry/components/version';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
-import {DeviceContextKey, EventTransaction} from 'sentry/types/event';
-import {formatVersion} from 'sentry/utils/formatters';
-import {getTransactionDetailsUrl} from 'sentry/utils/performance/urls';
-import {FlamegraphPreferences} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphPreferences';
+import type {EventTransaction} from 'sentry/types/event';
+import {DeviceContextKey} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {generateLinkToEventInTraceView} from 'sentry/utils/discover/urls';
+import type {FlamegraphPreferences} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphPreferences';
 import {useFlamegraphPreferences} from 'sentry/utils/profiling/flamegraph/hooks/useFlamegraphPreferences';
-import {ProfileGroup} from 'sentry/utils/profiling/profile/importProfile';
+import type {ProfileGroup} from 'sentry/utils/profiling/profile/importProfile';
 import {makeFormatter} from 'sentry/utils/profiling/units/units';
+import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import useProjects from 'sentry/utils/useProjects';
-import {
-  useResizableDrawer,
-  UseResizableDrawerOptions,
-} from 'sentry/utils/useResizableDrawer';
+import type {UseResizableDrawerOptions} from 'sentry/utils/useResizableDrawer';
+import {useResizableDrawer} from 'sentry/utils/useResizableDrawer';
+import {formatVersion} from 'sentry/utils/versions/formatVersion';
 import {QuickContextHoverWrapper} from 'sentry/views/discover/table/quickContext/quickContextWrapper';
 import {ContextType} from 'sentry/views/discover/table/quickContext/utils';
 
@@ -190,14 +191,13 @@ function TransactionDeviceDetails({
   const deviceDetails = useMemo(() => {
     const profileMetadata = profileGroup.metadata;
     const deviceContext = transaction.contexts.device;
-    const clientOsContext = transaction.contexts.client_os;
     const osContext = transaction.contexts.os;
 
-    const details: {
+    const details: Array<{
       key: string;
       label: string;
       value: React.ReactNode;
-    }[] = [
+    }> = [
       {
         key: 'model',
         label: t('Model'),
@@ -218,15 +218,12 @@ function TransactionDeviceDetails({
       {
         key: 'name',
         label: t('OS'),
-        value: clientOsContext?.name ?? osContext?.name ?? profileMetadata.deviceOSName,
+        value: osContext?.name ?? profileMetadata.deviceOSName,
       },
       {
         key: 'version',
         label: t('OS Version'),
-        value:
-          clientOsContext?.version ??
-          osContext?.version ??
-          profileMetadata.deviceOSVersion,
+        value: osContext?.version ?? profileMetadata.deviceOSVersion,
       },
       {
         key: 'locale',
@@ -261,19 +258,29 @@ function TransactionEventDetails({
   project: Project | undefined;
   transaction: EventTransaction;
 }) {
+  const location = useLocation();
   const transactionDetails = useMemo(() => {
     const profileMetadata = profileGroup.metadata;
 
+    const traceSlug = transaction.contexts?.trace?.trace_id ?? '';
     const transactionTarget =
       transaction.id && project && organization
-        ? getTransactionDetailsUrl(organization.slug, `${project.slug}:${transaction.id}`)
+        ? generateLinkToEventInTraceView({
+            eventId: transaction.id,
+            traceSlug,
+            timestamp: transaction.endTimestamp,
+            projectSlug: project.slug,
+            location,
+            organization,
+            transactionName: transaction.title,
+          })
         : null;
 
-    const details: {
+    const details: Array<{
       key: string;
       label: string;
       value: React.ReactNode;
-    }[] = [
+    }> = [
       {
         key: 'transaction',
         label: t('Transaction'),
@@ -328,7 +335,7 @@ function TransactionEventDetails({
     ];
 
     return details;
-  }, [organization, project, profileGroup, transaction]);
+  }, [organization, project, profileGroup, transaction, location]);
 
   return (
     <DetailsContainer>
@@ -346,6 +353,7 @@ function ProfileEnvironmentDetails({profileGroup}: {profileGroup: ProfileGroup})
   return (
     <DetailsContainer>
       {Object.entries(ENVIRONMENT_DETAILS_KEY).map(([label, key]) => {
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         const value = profileGroup.metadata[key];
         return (
           <DetailsRow key={key}>
@@ -369,9 +377,12 @@ function ProfileEventDetails({
   project: Project | undefined;
   transaction: EventTransaction | null;
 }) {
+  const location = useLocation();
+  const traceSlug = transaction?.contexts?.trace?.trace_id ?? '';
   return (
     <DetailsContainer>
       {Object.entries(PROFILE_DETAILS_KEY).map(([label, key]) => {
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         const value = profileGroup.metadata[key];
 
         if (key === 'organizationID') {
@@ -392,10 +403,14 @@ function ProfileEventDetails({
         if (key === 'transactionName') {
           const transactionTarget =
             project?.slug && transaction?.id && organization
-              ? getTransactionDetailsUrl(
-                  organization.slug,
-                  `${project.slug}:${transaction.id}`
-                )
+              ? generateLinkToEventInTraceView({
+                  traceSlug,
+                  projectSlug: project.slug,
+                  eventId: transaction.id,
+                  timestamp: transaction.endTimestamp,
+                  location,
+                  organization,
+                })
               : null;
           if (transactionTarget) {
             return (

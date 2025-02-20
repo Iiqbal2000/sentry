@@ -1,9 +1,10 @@
 import styled from '@emotion/styled';
 
 import SelectControl from 'sentry/components/forms/controls/selectControl';
+import OrganizationBadge from 'sentry/components/idBadge/organizationBadge';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 
 type OrganizationSelectHeaderProps = {
   handleOrgChange: (orgId: string) => void;
@@ -24,9 +25,17 @@ export function OrganizationSelectHeader({
           return {
             label: org.name,
             value: org.id,
+            leadingItems: (
+              <OrganizationBadge
+                organization={org}
+                avatarSize={20}
+                avatarProps={{consistentWidth: true}}
+                hideName
+              />
+            ),
           };
         })}
-        onChange={option => handleOrgChange(option.value)}
+        onChange={(option: any) => handleOrgChange(option.value)}
         value={organizationId}
         styles={{
           container: (provided: Record<string, string>) => ({
@@ -42,7 +51,7 @@ export function OrganizationSelectHeader({
 // Resetting styles because its in a panel header
 const StyledSelectControl = styled(SelectControl)`
   text-transform: initial;
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
 `;
 
 const OrgControlWrapper = styled('div')`

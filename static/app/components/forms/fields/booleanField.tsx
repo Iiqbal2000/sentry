@@ -6,11 +6,12 @@ import Switch from 'sentry/components/switchButton';
 import {Tooltip} from 'sentry/components/tooltip';
 
 // XXX(epurkhiser): This is wrong, it should not be inheriting these props
-import {InputFieldProps, OnEvent} from './inputField';
+import type {InputFieldProps, OnEvent} from './inputField';
 
 export interface BooleanFieldProps extends InputFieldProps {
   confirm?: {
     false?: React.ReactNode;
+    isDangerous?: boolean;
     true?: React.ReactNode;
   };
 }
@@ -33,7 +34,7 @@ export default class BooleanField extends Component<BooleanFieldProps> {
   };
 
   render() {
-    const {confirm, disabledReason, ...fieldProps} = this.props;
+    const {confirm, ...fieldProps} = this.props;
 
     return (
       <FormField {...fieldProps} resetOnError>
@@ -43,9 +44,11 @@ export default class BooleanField extends Component<BooleanFieldProps> {
           onBlur,
           value,
           disabled,
+          disabledReason,
           ...props
         }: {
           disabled: boolean;
+          disabledReason: boolean;
           onBlur: OnEvent;
           onChange: OnEvent;
           type: string;
@@ -67,8 +70,10 @@ export default class BooleanField extends Component<BooleanFieldProps> {
           if (confirm) {
             return (
               <Confirm
+                // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
                 renderMessage={() => confirm[(!value).toString()]}
                 onConfirm={() => handleChange({})}
+                isDangerous={confirm.isDangerous}
               >
                 {({open}) => (
                   <Tooltip title={disabledReason} skipWrapper disabled={!disabled}>
@@ -77,6 +82,7 @@ export default class BooleanField extends Component<BooleanFieldProps> {
                       toggle={(e: React.MouseEvent) => {
                         // If we have a `confirm` prop and enabling switch
                         // Then show confirm dialog, otherwise propagate change as normal
+                        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
                         if (confirm[(!value).toString()]) {
                           // Open confirm modal
                           open();

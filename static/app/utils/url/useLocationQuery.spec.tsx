@@ -1,8 +1,13 @@
 import type {Location} from 'history';
 
-import {reactHooks} from 'sentry-test/reactTestingLibrary';
+import {renderHook} from 'sentry-test/reactTestingLibrary';
 
-import {decodeInteger, decodeList, decodeScalar} from 'sentry/utils/queryString';
+import {
+  decodeInteger,
+  decodeList,
+  decodeScalar,
+  type QueryValue,
+} from 'sentry/utils/queryString';
 import useLocationQuery from 'sentry/utils/url/useLocationQuery';
 import {useLocation} from 'sentry/utils/useLocation';
 
@@ -30,7 +35,7 @@ describe('useLocationQuery', () => {
       },
     } as Location);
 
-    const {result} = reactHooks.renderHook(useLocationQuery, {
+    const {result} = renderHook(useLocationQuery, {
       initialProps: {
         fields: {
           name: decodeScalar,
@@ -53,7 +58,7 @@ describe('useLocationQuery', () => {
       query: {},
     } as Location);
 
-    const {result} = reactHooks.renderHook(useLocationQuery, {
+    const {result} = renderHook(useLocationQuery, {
       initialProps: {
         fields: {
           name: decodeScalar,
@@ -70,6 +75,39 @@ describe('useLocationQuery', () => {
     });
   });
 
+  it('allows custom typed decoders', () => {
+    jest.mocked(useLocation).mockReturnValueOnce({
+      ...mockLocation,
+      query: {
+        titles: ['Mx', 'Dr'],
+      },
+    } as Location);
+
+    type Title = 'Mr' | 'Ms' | 'Mx';
+
+    const titlesDecoder = (value: QueryValue): Title[] | undefined => {
+      const decodedValue = decodeList(value);
+
+      const validTitles = decodedValue.filter(v => {
+        return ['Mr', 'Ms', 'Mx'].includes(v);
+      }) as Title[];
+
+      return validTitles.length > 0 ? validTitles : undefined;
+    };
+
+    const {result} = renderHook(useLocationQuery, {
+      initialProps: {
+        fields: {
+          titles: titlesDecoder,
+        },
+      },
+    });
+
+    expect(result.current).toStrictEqual({
+      titles: ['Mx'],
+    });
+  });
+
   it('should pass-through static values along with decoded ones', () => {
     jest.mocked(useLocation).mockReturnValueOnce({
       ...mockLocation,
@@ -79,7 +117,7 @@ describe('useLocationQuery', () => {
       },
     } as Location);
 
-    const {result} = reactHooks.renderHook(useLocationQuery, {
+    const {result} = renderHook(useLocationQuery, {
       initialProps: {
         fields: {
           name: decodeScalar,
@@ -123,19 +161,20 @@ describe('useLocationQuery', () => {
       },
     } as Location);
 
-    const {result, rerender} = reactHooks.renderHook(useLocationQuery, {
-      initialProps: {
-        fields: {
-          name: decodeScalar,
-          age: decodeInteger,
-          titles: decodeList,
-        },
+    const props = {
+      fields: {
+        name: decodeScalar,
+        age: decodeInteger,
+        titles: decodeList,
       },
+    };
+    const {result, rerender} = renderHook(useLocationQuery, {
+      initialProps: props,
     });
     const first = result.current;
-    rerender();
+    rerender(props);
     const second = result.current;
-    rerender();
+    rerender(props);
     const third = result.current;
 
     expect(first.name).toBe('Adam');

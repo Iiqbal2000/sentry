@@ -16,6 +16,25 @@ and so it is a private metric, whereas `SessionMRI.CRASH_FREE_RATE` has a corres
 `SessionMetricKey` with the same name i.e. `SessionMetricKey.CRASH_FREE_RATE` and hence is a public
 metric that is queryable by the API.
 """
+
+import re
+from dataclasses import dataclass
+from enum import Enum
+from typing import cast
+
+from sentry_kafka_schemas.codecs import ValidationError
+
+from sentry.exceptions import InvalidParams
+from sentry.sentry_metrics.use_case_id_registry import UseCaseID
+from sentry.snuba.metrics.units import format_value_using_unit_and_op
+from sentry.snuba.metrics.utils import (
+    AVAILABLE_GENERIC_OPERATIONS,
+    AVAILABLE_OPERATIONS,
+    OP_REGEX,
+    MetricEntity,
+    MetricOperationType,
+)
+
 __all__ = (
     "SessionMRI",
     "TransactionMRI",
@@ -25,22 +44,13 @@ __all__ = (
     "ErrorsMRI",
     "parse_mri",
     "get_available_operations",
+    "is_mri_field",
+    "parse_mri_field",
+    "format_mri_field",
+    "format_mri_field_value",
 )
 
-import re
-from dataclasses import dataclass
-from enum import Enum
-from typing import List, Optional
-
-from sentry.snuba.metrics.utils import AVAILABLE_GENERIC_OPERATIONS, AVAILABLE_OPERATIONS, OP_REGEX
-
-NAMESPACE_REGEX = r"(transactions|errors|issues|sessions|alerts|custom|spans|escalating_issues)"
-ENTITY_TYPE_REGEX = r"(c|s|d|g|e)"
-# This regex allows for a string of words composed of small letters alphabet characters with
-# allowed the underscore character, optionally separated by a single dot
-MRI_NAME_REGEX = r"([a-z_]+(?:\.[a-z_]+)*)"
-# ToDo(ahmed): Add a better regex for unit portion for MRI
-MRI_SCHEMA_REGEX_STRING = rf"(?P<entity>{ENTITY_TYPE_REGEX}):(?P<namespace>{NAMESPACE_REGEX})/(?P<name>{MRI_NAME_REGEX})@(?P<unit>[\w.]*)"
+MRI_SCHEMA_REGEX_STRING = r"(?P<entity>[^:]+):(?P<namespace>[^/]+)/(?P<name>[^@]+)@(?P<unit>.+)"
 MRI_SCHEMA_REGEX = re.compile(rf"^{MRI_SCHEMA_REGEX_STRING}$")
 MRI_EXPRESSION_REGEX = re.compile(rf"^{OP_REGEX}\(({MRI_SCHEMA_REGEX_STRING})\)$")
 
@@ -121,6 +131,7 @@ class TransactionMRI(Enum):
 
     # Derived
     ALL = "e:transactions/all@none"
+    ALL_DURATION = "e:transactions/all_duration@none"
     FAILURE_COUNT = "e:transactions/failure_count@none"
     FAILURE_RATE = "e:transactions/failure_rate@ratio"
     SATISFIED = "e:transactions/satisfied@none"
@@ -150,8 +161,26 @@ class TransactionMRI(Enum):
 class SpanMRI(Enum):
     USER = "s:spans/user@none"
     DURATION = "d:spans/duration@millisecond"
+    COUNT_PER_ROOT_PROJECT = "c:spans/count_per_root_project@none"
     SELF_TIME = "d:spans/exclusive_time@millisecond"
     SELF_TIME_LIGHT = "d:spans/exclusive_time_light@millisecond"
+
+    # Measurement-based metrics
+    AI_TOTAL_TOKENS = "c:spans/ai.total_tokens.used@none"
+    AI_TOTAL_COST = "c:spans/ai.total_cost@usd"
+    CACHE_ITEM_SIZE = "d:spans/cache.item_size@byte"
+    DECODED_RESPONSE_CONTENT_LENGTH = "d:spans/http.decoded_response_content_length@byte"
+    MESSAGE_RECEIVE_LATENCY = "g:spans/messaging.message.receive.latency@millisecond"
+    MOBILE_FRAMES_DELAY = "g:spans/mobile.frames_delay@second"
+    MOBILE_FROZEN_FRAMES = "g:spans/mobile.frozen_frames@none"
+    MOBILE_SLOW_FRAMES = "g:spans/mobile.slow_frames@none"
+    MOBILE_TOTAL_FRAMES = "g:spans/mobile.total_frames@none"
+    RESPONSE_CONTENT_LENGTH = "d:spans/http.response_content_length@byte"
+    RESPONSE_TRANSFER_SIZE = "d:spans/http.response_transfer_size@byte"
+    WEB_VITALS_INP = "d:spans/webvital.inp@millisecond"
+    WEB_VITALS_SCORE_INP = "d:spans/webvital.score.inp@ratio"
+    WEB_VITALS_SCORE_TOTAL = "d:spans/webvital.score.total@ratio"
+    WEB_VITALS_SCORE_WEIGHT = "d:spans/webvital.score.weight.inp@ratio"
 
     # Derived
     ALL = "e:spans/all@none"
@@ -178,8 +207,87 @@ class ParsedMRI:
         return f"{self.entity}:{self.namespace}/{self.name}@{self.unit}"
 
 
-def parse_mri(mri_string: str) -> Optional[ParsedMRI]:
-    """Parse a mri string to determine its entity, namespace, name and unit"""
+@dataclass
+class ParsedMRIField:
+    op: MetricOperationType
+    mri: ParsedMRI
+
+    def __str__(self) -> str:
+        return f"{self.op}({self.mri.name})"
+
+
+def parse_mri_field(field: str | None) -> ParsedMRIField | None:
+    if field is None:
+        return None
+
+    matches = MRI_EXPRESSION_REGEX.match(field)
+
+    if matches is None:
+        return None
+
+    try:
+        op = cast(MetricOperationType, matches[1])
+        mri = ParsedMRI(**matches.groupdict())
+    except (IndexError, TypeError):
+        return None
+
+    return ParsedMRIField(op=op, mri=mri)
+
+
+def is_mri_field(field: str) -> bool:
+    """
+    Returns True if the passed value is an MRI field.
+    """
+    return parse_mri_field(field) is not None
+
+
+def format_mri_field(field: str) -> str:
+    """
+    Format a metric field to be used in a metric expression.
+
+    For example, if the field is `avg(c:transactions/foo@none)`, it will be returned as `avg(foo)`.
+    """
+    try:
+        parsed = parse_mri_field(field)
+
+        if parsed:
+            return str(parsed)
+
+        else:
+            return field
+
+    except InvalidParams:
+        return field
+
+
+def format_mri_field_value(field: str, value: str) -> str:
+    """
+    Formats MRI field value to a human-readable format using unit.
+
+    For example, if the value of avg(c:transactions/duration@second) is 60,
+    it will be returned as 1 minute.
+
+    """
+    try:
+        parsed_mri_field = parse_mri_field(field)
+        if parsed_mri_field is None:
+            return value
+
+        return format_value_using_unit_and_op(
+            float(value), parsed_mri_field.mri.unit, parsed_mri_field.op
+        )
+
+    except InvalidParams:
+        return value
+
+
+def parse_mri(mri_string: str | None) -> ParsedMRI | None:
+    """
+    Parse a mri string to determine its entity, namespace, name and unit.
+    """
+    if mri_string is None:
+        return None
+
     match = MRI_SCHEMA_REGEX.match(mri_string)
     if match is None:
         return None
@@ -187,34 +295,78 @@ def parse_mri(mri_string: str) -> Optional[ParsedMRI]:
     return ParsedMRI(**match.groupdict())
 
 
+def is_mri(mri_string: str | None) -> bool:
+    """
+    Returns true if the passed value is a mri.
+    """
+    return parse_mri(mri_string) is not None
+
+
+def is_custom_metric(parsed_mri: ParsedMRI) -> bool:
+    """
+    A custom mri is a mri which uses the custom namespace, and it's different from a custom measurement.
+    """
+    return parsed_mri.namespace == "custom"
+
+
+def is_measurement(parsed_mri: ParsedMRI) -> bool:
+    """
+    A measurement won't use the custom namespace, but will be under the transaction namespace.
+
+    This checks the namespace, and name to match what we consider to be a standard + custom measurement.
+    """
+    return parsed_mri.namespace == "transactions" and parsed_mri.name.startswith("measurements.")
+
+
 def is_custom_measurement(parsed_mri: ParsedMRI) -> bool:
-    """A custom measurement won't use the custom namespace, but will be under the transaction namespace
+    """
+    A custom measurement won't use the custom namespace, but will be under the transaction namespace.
 
     This checks the namespace, and name to match what we expect first before iterating through the
-    members of the transaction MRI enum to make sure it isn't a standard measurement
+    members of the transaction MRI enum to make sure it isn't a standard measurement.
     """
     return (
         parsed_mri.namespace == "transactions"
         and parsed_mri.name.startswith("measurements.")
         and
         # Iterate through the transaction MRI and check that this parsed_mri isn't in there
-        parsed_mri.mri_string not in [mri.value for mri in TransactionMRI.__members__.values()]
+        all(parsed_mri.mri_string != mri.value for mri in TransactionMRI.__members__.values())
     )
 
 
-def get_available_operations(parsed_mri: ParsedMRI) -> List[str]:
-    entity_name_suffixes = {
-        "c": "counters",
-        "s": "sets",
-        "d": "distributions",
-        "g": "gauges",
-    }
+_ENTITY_KEY_MAPPING_GENERIC: dict[str, MetricEntity] = {
+    "c": "generic_metrics_counters",
+    "s": "generic_metrics_sets",
+    "d": "generic_metrics_distributions",
+    "g": "generic_metrics_gauges",
+}
+_ENTITY_KEY_MAPPING_NON_GENERIC: dict[str, MetricEntity] = {
+    "c": "metrics_counters",
+    "s": "metrics_sets",
+    "d": "metrics_distributions",
+}
 
+
+def get_available_operations(parsed_mri: ParsedMRI) -> list[MetricOperationType]:
     if parsed_mri.entity == "e":
         return []
     elif parsed_mri.namespace == "sessions":
-        entity_key = f"metrics_{entity_name_suffixes[parsed_mri.entity]}"
+        entity_key = _ENTITY_KEY_MAPPING_NON_GENERIC[parsed_mri.entity]
         return AVAILABLE_OPERATIONS[entity_key]
     else:
-        entity_key = f"generic_metrics_{entity_name_suffixes[parsed_mri.entity]}"
+        entity_key = _ENTITY_KEY_MAPPING_GENERIC[parsed_mri.entity]
         return AVAILABLE_GENERIC_OPERATIONS[entity_key]
+
+
+def extract_use_case_id(mri: str) -> UseCaseID:
+    """
+    Returns the use case ID given the MRI, throws an error if MRI is invalid or the use case doesn't exist.
+    """
+    parsed_mri = parse_mri(mri)
+    if parsed_mri is not None:
+        if parsed_mri.namespace in {id.value for id in UseCaseID}:
+            return UseCaseID(parsed_mri.namespace)
+
+        raise ValidationError(f"The use case of the MRI {parsed_mri.namespace} does not exist")
+
+    raise ValidationError(f"The MRI {mri} is not valid")

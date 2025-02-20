@@ -47,20 +47,20 @@ be successfully delivered.
 
 See https://www.notion.so/sentry/Async-cross-region-updates-outbox-9330293c8d2f4bd497361a505fd355d3
 """
+
 from __future__ import annotations
 
 from typing import TypeVar
 
-from django.db import models
-
-from sentry.services.hybrid_cloud.tombstone import (
+from sentry.db.models import Model
+from sentry.hybridcloud.services.tombstone import (
     RpcTombstone,
     control_tombstone_service,
     region_tombstone_service,
 )
-from sentry.silo import SiloMode
+from sentry.silo.base import SiloMode
 
-T = TypeVar("T", bound=models.Model)
+T = TypeVar("T", bound=Model)
 
 
 def maybe_process_tombstone(

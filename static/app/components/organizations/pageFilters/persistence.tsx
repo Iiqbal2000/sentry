@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/react';
 
 import PageFiltersStore from 'sentry/stores/pageFiltersStore';
-import {PinnedPageFilter} from 'sentry/types';
+import type {PinnedPageFilter} from 'sentry/types/core';
 import {getUtcDateString} from 'sentry/utils/dates';
 import localStorage from 'sentry/utils/localStorage';
 
@@ -35,7 +35,7 @@ type StoredObject = {
 export function setPageFiltersStorage(
   orgSlug: string,
   updateFilters: Set<PinnedPageFilter>,
-  storageNamespace: string = ''
+  storageNamespace = ''
 ) {
   const {selection, pinnedFilters} = PageFiltersStore.getState();
 
@@ -101,7 +101,7 @@ export function setPageFiltersStorage(
 /**
  * Retrieves the page filters from local storage
  */
-export function getPageFilterStorage(orgSlug: string, storageNamespace: string = '') {
+export function getPageFilterStorage(orgSlug: string, storageNamespace = '') {
   const localStorageKey = makeLocalStorageKey(
     storageNamespace.length > 0 ? `${storageNamespace}:${orgSlug}` : orgSlug
   );

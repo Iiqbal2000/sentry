@@ -1,12 +1,15 @@
 ---
+created: '2024-12-17T22:47:08.154516+00:00'
+creator: sentry
 source: tests/sentry/grouping/test_variants.py
 ---
 app:
   hash: null
+  contributing component: null
   component:
     app (exception of system takes precedence)
       exception (ignored because this variant does not have a contributing stacktrace, but the system variant does)
-        stacktrace
+        stacktrace (ignored because it contains no in-app frames)
           frame (non app frame)
             module*
               "com.android.internal.os.ZygoteInit"
@@ -70,7 +73,7 @@ app:
               "choreographer.java"
             function*
               "run"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.view.Choreographer"
             filename (module takes precedence)
@@ -98,7 +101,7 @@ app:
               "viewrootimpl.java"
             function*
               "run"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.view.ViewRootImpl"
             filename (module takes precedence)
@@ -133,7 +136,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -161,7 +164,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.LinearLayout"
             filename (module takes precedence)
@@ -196,7 +199,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -224,7 +227,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.LinearLayout"
             filename (module takes precedence)
@@ -259,7 +262,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -287,7 +290,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -315,7 +318,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -343,7 +346,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -371,7 +374,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -399,7 +402,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -427,7 +430,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -455,7 +458,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -483,7 +486,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.LinearLayout"
             filename (module takes precedence)
@@ -518,7 +521,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -546,7 +549,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -574,7 +577,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.LinearLayout"
             filename (module takes precedence)
@@ -609,7 +612,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -637,7 +640,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.LinearLayout"
             filename (module takes precedence)
@@ -672,7 +675,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "android.widget.FrameLayout"
             filename (module takes precedence)
@@ -700,7 +703,7 @@ app:
               "view.java"
             function*
               "layout"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             module*
               "androidx.recyclerview.widget.RecyclerView"
             filename (module takes precedence)
@@ -768,7 +771,7 @@ app:
         value* (stripped event-specific values)
           "Application Not Responding for at least <int> ms."
       threads (ignored because this variant does not have a contributing stacktrace, but the system variant does)
-        stacktrace
+        stacktrace (ignored because it contains no in-app frames)
           frame (marked out of app by stack trace rule (module:java.* -app))
             module*
               "java.lang.Thread"
@@ -786,6 +789,7 @@ app:
 --------------------------------------------------------------------------
 system:
   hash: "2552498cfe69a6ddf1dcdde5440ce9c3"
+  contributing component: exception
   component:
     system*
       exception*
@@ -1483,7 +1487,7 @@ system:
               "view.java"
             function*
               "layout"
-          frame* (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame*
             module*
               "androidx.recyclerview.widget.RecyclerView"
             filename (module takes precedence)

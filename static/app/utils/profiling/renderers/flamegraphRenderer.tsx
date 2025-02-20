@@ -1,10 +1,11 @@
-import {mat3, vec2} from 'gl-matrix';
+import type {mat3, vec2} from 'gl-matrix';
 
-import {Flamegraph} from 'sentry/utils/profiling/flamegraph';
-import {FlamegraphColorCodings} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphPreferences';
-import {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
-import {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
-import {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import {DifferentialFlamegraph} from 'sentry/utils/profiling/differentialFlamegraph';
+import type {Flamegraph} from 'sentry/utils/profiling/flamegraph';
+import type {FlamegraphColorCodings} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphPreferences';
+import type {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
+import type {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
+import type {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
 
 export type FlamegraphRendererOptions = {
   colorCoding: FlamegraphColorCodings[number];
@@ -16,21 +17,31 @@ export const DEFAULT_FLAMEGRAPH_RENDERER_OPTIONS: FlamegraphRendererOptions = {
   draw_border: false,
 };
 
+export type FlamegraphRendererConstructor = new (
+  canvas: HTMLCanvasElement,
+  flamegraph: Flamegraph,
+  theme: FlamegraphTheme,
+  options?: FlamegraphRendererOptions
+) => FlamegraphRenderer;
+
 export abstract class FlamegraphRenderer {
+  ctx: CanvasRenderingContext2D | WebGLRenderingContext | null = null;
   canvas: HTMLCanvasElement;
-  flamegraph: Flamegraph;
+  flamegraph: Flamegraph | DifferentialFlamegraph;
   theme: FlamegraphTheme;
   options: FlamegraphRendererOptions;
 
-  frames: ReadonlyArray<FlamegraphFrame>;
-  roots: ReadonlyArray<FlamegraphFrame>;
+  frames: readonly FlamegraphFrame[];
+  roots: readonly FlamegraphFrame[];
 
-  colorBuffer: Array<number>;
-  colorMap: Map<string | number, number[]>;
+  colorBuffer: number[];
+  colorMap: Map<string | number | FlamegraphFrame['node'], number[]>;
+
+  isDifferentialFlamegraph = false;
 
   constructor(
     canvas: HTMLCanvasElement,
-    flamegraph: Flamegraph,
+    flamegraph: Flamegraph | DifferentialFlamegraph,
     theme: FlamegraphTheme,
     options: FlamegraphRendererOptions = DEFAULT_FLAMEGRAPH_RENDERER_OPTIONS
   ) {
@@ -42,18 +53,28 @@ export abstract class FlamegraphRenderer {
     this.frames = this.flamegraph.frames;
     this.roots = this.flamegraph.root.children;
 
-    const {colorBuffer, colorMap} = this.theme.COLORS.STACK_TO_COLOR(
-      this.frames,
-      this.theme.COLORS.COLOR_MAPS[this.options.colorCoding],
-      this.theme.COLORS.COLOR_BUCKET,
-      this.theme
-    );
-    this.colorBuffer = colorBuffer;
-    this.colorMap = colorMap;
+    if (flamegraph instanceof DifferentialFlamegraph) {
+      this.colorBuffer = flamegraph.colorBuffer;
+      this.colorMap = flamegraph.colors;
+      this.isDifferentialFlamegraph = true;
+    } else {
+      const {colorBuffer, colorMap} = this.theme.COLORS.STACK_TO_COLOR(
+        this.frames,
+        this.theme.COLORS.COLOR_MAPS[this.options.colorCoding],
+        this.theme.COLORS.COLOR_BUCKET,
+        this.theme
+      );
+
+      this.colorBuffer = colorBuffer;
+      this.colorMap = colorMap;
+    }
   }
 
   getColorForFrame(frame: FlamegraphFrame): number[] {
-    return this.colorMap.get(frame.key) ?? this.theme.COLORS.FRAME_GRAYSCALE_COLOR;
+    if (this.isDifferentialFlamegraph) {
+      return this.colorMap.get(frame.node) ?? this.theme.COLORS.FRAME_FALLBACK_COLOR;
+    }
+    return this.colorMap.get(frame.key) ?? this.theme.COLORS.FRAME_FALLBACK_COLOR;
   }
 
   findHoveredNode(configSpaceCursor: vec2): FlamegraphFrame | null {
@@ -94,13 +115,14 @@ export abstract class FlamegraphRenderer {
       }
 
       // Descend into the rest of the children
-      for (let i = 0; i < frame.children.length; i++) {
-        queue.push(frame.children[i]);
+      for (const child of frame.children) {
+        queue.push(child);
       }
     }
     return hoveredNode;
   }
 
+  // @ts-expect-error TS(7010): 'setSearchResults', which lacks return-type annota... Remove this comment to see the full error message
   abstract setSearchResults(
     _query: string,
     _searchResults: FlamegraphSearch['results']['frames']

@@ -1,23 +1,23 @@
-import {browserHistory} from 'react-router';
-import {Location} from 'history';
+import type {Location} from 'history';
 import omit from 'lodash/omit';
 
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import EventView from 'sentry/utils/discover/eventView';
-import {
-  formatAbbreviatedNumber,
-  formatFloat,
-  formatPercentage,
-  getDuration,
-} from 'sentry/utils/formatters';
-import {HistogramData} from 'sentry/utils/performance/histogram/types';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import type EventView from 'sentry/utils/discover/eventView';
+import getDuration from 'sentry/utils/duration/getDuration';
+import {formatAbbreviatedNumber} from 'sentry/utils/formatters';
+import {formatFloat} from 'sentry/utils/number/formatFloat';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
+import type {HistogramData} from 'sentry/utils/performance/histogram/types';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 
-import {AxisOption, getTermHelp, PerformanceTerm} from '../data';
-import {Rectangle} from '../transactionSummary/transactionVitals/types';
+import type {AxisOption} from '../data';
+import {getTermHelp, PerformanceTerm} from '../data';
+import type {Rectangle} from '../transactionSummary/transactionVitals/types';
 import {platformToPerformanceType, ProjectPerformanceType} from '../utils';
 
 export const LEFT_AXIS_QUERY_KEY = 'left';
@@ -36,14 +36,12 @@ export enum LandingDisplayField {
   MOBILE = 'mobile',
 }
 
+// TODO Abdullah Khan: Remove code for Web Vitals tab in performance landing
+// page when new starfish web vitals module is mature.
 export const LANDING_DISPLAYS = [
   {
     label: t('All Transactions'),
     field: LandingDisplayField.ALL,
-  },
-  {
-    label: t('Web Vitals'),
-    field: LandingDisplayField.FRONTEND_PAGELOAD,
   },
   {
     label: t('Frontend'),
@@ -91,7 +89,7 @@ export function getDefaultDisplayForPlatform(projects: Project[], eventView?: Ev
   const defaultDisplay = LANDING_DISPLAYS.find(
     ({field}) => field === defaultDisplayField
   );
-  return defaultDisplay || LANDING_DISPLAYS[0];
+  return defaultDisplay || LANDING_DISPLAYS[0]!;
 }
 
 export function getCurrentLandingDisplay(
@@ -119,7 +117,7 @@ export function handleLandingDisplayChange(
   const searchConditions = new MutableSearch(query);
   searchConditions.removeFilter('transaction.op');
 
-  const queryWithConditions = {
+  const queryWithConditions: Record<string, string> & {query: string} = {
     ...omit(location.query, ['landingDisplay', 'sort']),
     query: searchConditions.formatString(),
   };
@@ -169,13 +167,14 @@ export function getDefaultDisplayFieldForPlatform(
 
   const performanceTypeToDisplay = {
     [ProjectPerformanceType.ANY]: LandingDisplayField.ALL,
-    [ProjectPerformanceType.FRONTEND]: LandingDisplayField.FRONTEND_PAGELOAD,
+    [ProjectPerformanceType.FRONTEND]: LandingDisplayField.FRONTEND_OTHER,
     [ProjectPerformanceType.BACKEND]: LandingDisplayField.BACKEND,
     [ProjectPerformanceType.MOBILE]: LandingDisplayField.MOBILE,
   };
   const performanceType = platformToPerformanceType(projects, projectIds);
   const landingField =
-    performanceTypeToDisplay[performanceType] ?? LandingDisplayField.ALL;
+    performanceTypeToDisplay[performanceType as keyof typeof performanceTypeToDisplay] ??
+    LandingDisplayField.ALL;
   return landingField;
 }
 
@@ -252,7 +251,7 @@ export function getDisplayAxes(options: AxisOption[], location: Location) {
   };
 }
 
-export function checkIsReactNative(eventView) {
+export function checkIsReactNative(eventView: EventView) {
   // only react native should contain the stall percentage column
   return Boolean(
     eventView.getFields().find(field => field.includes('measurements.stall_percentage'))

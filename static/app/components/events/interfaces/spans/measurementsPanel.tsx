@@ -6,14 +6,10 @@ import {space} from 'sentry/styles/space';
 import {defined} from 'sentry/utils';
 import toPercent from 'sentry/utils/number/toPercent';
 import {VITAL_DETAILS} from 'sentry/utils/performance/vitals/constants';
-import {Vital} from 'sentry/utils/performance/vitals/types';
+import type {Vital} from 'sentry/utils/performance/vitals/types';
 
-import {
-  getMeasurementBounds,
-  SpanBoundsType,
-  SpanGeneratedBoundsType,
-  VerticalMark,
-} from './utils';
+import type {SpanBoundsType, SpanGeneratedBoundsType, VerticalMark} from './utils';
+import {getMeasurementBounds} from './utils';
 
 type Props = {
   dividerPosition: number;
@@ -37,7 +33,7 @@ function MeasurementsPanel(props: Props) {
       }}
     >
       {Array.from(measurements.values()).map(verticalMark => {
-        const mark = Object.values(verticalMark.marks)[0];
+        const mark = Object.values(verticalMark.marks)[0]!;
         const {timestamp} = mark;
         const bounds = getMeasurementBounds(timestamp, generateBounds);
 
@@ -48,8 +44,8 @@ function MeasurementsPanel(props: Props) {
         }
 
         const vitalLabels: VitalLabel[] = Object.keys(verticalMark.marks).map(name => ({
-          vital: VITAL_DETAILS[`measurements.${name}`],
-          isPoorValue: verticalMark.marks[name].failedThreshold,
+          vital: VITAL_DETAILS[`measurements.${name}` as keyof typeof VITAL_DETAILS],
+          isPoorValue: verticalMark.marks[name]!.failedThreshold,
         }));
 
         if (vitalLabels.length > 1) {
@@ -66,7 +62,7 @@ function MeasurementsPanel(props: Props) {
           <LabelContainer
             key={String(timestamp)}
             left={toPercent(bounds.left || 0)}
-            vitalLabel={vitalLabels[0]}
+            vitalLabel={vitalLabels[0]!}
           />
         );
       })}
@@ -105,7 +101,7 @@ const Label = styled('div')<{
 }>`
   transform: ${p => (p.isSingleLabel ? `translate(-50%, 15%)` : `translateY(15%)`)};
   font-size: ${p => p.theme.fontSizeExtraSmall};
-  font-weight: 600;
+  font-weight: ${p => p.theme.fontWeightBold};
   color: ${p => (p.failedThreshold ? `${p.theme.errorText}` : `${p.theme.textColor}`)};
   background: ${p => p.theme.background};
   border: 1px solid;
@@ -137,7 +133,6 @@ class LabelContainer extends Component<LabelContainerProps> {
   componentDidMount() {
     const {current} = this.elementDOMRef;
     if (current) {
-      // eslint-disable-next-line react/no-did-mount-set-state
       this.setState({
         width: current.clientWidth,
       });
@@ -183,7 +178,6 @@ class MultiLabelContainer extends Component<MultiLabelContainerProps> {
   componentDidMount() {
     const {current} = this.elementDOMRef;
     if (current) {
-      // eslint-disable-next-line react/no-did-mount-set-state
       this.setState({
         width: current.clientWidth,
       });

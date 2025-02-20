@@ -1,29 +1,44 @@
-import {ReactElement, useEffect, useLayoutEffect, useMemo, useState} from 'react';
-import {mat3, vec2} from 'gl-matrix';
+import type {ReactElement} from 'react';
+import {Fragment, useEffect, useLayoutEffect, useMemo, useState} from 'react';
+import * as Sentry from '@sentry/react';
+import type {mat3} from 'gl-matrix';
+import {vec2} from 'gl-matrix';
 
+import {addErrorMessage} from 'sentry/actionCreators/indicator';
+import {ContinuousFlamegraphContextMenu} from 'sentry/components/profiling/flamegraph/flamegraphContextMenu';
+import {FlamegraphWarnings} from 'sentry/components/profiling/flamegraph/flamegraphOverlays/FlamegraphWarnings';
 import {FlamegraphZoomView} from 'sentry/components/profiling/flamegraph/flamegraphZoomView';
 import {defined} from 'sentry/utils';
-import {CanvasPoolManager, CanvasScheduler} from 'sentry/utils/profiling/canvasScheduler';
+import type {
+  CanvasPoolManager,
+  CanvasScheduler,
+} from 'sentry/utils/profiling/canvasScheduler';
 import {CanvasView} from 'sentry/utils/profiling/canvasView';
-import {Flamegraph as FlamegraphModel} from 'sentry/utils/profiling/flamegraph';
+import type {Flamegraph as FlamegraphModel} from 'sentry/utils/profiling/flamegraph';
 import {useFlamegraphPreferences} from 'sentry/utils/profiling/flamegraph/hooks/useFlamegraphPreferences';
 import {useFlamegraphProfiles} from 'sentry/utils/profiling/flamegraph/hooks/useFlamegraphProfiles';
 import {useDispatchFlamegraphState} from 'sentry/utils/profiling/flamegraph/hooks/useFlamegraphState';
 import {useFlamegraphTheme} from 'sentry/utils/profiling/flamegraph/useFlamegraphTheme';
 import {FlamegraphCanvas} from 'sentry/utils/profiling/flamegraphCanvas';
-import {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import type {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
 import {
   computeConfigViewWithStrategy,
+  initializeFlamegraphRenderer,
   useResizeCanvasObserver,
 } from 'sentry/utils/profiling/gl/utils';
+import {FlamegraphRenderer2D} from 'sentry/utils/profiling/renderers/flamegraphRenderer2D';
 import {FlamegraphRendererWebGL} from 'sentry/utils/profiling/renderers/flamegraphRendererWebGL';
 import {Rect} from 'sentry/utils/profiling/speedscope';
+import type {QueryStatus} from 'sentry/utils/queryClient';
 import {useFlamegraph} from 'sentry/views/profiling/flamegraphProvider';
 import {useProfileGroup} from 'sentry/views/profiling/profileGroupProvider';
 
 interface AggregateFlamegraphProps {
   canvasPoolManager: CanvasPoolManager;
+  filter: 'application' | 'system' | 'all';
+  onResetFilter: () => void;
   scheduler: CanvasScheduler;
+  status: QueryStatus;
 }
 
 export function AggregateFlamegraph(props: AggregateFlamegraphProps): ReactElement {
@@ -61,7 +76,7 @@ export function AggregateFlamegraph(props: AggregateFlamegraphProps): ReactEleme
           inverted: flamegraph.inverted,
           minWidth: flamegraph.profile.minFrameDuration,
           barHeight: flamegraphTheme.SIZES.BAR_HEIGHT,
-          depthOffset: flamegraphTheme.SIZES.FLAMEGRAPH_DEPTH_OFFSET,
+          depthOffset: flamegraphTheme.SIZES.AGGREGATE_FLAMEGRAPH_DEPTH_OFFSET,
           configSpaceTransform: undefined,
         },
       });
@@ -70,7 +85,7 @@ export function AggregateFlamegraph(props: AggregateFlamegraphProps): ReactEleme
     },
 
     // We skip position.view dependency because it will go into an infinite loop
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
     [flamegraph, flamegraphCanvas, flamegraphTheme]
   );
 
@@ -150,10 +165,26 @@ export function AggregateFlamegraph(props: AggregateFlamegraphProps): ReactEleme
       return null;
     }
 
-    return new FlamegraphRendererWebGL(flamegraphCanvasRef, flamegraph, flamegraphTheme, {
-      colorCoding,
-      draw_border: true,
-    });
+    const renderer = initializeFlamegraphRenderer(
+      [FlamegraphRendererWebGL, FlamegraphRenderer2D],
+      [
+        flamegraphCanvasRef,
+        flamegraph,
+        flamegraphTheme,
+        {
+          colorCoding,
+          draw_border: true,
+        },
+      ]
+    );
+
+    if (renderer === null) {
+      Sentry.captureException('Failed to initialize a flamegraph renderer');
+      addErrorMessage('Failed to initialize renderer');
+      return null;
+    }
+
+    return renderer;
   }, [colorCoding, flamegraph, flamegraphCanvasRef, flamegraphTheme]);
 
   useEffect(() => {
@@ -175,18 +206,37 @@ export function AggregateFlamegraph(props: AggregateFlamegraphProps): ReactEleme
   }, [profileGroup, profiles.threadId, dispatch]);
 
   return (
-    <FlamegraphZoomView
-      disableCallOrderSort
-      canvasBounds={flamegraphCanvasBounds}
-      canvasPoolManager={props.canvasPoolManager}
-      flamegraph={flamegraph}
-      flamegraphRenderer={flamegraphRenderer}
-      flamegraphCanvas={flamegraphCanvas}
-      flamegraphCanvasRef={flamegraphCanvasRef}
-      flamegraphOverlayCanvasRef={flamegraphOverlayCanvasRef}
-      flamegraphView={flamegraphView}
-      setFlamegraphCanvasRef={setFlamegraphCanvasRef}
-      setFlamegraphOverlayCanvasRef={setFlamegraphOverlayCanvasRef}
-    />
+    <Fragment>
+      <FlamegraphWarnings
+        flamegraph={flamegraph}
+        requestState={
+          props.status === 'pending'
+            ? {type: 'loading'}
+            : props.status === 'error'
+              ? {type: 'errored', error: 'error'}
+              : {type: 'resolved', data: null}
+        }
+        onResetFilter={props.onResetFilter}
+        filter={props.filter}
+      />
+      <FlamegraphZoomView
+        profileGroup={profileGroup}
+        disableGrid
+        disableCallOrderSort
+        disableColorCoding
+        scheduler={props.scheduler}
+        canvasBounds={flamegraphCanvasBounds}
+        canvasPoolManager={props.canvasPoolManager}
+        flamegraph={flamegraph}
+        flamegraphRenderer={flamegraphRenderer}
+        flamegraphCanvas={flamegraphCanvas}
+        flamegraphCanvasRef={flamegraphCanvasRef}
+        flamegraphOverlayCanvasRef={flamegraphOverlayCanvasRef}
+        flamegraphView={flamegraphView}
+        setFlamegraphCanvasRef={setFlamegraphCanvasRef}
+        setFlamegraphOverlayCanvasRef={setFlamegraphOverlayCanvasRef}
+        contextMenu={ContinuousFlamegraphContextMenu}
+      />
+    </Fragment>
   );
 }

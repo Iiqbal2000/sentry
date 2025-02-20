@@ -1,6 +1,13 @@
-from sentry.services.hybrid_cloud.usersocialauth.service import usersocialauth_service
-from sentry.shared_integrations.client import BaseApiClient, BaseInternalApiClient
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, Literal, overload
+
+from requests import PreparedRequest, Response
+
+from sentry.shared_integrations.client.base import BaseApiClient
 from sentry.shared_integrations.exceptions import ApiUnauthorized
+from sentry.users.services.usersocialauth.service import usersocialauth_service
 
 
 class ApiClient(BaseApiClient):
@@ -14,8 +21,6 @@ class ApiClient(BaseApiClient):
 
 
 class AuthApiClient(ApiClient):
-    auth = None
-
     def __init__(self, auth=None, *args, **kwargs):
         self.auth = auth
         super().__init__(*args, **kwargs)
@@ -33,9 +38,46 @@ class AuthApiClient(ApiClient):
         return kwargs
 
     def bind_auth(self, **kwargs):
+        assert self.auth is not None
         token = self.auth.tokens["access_token"]
         kwargs["headers"]["Authorization"] = f"Bearer {token}"
         return kwargs
+
+    @overload
+    def _request(
+        self,
+        method: str,
+        path: str,
+        headers: Mapping[str, str] | None = None,
+        data: Mapping[str, str] | None = None,
+        params: Mapping[str, str] | None = None,
+        auth: tuple[str, str] | str | None = None,
+        json: bool = True,
+        allow_text: bool = False,
+        allow_redirects: bool | None = None,
+        timeout: int | None = None,
+        ignore_webhook_errors: bool = False,
+        prepared_request: PreparedRequest | None = None,
+        raw_response: Literal[True] = ...,
+    ) -> Response: ...
+
+    @overload
+    def _request(
+        self,
+        method: str,
+        path: str,
+        headers: Mapping[str, str] | None = None,
+        data: Mapping[str, str] | None = None,
+        params: Mapping[str, str] | None = None,
+        auth: str | None = None,
+        json: bool = True,
+        allow_text: bool = False,
+        allow_redirects: bool | None = None,
+        timeout: int | None = None,
+        ignore_webhook_errors: bool = False,
+        prepared_request: PreparedRequest | None = None,
+        raw_response: bool = ...,
+    ) -> Any: ...
 
     def _request(self, method, path, **kwargs):
         headers = kwargs.setdefault("headers", {})
@@ -60,13 +102,3 @@ class AuthApiClient(ApiClient):
         usersocialauth_service.refresh_token(filter={"id": self.auth.id})
         kwargs = self.bind_auth(**kwargs)
         return ApiClient._request(self, method, path, **kwargs)
-
-
-class InternalApiClient(BaseInternalApiClient):
-    integration_type = "plugin"
-
-    metrics_prefix = "sentry-plugins"
-
-    log_path = "sentry.plugins.client"
-
-    plugin_name = "undefined"

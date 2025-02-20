@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import sentry_sdk
 from django.conf import settings
@@ -9,9 +10,10 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from sentry_sdk import Scope
 
+from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
-from sentry.integrations.utils import get_integration_from_jwt
+from sentry.integrations.utils.atlassian_connect import get_integration_from_jwt
 from sentry.integrations.utils.scope import bind_org_context_from_integration
 from sentry.shared_integrations.exceptions import ApiError
 
@@ -23,14 +25,15 @@ logger = logging.getLogger(__name__)
 
 @region_silo_endpoint
 class JiraIssueUpdatedWebhook(JiraWebhookBase):
+    owner = ApiOwner.INTEGRATIONS
     publish_status = {
-        "POST": ApiPublishStatus.UNKNOWN,
+        "POST": ApiPublishStatus.PRIVATE,
     }
     """
     Webhook hit by Jira whenever an issue is updated in Jira's database.
     """
 
-    def handle_exception(
+    def handle_exception_with_details(
         self,
         request: Request,
         exc: Exception,
@@ -42,7 +45,7 @@ class JiraIssueUpdatedWebhook(JiraWebhookBase):
             if response_option:
                 return self.respond(response_option)
 
-        return super().handle_exception(request, exc, handler_context, scope)
+        return super().handle_exception_with_details(request, exc, handler_context, scope)
 
     def post(self, request: Request, *args, **kwargs) -> Response:
         token = self.get_token(request)
@@ -60,7 +63,7 @@ class JiraIssueUpdatedWebhook(JiraWebhookBase):
 
         data = request.data
         if not data.get("changelog"):
-            logger.info("missing-changelog", extra={"integration_id": rpc_integration.id})
+            logger.info("jira.missing-changelog", extra={"integration_id": rpc_integration.id})
             return self.respond()
 
         handle_assignee_change(rpc_integration, data, use_email_scope=settings.JIRA_USE_EMAIL_SCOPE)

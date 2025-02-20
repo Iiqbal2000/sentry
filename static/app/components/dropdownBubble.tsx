@@ -1,6 +1,7 @@
 import {forwardRef} from 'react';
 import isPropValid from '@emotion/is-prop-valid';
-import {css, Theme} from '@emotion/react';
+import type {Theme} from '@emotion/react';
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import {space} from 'sentry/styles/space';
@@ -43,7 +44,7 @@ const getMenuBorderRadius = ({
   width,
   theme,
 }: DropdownBubbleProps & {theme: Theme}) => {
-  const radius = theme.panelBorderRadius;
+  const radius = theme.borderRadius;
   if (!blendCorner || detached) {
     return css`
       border-radius: ${radius};

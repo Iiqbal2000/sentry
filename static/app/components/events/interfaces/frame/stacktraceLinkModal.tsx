@@ -1,13 +1,12 @@
 import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
-import uniq from 'lodash/uniq';
 
 import {addSuccessMessage} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import {Alert} from 'sentry/components/alert';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
 import {Button} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
+import {Alert} from 'sentry/components/core/alert';
 import TextField from 'sentry/components/forms/fields/textField';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Link from 'sentry/components/links/link';
@@ -15,8 +14,11 @@ import List from 'sentry/components/list';
 import TextCopyInput from 'sentry/components/textCopyInput';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {Integration, Organization, Project} from 'sentry/types';
+import type {Integration} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
+import {uniq} from 'sentry/utils/array/uniq';
 import {useApiQuery} from 'sentry/utils/queryClient';
 import useApi from 'sentry/utils/useApi';
 
@@ -51,7 +53,7 @@ function StacktraceLinkModal({
   const [error, setError] = useState<null | string>(null);
   const [sourceCodeInput, setSourceCodeInput] = useState('');
 
-  const {data: sugestedCodeMappings} = useApiQuery<DerivedCodeMapping[]>(
+  const {data: suggestedCodeMappings} = useApiQuery<DerivedCodeMapping[]>(
     [
       `/organizations/${organization.slug}/derive-code-mappings/`,
       {
@@ -70,7 +72,7 @@ function StacktraceLinkModal({
   );
 
   const suggestions = uniq(
-    (sugestedCodeMappings ?? []).map(suggestion => {
+    suggestedCodeMappings?.map(suggestion => {
       return `https://github.com/${suggestion.repo_name}/blob/${suggestion.repo_branch}/${suggestion.filename}`;
     })
   ).slice(0, 2);
@@ -85,10 +87,10 @@ function StacktraceLinkModal({
   // If they have more than one, they'll have to navigate themselves
   const hasOneSourceCodeIntegration = sourceCodeProviders.length === 1;
   const sourceUrl = hasOneSourceCodeIntegration
-    ? `https://${sourceCodeProviders[0].domainName}`
+    ? `https://${sourceCodeProviders[0]!.domainName}`
     : undefined;
   const providerName = hasOneSourceCodeIntegration
-    ? sourceCodeProviders[0].name
+    ? sourceCodeProviders[0]!.name
     : t('source code');
 
   const onManualSetup = () => {
@@ -97,7 +99,7 @@ function StacktraceLinkModal({
       setup_type: 'manual',
       provider:
         sourceCodeProviders.length === 1
-          ? sourceCodeProviders[0].provider.name
+          ? sourceCodeProviders[0]!.provider.name
           : 'unknown',
       organization,
     });
@@ -153,12 +155,12 @@ function StacktraceLinkModal({
   return (
     <Fragment>
       <Header closeButton>
-        <h4>{t('Tell us where your source code is')}</h4>
+        <h4>{t('Set up Code Mapping')}</h4>
       </Header>
       <Body>
         <ModalContainer>
           {error && (
-            <StyledAlert type="error" showIcon>
+            <Alert type="error" showIcon>
               {error === 'Could not find repo'
                 ? tct(
                     'We don’t have access to that [provider] repo. To fix this, [link:add your repo.]',
@@ -169,7 +171,7 @@ function StacktraceLinkModal({
                           onClick={onManualSetup}
                           to={
                             hasOneSourceCodeIntegration
-                              ? `/settings/${organization.slug}/integrations/${sourceCodeProviders[0].provider.key}/${sourceCodeProviders[0].id}/`
+                              ? `/settings/${organization.slug}/integrations/${sourceCodeProviders[0]!.provider.key}/${sourceCodeProviders[0]!.id}/`
                               : `/settings/${organization.slug}/integrations/`
                           }
                         />
@@ -177,9 +179,9 @@ function StacktraceLinkModal({
                     }
                   )
                 : error.includes('blank')
-                ? t('URL is required.')
-                : error}
-            </StyledAlert>
+                  ? t('URL is required.')
+                  : error}
+            </Alert>
           )}
           <div>
             {tct(
@@ -198,7 +200,7 @@ function StacktraceLinkModal({
                     ? tct('Go to [link]', {
                         link: (
                           <ExternalLink href={sourceUrl}>
-                            {sourceCodeProviders[0].provider.name}
+                            {sourceCodeProviders[0]!.provider.name}
                           </ExternalLink>
                         ),
                       })
@@ -304,10 +306,6 @@ const ModalContainer = styled('div')`
   display: flex;
   flex-direction: column;
   gap: ${space(2)};
-`;
-
-const StyledAlert = styled(Alert)`
-  margin-bottom: 0;
 `;
 
 const StyledCode = styled('code')`

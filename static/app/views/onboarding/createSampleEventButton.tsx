@@ -1,5 +1,4 @@
 import {Component} from 'react';
-import {browserHistory} from 'react-router';
 import * as Sentry from '@sentry/react';
 
 import {
@@ -7,13 +6,16 @@ import {
   addLoadingMessage,
   clearIndicators,
 } from 'sentry/actionCreators/indicator';
-import {Client} from 'sentry/api';
-import {Button, ButtonProps} from 'sentry/components/button';
+import type {Client} from 'sentry/api';
+import type {ButtonProps} from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 import withApi from 'sentry/utils/withApi';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import withOrganization from 'sentry/utils/withOrganization';
 
 type CreateSampleEventButtonProps = ButtonProps & {
@@ -38,7 +40,6 @@ async function latestEventAvailable(
 ): Promise<{eventCreated: boolean; retries: number}> {
   let retries = 0;
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     if (retries > EVENT_POLL_RETRIES) {
       return {eventCreated: false, retries: retries - 1};
@@ -80,7 +81,7 @@ class CreateSampleEventButton extends Component<CreateSampleEventButtonProps, St
 
   private _isMounted = true;
 
-  recordAnalytics({eventCreated, retries, duration}) {
+  recordAnalytics({eventCreated, retries, duration}: any) {
     const {organization, project, source} = this.props;
 
     if (!project) {
@@ -103,7 +104,7 @@ class CreateSampleEventButton extends Component<CreateSampleEventButtonProps, St
   createSampleGroup = async () => {
     // TODO(dena): swap out for action creator
     const {api, organization, project, onCreateSampleGroup} = this.props;
-    let eventData;
+    let eventData: any;
 
     if (!project) {
       return;

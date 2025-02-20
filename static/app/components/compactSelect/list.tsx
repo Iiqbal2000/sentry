@@ -1,17 +1,31 @@
-import {createContext, useCallback, useContext, useEffect, useMemo} from 'react';
+import {
+  createContext,
+  Fragment,
+  useCallback,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+} from 'react';
 import {useFocusManager} from '@react-aria/focus';
-import {AriaGridListOptions} from '@react-aria/gridlist';
-import {AriaListBoxOptions} from '@react-aria/listbox';
-import {ListProps, useListState} from '@react-stately/list';
+import type {AriaGridListOptions} from '@react-aria/gridlist';
+import type {AriaListBoxOptions} from '@react-aria/listbox';
+import type {ListProps} from '@react-stately/list';
+import {useListState} from '@react-stately/list';
 
 import {defined} from 'sentry/utils';
 import domId from 'sentry/utils/domId';
-import {FormSize} from 'sentry/utils/theme';
+import type {FormSize} from 'sentry/utils/theme';
 
 import {SelectContext} from './control';
 import {GridList} from './gridList';
 import {ListBox} from './listBox';
-import {SelectOption, SelectOptionOrSectionWithKey, SelectSection} from './types';
+import type {
+  SelectKey,
+  SelectOption,
+  SelectOptionOrSectionWithKey,
+  SelectOptionWithKey,
+  SelectSection,
+} from './types';
 import {
   getDisabledOptions,
   getEscapedKey,
@@ -20,9 +34,9 @@ import {
   HiddenSectionToggle,
 } from './utils';
 
-export const SelectFilterContext = createContext(new Set<React.Key>());
+export const SelectFilterContext = createContext(new Set<SelectKey>());
 
-interface BaseListProps<Value extends React.Key>
+interface BaseListProps<Value extends SelectKey>
   extends ListProps<any>,
     Omit<
       AriaListBoxOptions<any>,
@@ -40,7 +54,7 @@ interface BaseListProps<Value extends React.Key>
       | 'onSelectionChange'
       | 'autoFocus'
     > {
-  items: SelectOptionOrSectionWithKey<Value>[];
+  items: Array<SelectOptionOrSectionWithKey<Value>>;
   /**
    * This list's index number inside composite select menus.
    */
@@ -59,7 +73,7 @@ interface BaseListProps<Value extends React.Key>
    * Custom function to determine whether an option is disabled. By default, an option
    * is considered disabled when it has {disabled: true}.
    */
-  isOptionDisabled?: (opt: SelectOption<Value>) => boolean;
+  isOptionDisabled?: (opt: SelectOptionWithKey<Value>) => boolean;
   /**
    * Text label to be rendered as heading on top of grid list.
    */
@@ -69,7 +83,7 @@ interface BaseListProps<Value extends React.Key>
    * have `showToggleAllButton` set to true.) Note: this will be called in addition to
    * and before `onChange`.
    */
-  onSectionToggle?: (section: SelectSection<React.Key>) => void;
+  onSectionToggle?: (section: SelectSection<SelectKey>) => void;
   size?: FormSize;
   /**
    * Upper limit for the number of options to display in the menu at a time. Users can
@@ -84,7 +98,7 @@ interface BaseListProps<Value extends React.Key>
   sizeLimitMessage?: string;
 }
 
-export interface SingleListProps<Value extends React.Key> extends BaseListProps<Value> {
+export interface SingleListProps<Value extends SelectKey> extends BaseListProps<Value> {
   /**
    * Whether to close the menu. Accepts either a boolean value or a callback function
    * that receives the newly selected option and returns whether to close the menu.
@@ -96,15 +110,15 @@ export interface SingleListProps<Value extends React.Key> extends BaseListProps<
   value?: Value;
 }
 
-export interface MultipleListProps<Value extends React.Key> extends BaseListProps<Value> {
+export interface MultipleListProps<Value extends SelectKey> extends BaseListProps<Value> {
   multiple: true;
   /**
    * Whether to close the menu. Accepts either a boolean value or a callback function
    * that receives the newly selected options and returns whether to close the menu.
    */
-  closeOnSelect?: boolean | ((selectedOptions: SelectOption<Value>[]) => boolean);
+  closeOnSelect?: boolean | ((selectedOptions: Array<SelectOption<Value>>) => boolean);
   defaultValue?: Value[];
-  onChange?: (selectedOptions: SelectOption<Value>[]) => void;
+  onChange?: (selectedOptions: Array<SelectOption<Value>>) => void;
   value?: Value[];
 }
 
@@ -115,7 +129,7 @@ export interface MultipleListProps<Value extends React.Key> extends BaseListProp
  * In composite selectors, there may be multiple self-contained lists, each
  * representing a select "region".
  */
-function List<Value extends React.Key>({
+function List<Value extends SelectKey>({
   items,
   value,
   defaultValue,
@@ -132,7 +146,7 @@ function List<Value extends React.Key>({
   closeOnSelect,
   ...props
 }: SingleListProps<Value> | MultipleListProps<Value>) {
-  const {overlayState, registerListState, saveSelectedOptions, search} =
+  const {overlayState, registerListState, saveSelectedOptions, search, overlayIsOpen} =
     useContext(SelectContext);
 
   const hiddenOptions = useMemo(
@@ -147,11 +161,11 @@ function List<Value extends React.Key>({
     const disabledKeys = [
       ...getDisabledOptions(items, isOptionDisabled),
       ...hiddenOptions,
-    ].map(getEscapedKey);
+    ];
 
     if (multiple) {
       return {
-        selectionMode: 'multiple',
+        selectionMode: 'multiple' as const,
         disabledKeys,
         // react-aria turns all keys into strings
         selectedKeys: value?.map(getEscapedKey),
@@ -177,7 +191,7 @@ function List<Value extends React.Key>({
     }
 
     return {
-      selectionMode: 'single',
+      selectionMode: 'single' as const,
       disabledKeys,
       // react-aria turns all keys into strings
       selectedKeys: defined(value) ? [getEscapedKey(value)] : undefined,
@@ -187,17 +201,17 @@ function List<Value extends React.Key>({
       disallowEmptySelection: disallowEmptySelection ?? true,
       allowDuplicateSelectionEvents: true,
       onSelectionChange: selection => {
-        const selectedOption = getSelectedOptions(items, selection)[0] ?? null;
+        const selectedOption = getSelectedOptions(items, selection)[0]!;
         // Save selected options in SelectContext, to update the trigger label
-        saveSelectedOptions(compositeIndex, selectedOption);
-        onChange?.(selectedOption);
+        saveSelectedOptions(compositeIndex, selectedOption ?? null);
+        onChange?.(selectedOption ?? null);
 
         // Close menu if closeOnSelect is true or undefined (by default single-selection
         // menus will close on selection)
         if (
           !defined(closeOnSelect) ||
           (typeof closeOnSelect === 'function'
-            ? closeOnSelect(selectedOption)
+            ? closeOnSelect(selectedOption ?? null)
             : closeOnSelect)
         ) {
           overlayState?.close();
@@ -226,7 +240,7 @@ function List<Value extends React.Key>({
   });
 
   // Register the initialized list state once on mount
-  useEffect(() => {
+  useLayoutEffect(() => {
     registerListState(compositeIndex, listState);
     saveSelectedOptions(
       compositeIndex,
@@ -283,7 +297,7 @@ function List<Value extends React.Key>({
         e.key === 'ArrowDown' &&
         listState.selectionManager.focusedKey === lastFocusableKey
       ) {
-        focusManager.focusNext({
+        focusManager?.focusNext({
           wrap: true,
           accept: element =>
             (element.getAttribute('role') === 'option' ||
@@ -300,7 +314,7 @@ function List<Value extends React.Key>({
         e.key === 'ArrowUp' &&
         listState.selectionManager.focusedKey === firstFocusableKey
       ) {
-        focusManager.focusPrevious({
+        focusManager?.focusPrevious({
           wrap: true,
           accept: element =>
             (element.getAttribute('role') === 'option' ||
@@ -332,25 +346,30 @@ function List<Value extends React.Key>({
           // This is a section
           item.type === 'section' &&
           // Options inside the section haven't been all filtered out
-          ![...item.childNodes].every(child => hiddenOptions.has(child.props.value))
+          ![...item.childNodes].every(child => hiddenOptions.has(child.key))
       ),
 
     [listState.collection, hiddenOptions]
   );
 
   return (
-    <SelectFilterContext.Provider value={hiddenOptions}>
+    <Fragment>
       {grid ? (
-        <GridList
-          {...props}
-          id={listId}
-          listState={listState}
-          sizeLimitMessage={sizeLimitMessage}
-          keyDownHandler={keyDownHandler}
-        />
+        <SelectFilterContext.Provider value={hiddenOptions}>
+          <GridList
+            {...props}
+            id={listId}
+            listState={listState}
+            sizeLimitMessage={sizeLimitMessage}
+            keyDownHandler={keyDownHandler}
+          />
+        </SelectFilterContext.Provider>
       ) : (
         <ListBox
           {...props}
+          hasSearch={!!search}
+          overlayIsOpen={overlayIsOpen}
+          hiddenOptions={hiddenOptions}
           id={listId}
           listState={listState}
           shouldFocusWrap={shouldFocusWrap}
@@ -373,7 +392,7 @@ function List<Value extends React.Key>({
               />
             )
         )}
-    </SelectFilterContext.Provider>
+    </Fragment>
   );
 }
 

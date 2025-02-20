@@ -1,15 +1,18 @@
+import {GitHubIntegrationFixture} from 'sentry-fixture/githubIntegration';
+
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {
   render,
   renderGlobalModal,
   screen,
   userEvent,
+  waitForElementToBeRemoved,
 } from 'sentry-test/reactTestingLibrary';
 
 import IntegrationExternalMappings from './integrationExternalMappings';
 
 describe('IntegrationExternalMappings', function () {
-  const {organization, routerContext} = initializeOrg();
+  const {organization, router} = initializeOrg();
 
   const onCreateMock = jest.fn();
   const onDeleteMock = jest.fn();
@@ -64,7 +67,7 @@ describe('IntegrationExternalMappings', function () {
     });
   };
 
-  it('renders empty if not mappings are provided or found', function () {
+  it('renders empty if not mappings are provided or found', async function () {
     MockApiClient.addMockResponse({
       url: `/organizations/${organization.slug}/codeowners-associations/`,
       method: 'GET',
@@ -72,8 +75,7 @@ describe('IntegrationExternalMappings', function () {
     });
     const {container} = render(
       <IntegrationExternalMappings
-        organization={organization}
-        integration={TestStubs.GitHubIntegration()}
+        integration={GitHubIntegrationFixture()}
         mappings={[]}
         type="user"
         onCreate={onCreateMock}
@@ -84,9 +86,11 @@ describe('IntegrationExternalMappings', function () {
         sentryNamesMapper={data => data}
       />,
       {
-        context: routerContext,
+        router,
       }
     );
+
+    await waitForElementToBeRemoved(() => screen.queryByTestId('loading-indicator'));
     expect(container).toHaveTextContent('Set up External User Mappings.');
   });
 
@@ -94,8 +98,7 @@ describe('IntegrationExternalMappings', function () {
     createMockSuggestions();
     render(
       <IntegrationExternalMappings
-        organization={organization}
-        integration={TestStubs.GitHubIntegration()}
+        integration={GitHubIntegrationFixture()}
         mappings={[]}
         type="user"
         onCreate={onCreateMock}
@@ -106,7 +109,7 @@ describe('IntegrationExternalMappings', function () {
         sentryNamesMapper={data => data}
       />,
       {
-        context: routerContext,
+        router,
       }
     );
 
@@ -121,8 +124,7 @@ describe('IntegrationExternalMappings', function () {
     createMockSuggestions();
     render(
       <IntegrationExternalMappings
-        organization={organization}
-        integration={TestStubs.GitHubIntegration()}
+        integration={GitHubIntegrationFixture()}
         mappings={MOCK_TEAM_MAPPINGS}
         type="team"
         onCreate={onCreateMock}
@@ -133,7 +135,7 @@ describe('IntegrationExternalMappings', function () {
         sentryNamesMapper={data => data}
       />,
       {
-        context: routerContext,
+        router,
       }
     );
 
@@ -154,8 +156,7 @@ describe('IntegrationExternalMappings', function () {
     createMockSuggestions();
     render(
       <IntegrationExternalMappings
-        organization={organization}
-        integration={TestStubs.GitHubIntegration()}
+        integration={GitHubIntegrationFixture()}
         mappings={MOCK_USER_MAPPINGS}
         type="user"
         onCreate={onCreateMock}
@@ -166,7 +167,7 @@ describe('IntegrationExternalMappings', function () {
         sentryNamesMapper={data => data}
       />,
       {
-        context: routerContext,
+        router,
       }
     );
     renderGlobalModal();
@@ -176,7 +177,7 @@ describe('IntegrationExternalMappings', function () {
     expect(onCreateMock).toHaveBeenCalled();
 
     await userEvent.click(
-      screen.getAllByRole('button', {name: 'Remove user mapping'})[0]
+      screen.getAllByRole('button', {name: 'Remove user mapping'})[0]!
     );
     await userEvent.click(screen.getByTestId('confirm-button'));
     expect(onDeleteMock).toHaveBeenCalled();

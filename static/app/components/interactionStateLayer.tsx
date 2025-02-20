@@ -5,15 +5,37 @@ import styled from '@emotion/styled';
 import {defined} from 'sentry/utils';
 
 interface StateLayerProps extends React.HTMLAttributes<HTMLSpanElement> {
+  as?: React.ElementType;
   color?: string;
+  /**
+   * Controls if the opacity is increased when the element is in a
+   * selected or expanded state (aria-selected='true' or aria-expanded='true')
+   *
+   * @default true
+   */
+  hasSelectedBackground?: boolean;
   higherOpacity?: boolean;
   isHovered?: boolean;
   isPressed?: boolean;
 }
 
+const defaultProps = {
+  hasSelectedBackground: true,
+};
+
 const InteractionStateLayer = styled(
-  (props: StateLayerProps) => <span role="presentation" {...props} />,
-  {shouldForwardProp: p => typeof p === 'string' && isPropValid(p)}
+  (props: StateLayerProps) => {
+    // Prevent type checking of `rest` as it has hundreds of properties and is slow
+    const {children, as: Element = 'span', ...rest} = props as any;
+
+    // Here, using `as` directly doesn't work because it loses the `role` prop. Instead, manually propagating the props does the right thing.
+    return (
+      <Element {...rest} role="presentation">
+        {children}
+      </Element>
+    );
+  },
+  {shouldForwardProp: p => isPropValid(p) || p === 'as'}
 )`
   position: absolute;
   top: 50%;
@@ -25,7 +47,10 @@ const InteractionStateLayer = styled(
   box-sizing: content-box;
   border-radius: inherit;
   border: inherit;
-  color: ${p => (p.color ? p.theme[p.color] ?? p.color : 'currentcolor')};
+  color: ${p =>
+    p.color
+      ? (p.theme[p.color as keyof typeof p.theme] as string | undefined) ?? p.color
+      : 'currentcolor'};
   background-color: currentcolor;
   border-color: currentcolor;
   pointer-events: none;
@@ -40,7 +65,7 @@ const InteractionStateLayer = styled(
         `
       : // If isHovered is undefined, then fallback to a default hover selector
         css`
-          *:hover:not(.focus-visible) > & {
+          *:hover:not(:focus-visible) > & {
             opacity: ${p.higherOpacity ? 0.085 : 0.06};
           }
         `}
@@ -55,11 +80,16 @@ const InteractionStateLayer = styled(
         `
       : // If isPressed is undefined, then fallback to default press selectors
         css`
-          *:active > &&,
-          *[aria-expanded='true'] > &&,
-          *[aria-selected='true'] > && {
+          *:active > && {
             opacity: ${p.higherOpacity ? 0.12 : 0.09};
           }
+          ${(p.hasSelectedBackground ?? defaultProps.hasSelectedBackground) &&
+          css`
+            *[aria-expanded='true'] > &&,
+            *[aria-selected='true'] > && {
+              opacity: ${p.higherOpacity ? 0.12 : 0.09};
+            }
+          `}
         `}
 
 

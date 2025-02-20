@@ -2,7 +2,7 @@ import styled from '@emotion/styled';
 import type {Location} from 'history';
 import pick from 'lodash/pick';
 
-import AlertBadge from 'sentry/components/alertBadge';
+import AlertBadge from 'sentry/components/badge/alertBadge';
 import {SectionHeading} from 'sentry/components/charts/styles';
 import EmptyStateWarning from 'sentry/components/emptyStateWarning';
 import Link from 'sentry/components/links/link';
@@ -13,9 +13,12 @@ import {URL_PARAM} from 'sentry/constants/pageFilters';
 import {IconCheckmark, IconExclamation, IconFire, IconOpen} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 import {useApiQuery} from 'sentry/utils/queryClient';
-import {Incident, IncidentStatus} from 'sentry/views/alerts/types';
+import useOrganization from 'sentry/utils/useOrganization';
+import {makeAlertsPathname} from 'sentry/views/alerts/pathnames';
+import type {Incident} from 'sentry/views/alerts/types';
+import {IncidentStatus} from 'sentry/views/alerts/types';
 
 import MissingAlertsButtons from './missingFeatureButtons/missingAlertsButtons';
 import {SectionHeadingLink, SectionHeadingWrapper, SidebarSection} from './styles';
@@ -24,10 +27,10 @@ const PLACEHOLDER_AND_EMPTY_HEIGHT = '172px';
 
 interface AlertRowProps {
   alert: Incident;
-  orgSlug: string;
 }
 
-function AlertRow({alert, orgSlug}: AlertRowProps) {
+function AlertRow({alert}: AlertRowProps) {
+  const organization = useOrganization();
   const {status, identifier, title, dateClosed, dateStarted} = alert;
   const isResolved = status === IncidentStatus.CLOSED;
   const isWarning = status === IncidentStatus.WARNING;
@@ -39,9 +42,12 @@ function AlertRow({alert, orgSlug}: AlertRowProps) {
   return (
     <AlertRowLink
       aria-label={title}
-      to={`/organizations/${orgSlug}/alerts/${identifier}/`}
+      to={makeAlertsPathname({
+        path: `/${identifier}/`,
+        organization,
+      })}
     >
-      <AlertBadgeWrapper {...statusProps} icon={Icon}>
+      <AlertBadgeWrapper icon={Icon}>
         <AlertBadge status={status} />
       </AlertBadgeWrapper>
       <AlertDetails>
@@ -83,7 +89,7 @@ function ProjectLatestAlerts({
   };
   const {
     data: unresolvedAlerts = [],
-    isLoading: unresolvedAlertsIsLoading,
+    isPending: unresolvedAlertsIsLoading,
     isError: unresolvedAlertsIsError,
   } = useApiQuery<Incident[]>(
     [
@@ -94,7 +100,7 @@ function ProjectLatestAlerts({
   );
   const {
     data: resolvedAlerts = [],
-    isLoading: resolvedAlertsIsLoading,
+    isPending: resolvedAlertsIsLoading,
     isError: resolvedAlertsIsError,
   } = useApiQuery<Incident[]>(
     [
@@ -110,7 +116,7 @@ function ProjectLatestAlerts({
     !unresolvedAlertsIsLoading &&
     !resolvedAlertsIsLoading;
   // This is only used to determine if we should show the "Create Alert" button
-  const {data: alertRules = [], isLoading: alertRulesLoading} = useApiQuery<any[]>(
+  const {data: alertRules = [], isPending: alertRulesLoading} = useApiQuery<any[]>(
     [
       `/organizations/${organization.slug}/alert-rules/`,
       {
@@ -153,9 +159,7 @@ function ProjectLatestAlerts({
 
     return alertsUnresolvedAndResolved
       .slice(0, 3)
-      .map(alert => (
-        <AlertRow key={alert.id} alert={alert} orgSlug={organization.slug} />
-      ));
+      .map(alert => <AlertRow key={alert.id} alert={alert} />);
   }
 
   return (
@@ -165,7 +169,10 @@ function ProjectLatestAlerts({
         {/* as this is a link to latest alerts, we want to only preserve project and environment */}
         <SectionHeadingLink
           to={{
-            pathname: `/organizations/${organization.slug}/alerts/`,
+            pathname: makeAlertsPathname({
+              path: `/`,
+              organization,
+            }),
             query: {
               statsPeriod: undefined,
               start: undefined,
@@ -207,7 +214,7 @@ type StatusColorProps = {
 const getStatusColor = ({isResolved, isWarning}: StatusColorProps) =>
   isResolved ? 'successText' : isWarning ? 'warningText' : 'errorText';
 
-const AlertBadgeWrapper = styled('div')<{icon: React.ReactNode} & StatusColorProps>`
+const AlertBadgeWrapper = styled('div')<{icon: typeof IconExclamation}>`
   display: flex;
   align-items: center;
   justify-content: center;
@@ -224,7 +231,7 @@ const AlertDetails = styled('div')`
 `;
 
 const AlertTitle = styled('div')`
-  font-weight: 400;
+  font-weight: ${p => p.theme.fontWeightNormal};
   overflow: hidden;
   text-overflow: ellipsis;
 `;

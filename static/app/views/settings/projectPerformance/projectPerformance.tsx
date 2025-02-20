@@ -1,36 +1,39 @@
 import {Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
 import Access from 'sentry/components/acl/access';
 import Feature from 'sentry/components/acl/feature';
-import {Button} from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
 import Confirm from 'sentry/components/confirm';
-import FieldWrapper from 'sentry/components/forms/fieldGroup/fieldWrapper';
+import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
+import {FieldWrapper} from 'sentry/components/forms/fieldGroup/fieldWrapper';
 import Form from 'sentry/components/forms/form';
 import JsonForm from 'sentry/components/forms/jsonForm';
-import {Field, JsonFormObject} from 'sentry/components/forms/types';
+import type {Field, JsonFormObject} from 'sentry/components/forms/types';
 import ExternalLink from 'sentry/components/links/externalLink';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import Panel from 'sentry/components/panels/panel';
 import PanelFooter from 'sentry/components/panels/panelFooter';
 import PanelHeader from 'sentry/components/panels/panelHeader';
 import PanelItem from 'sentry/components/panels/panelItem';
+import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t, tct} from 'sentry/locale';
 import ConfigStore from 'sentry/stores/configStore';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import {space} from 'sentry/styles/space';
-import {IssueTitle, IssueType, Organization, Project, Scope} from 'sentry/types';
-import {DynamicSamplingBiasType} from 'sentry/types/sampling';
+import type {Scope} from 'sentry/types/core';
+import {IssueTitle, IssueType} from 'sentry/types/group';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type {DynamicSamplingBiasType} from 'sentry/types/sampling';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import {formatPercentage} from 'sentry/utils/formatters';
 import {safeGetQsParam} from 'sentry/utils/integrationUtil';
 import {isActiveSuperuser} from 'sentry/utils/isActiveSuperuser';
-import routeTitleGen from 'sentry/utils/routeTitle';
-import DeprecatedAsyncView from 'sentry/views/deprecatedAsyncView';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
-import PermissionAlert from 'sentry/views/settings/project/permissionAlert';
+import {ProjectPermissionAlert} from 'sentry/views/settings/project/projectPermissionAlert';
 
 // These labels need to be exported so that they can be used in audit logs
 export const retentionPrioritiesLabels = {
@@ -56,6 +59,8 @@ export const allowedSizeValues: number[] = [
   10000000,
 ]; // 50kb to 10MB in bytes
 
+export const allowedCountValues: number[] = [5, 10, 20, 50, 100];
+
 export const projectDetectorSettingsId = 'detector-threshold-settings';
 
 type ProjectPerformanceSettings = {[key: string]: number | boolean};
@@ -72,11 +77,14 @@ enum DetectorConfigAdmin {
   N_PLUS_ONE_API_CALLS_ENABLED = 'n_plus_one_api_calls_detection_enabled',
   CONSECUTIVE_HTTP_ENABLED = 'consecutive_http_spans_detection_enabled',
   HTTP_OVERHEAD_ENABLED = 'http_overhead_detection_enabled',
+  TRANSACTION_DURATION_REGRESSION_ENABLED = 'transaction_duration_regression_detection_enabled',
+  FUNCTION_DURATION_REGRESSION_ENABLED = 'function_duration_regression_detection_enabled',
 }
 
 export enum DetectorConfigCustomer {
   SLOW_DB_DURATION = 'slow_db_query_duration_threshold',
   N_PLUS_DB_DURATION = 'n_plus_one_db_duration_threshold',
+  N_PLUS_DB_COUNT = 'n_plus_one_db_count',
   N_PLUS_API_CALLS_DURATION = 'n_plus_one_api_calls_total_duration_threshold',
   RENDER_BLOCKING_ASSET_RATIO = 'render_blocking_fcp_ratio',
   LARGE_HTT_PAYLOAD_SIZE = 'large_http_payload_size_threshold',
@@ -91,7 +99,7 @@ export enum DetectorConfigCustomer {
 
 type RouteParams = {orgId: string; projectId: string};
 
-type Props = RouteComponentProps<{projectId: string}, {}> & {
+type Props = RouteComponentProps<{projectId: string}> & {
   organization: Organization;
   project: Project;
 };
@@ -103,17 +111,11 @@ type ProjectThreshold = {
   id?: string;
 };
 
-type State = DeprecatedAsyncView['state'] & {
+type State = DeprecatedAsyncComponent['state'] & {
   threshold: ProjectThreshold;
 };
 
-class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
-  getTitle() {
-    const {projectId} = this.props.params;
-
-    return routeTitleGen(t('Performance'), projectId, false);
-  }
-
+class ProjectPerformance extends DeprecatedAsyncComponent<Props, State> {
   getProjectEndpoint({orgId, projectId}: RouteParams) {
     return `/projects/${orgId}/${projectId}/`;
   }
@@ -122,11 +124,11 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
     return `/projects/${orgId}/${projectId}/performance-issues/configure/`;
   }
 
-  getEndpoints(): ReturnType<DeprecatedAsyncView['getEndpoints']> {
+  getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
     const {params, organization} = this.props;
     const {projectId} = params;
 
-    const endpoints: ReturnType<DeprecatedAsyncView['getEndpoints']> = [
+    const endpoints: ReturnType<DeprecatedAsyncComponent['getEndpoints']> = [
       [
         'threshold',
         `/projects/${organization.slug}/${projectId}/transaction-threshold/configure/`,
@@ -134,19 +136,27 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
       ['project', `/projects/${organization.slug}/${projectId}/`],
     ];
 
-    if (organization.features.includes('project-performance-settings-admin')) {
-      const performanceIssuesEndpoint = [
-        'performance_issue_settings',
-        `/projects/${organization.slug}/${projectId}/performance-issues/configure/`,
-      ] as [string, string];
+    const performanceIssuesEndpoint: ReturnType<
+      DeprecatedAsyncComponent['getEndpoints']
+    >[number] = [
+      'performance_issue_settings',
+      `/projects/${organization.slug}/${projectId}/performance-issues/configure/`,
+    ];
 
-      endpoints.push(performanceIssuesEndpoint);
-    }
+    const generalSettingsEndpoint: ReturnType<
+      DeprecatedAsyncComponent['getEndpoints']
+    >[number] = [
+      'general',
+      `/projects/${organization.slug}/${projectId}/performance/configure/`,
+    ];
+
+    endpoints.push(performanceIssuesEndpoint);
+    endpoints.push(generalSettingsEndpoint);
 
     return endpoints;
   }
 
-  getRetentionPrioritiesData(...data) {
+  getRetentionPrioritiesData(...data: any) {
     return {
       dynamicSamplingBiases: Object.entries(data[1].form).map(([key, value]) => ({
         id: key,
@@ -439,6 +449,32 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
             },
           }),
       },
+      {
+        name: DetectorConfigAdmin.TRANSACTION_DURATION_REGRESSION_ENABLED,
+        type: 'boolean',
+        label: t('Transaction Duration Regression Enabled'),
+        defaultValue: true,
+        onChange: value =>
+          this.setState({
+            performance_issue_settings: {
+              ...this.state.performance_issue__settings,
+              [DetectorConfigAdmin.TRANSACTION_DURATION_REGRESSION_ENABLED]: value,
+            },
+          }),
+      },
+      {
+        name: DetectorConfigAdmin.FUNCTION_DURATION_REGRESSION_ENABLED,
+        type: 'boolean',
+        label: t('Function Duration Regression Enabled'),
+        defaultValue: true,
+        onChange: value =>
+          this.setState({
+            performance_issue_settings: {
+              ...this.state.performance_issue__settings,
+              [DetectorConfigAdmin.FUNCTION_DURATION_REGRESSION_ENABLED]: value,
+            },
+          }),
+      },
     ];
   }
 
@@ -472,6 +508,10 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
       return fps ? `${Math.floor(fps / 5) * 5}fps` : '';
     };
 
+    const formatCount = (value: number | ''): string => {
+      return '' + value;
+    };
+
     const issueType = safeGetQsParam('issueType');
 
     return [
@@ -493,6 +533,24 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
             tickValues: [0, allowedDurationValues.length - 1],
             showTickLabels: true,
             formatLabel: formatDuration,
+            flexibleControlStateSize: true,
+            disabledReason,
+          },
+          {
+            name: DetectorConfigCustomer.N_PLUS_DB_COUNT,
+            type: 'range',
+            label: t('Minimum Query Count'),
+            defaultValue: 5,
+            help: t(
+              'Setting the value to 5 means that an eligible event will be detected as an N+1 DB Query Issue only if the number of repeated queries exceeds 5'
+            ),
+            allowedValues: allowedCountValues,
+            disabled: !(
+              hasAccess && performanceSettings[DetectorConfigAdmin.N_PLUS_DB_ENABLED]
+            ),
+            tickValues: [0, allowedCountValues.length - 1],
+            showTickLabels: true,
+            formatLabel: formatCount,
             flexibleControlStateSize: true,
             disabledReason,
           },
@@ -814,8 +872,33 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
 
     return (
       <Fragment>
+        <SentryDocumentTitle title={t('Performance')} projectSlug={project.slug} />
         <SettingsPageHeader title={t('Performance')} />
-        <PermissionAlert project={project} />
+        <ProjectPermissionAlert project={project} />
+        <Access access={requiredScopes} project={project}>
+          {({hasAccess}) => (
+            <Feature features="organizations:insights-initial-modules">
+              <Form
+                initialData={this.state.general}
+                saveOnBlur
+                apiEndpoint={`/projects/${organization.slug}/${project.slug}/performance/configure/`}
+              >
+                <JsonForm
+                  disabled={!hasAccess}
+                  fields={[
+                    {
+                      name: 'enable_images',
+                      type: 'boolean',
+                      label: t('Images'),
+                      help: t('Enables images from real data to be displayed'),
+                    },
+                  ]}
+                  title={t('General')}
+                />
+              </Form>
+            </Feature>
+          )}
+        </Access>
 
         <Form
           saveOnBlur
@@ -838,7 +921,7 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
           <Access access={requiredScopes} project={project}>
             {({hasAccess}) => (
               <JsonForm
-                title={t('General')}
+                title={t('Threshold Settings')}
                 fields={this.formFields}
                 disabled={!hasAccess}
                 renderFooter={() => (
@@ -850,15 +933,18 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
             )}
           </Access>
         </Form>
-        <Feature features={['organizations:dynamic-sampling']}>
+        <Feature features="organizations:dynamic-sampling">
           <Form
             saveOnBlur
             allowUndo
             initialData={
-              project.dynamicSamplingBiases?.reduce((acc, bias) => {
-                acc[bias.id] = bias.active;
-                return acc;
-              }, {}) ?? {}
+              project.dynamicSamplingBiases?.reduce<Record<string, boolean>>(
+                (acc, bias) => {
+                  acc[bias.id] = bias.active;
+                  return acc;
+                },
+                {}
+              ) ?? {}
             }
             onSubmitSuccess={(response, _instance, id, change) => {
               ProjectsStore.onUpdateSuccess(response);
@@ -879,17 +965,17 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
             <Access access={requiredScopes} project={project}>
               {({hasAccess}) => (
                 <JsonForm
-                  title={t('Retention Priorities')}
+                  title={t('Sampling Priorities')}
                   fields={this.retentionPrioritiesFormFields}
                   disabled={!hasAccess}
                   renderFooter={() => (
                     <Actions>
-                      <Button
+                      <LinkButton
                         external
                         href="https://docs.sentry.io/product/performance/performance-at-scale/"
                       >
                         {t('Read docs')}
-                      </Button>
+                      </LinkButton>
                     </Actions>
                   )}
                 />
@@ -898,7 +984,7 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
           </Form>
         </Feature>
         <Fragment>
-          <Feature features={['organizations:performance-issues-dev']}>
+          <Feature features="organizations:performance-issues-dev">
             <Form
               saveOnBlur
               allowUndo
@@ -924,81 +1010,79 @@ class ProjectPerformance extends DeprecatedAsyncView<Props, State> {
               </Access>
             </Form>
           </Feature>
-          <Feature features={['organizations:project-performance-settings-admin']}>
-            {isSuperUser && (
-              <Form
-                saveOnBlur
-                allowUndo
-                initialData={this.state.performance_issue_settings}
-                apiMethod="PUT"
-                onSubmitError={error => {
-                  if (error.status === 403) {
-                    addErrorMessage(
-                      t(
-                        'This action requires active super user access. Please re-authenticate to make changes.'
-                      )
-                    );
-                  }
-                }}
-                apiEndpoint={performanceIssuesEndpoint}
-              >
-                <JsonForm
-                  title={t(
-                    '### INTERNAL ONLY ### - Performance Issues Admin Detector Settings'
-                  )}
-                  fields={this.performanceIssueDetectorAdminFields}
-                  disabled={!isSuperUser}
-                />
-              </Form>
-            )}
+          {isSuperUser && (
             <Form
+              saveOnBlur
               allowUndo
               initialData={this.state.performance_issue_settings}
               apiMethod="PUT"
-              apiEndpoint={performanceIssuesEndpoint}
-              saveOnBlur
-              onSubmitSuccess={(option: {[key: string]: number}) => {
-                const [threshold_key, threshold_value] = Object.entries(option)[0];
-
-                trackAnalytics(
-                  'performance_views.project_issue_detection_threshold_changed',
-                  {
-                    organization,
-                    project_slug: project.slug,
-                    threshold_key,
-                    threshold_value,
-                  }
-                );
+              onSubmitError={error => {
+                if (error.status === 403) {
+                  addErrorMessage(
+                    t(
+                      'This action requires active super user access. Please re-authenticate to make changes.'
+                    )
+                  );
+                }
               }}
+              apiEndpoint={performanceIssuesEndpoint}
             >
-              <Access access={requiredScopes} project={project}>
-                {({hasAccess}) => (
-                  <div id={projectDetectorSettingsId}>
-                    <StyledPanelHeader>
-                      {t('Performance Issues - Detector Threshold Settings')}
-                    </StyledPanelHeader>
-                    <StyledJsonForm
-                      forms={this.project_owner_detector_settings(hasAccess)}
-                      collapsible
-                    />
-                    <StyledPanelFooter>
-                      <Actions>
-                        <Confirm
-                          message={t(
-                            'Are you sure you wish to reset all detector thresholds?'
-                          )}
-                          onConfirm={() => this.handleThresholdsReset()}
-                          disabled={!hasAccess || this.areAllConfigurationsDisabled}
-                        >
-                          <Button>{t('Reset All Thresholds')}</Button>
-                        </Confirm>
-                      </Actions>
-                    </StyledPanelFooter>
-                  </div>
+              <JsonForm
+                title={t(
+                  '### INTERNAL ONLY ### - Performance Issues Admin Detector Settings'
                 )}
-              </Access>
+                fields={this.performanceIssueDetectorAdminFields}
+                disabled={!isSuperUser}
+              />
             </Form>
-          </Feature>
+          )}
+          <Form
+            allowUndo
+            initialData={this.state.performance_issue_settings}
+            apiMethod="PUT"
+            apiEndpoint={performanceIssuesEndpoint}
+            saveOnBlur
+            onSubmitSuccess={(option: {[key: string]: number}) => {
+              const [threshold_key, threshold_value] = Object.entries(option)[0]!;
+
+              trackAnalytics(
+                'performance_views.project_issue_detection_threshold_changed',
+                {
+                  organization,
+                  project_slug: project.slug,
+                  threshold_key,
+                  threshold_value,
+                }
+              );
+            }}
+          >
+            <Access access={requiredScopes} project={project}>
+              {({hasAccess}) => (
+                <div id={projectDetectorSettingsId}>
+                  <StyledPanelHeader>
+                    {t('Performance Issues - Detector Threshold Settings')}
+                  </StyledPanelHeader>
+                  <StyledJsonForm
+                    forms={this.project_owner_detector_settings(hasAccess)}
+                    collapsible
+                  />
+                  <StyledPanelFooter>
+                    <Actions>
+                      <Confirm
+                        message={t(
+                          'Are you sure you wish to reset all detector thresholds?'
+                        )}
+                        onConfirm={() => this.handleThresholdsReset()}
+                        disabled={!hasAccess || this.areAllConfigurationsDisabled}
+                      >
+                        <Button>{t('Reset All Thresholds')}</Button>
+                      </Confirm>
+                    </Actions>
+                  </StyledPanelFooter>
+                </div>
+              )}
+            </Access>
+          </Form>
         </Fragment>
       </Fragment>
     );
@@ -1045,8 +1129,8 @@ const StyledJsonForm = styled(JsonForm)`
 const StyledPanelFooter = styled(PanelFooter)`
   background: ${p => p.theme.background};
   border: 1px solid ${p => p.theme.border};
-  border-radius: 0 0 calc(${p => p.theme.panelBorderRadius} - 1px)
-    calc(${p => p.theme.panelBorderRadius} - 1px);
+  border-radius: 0 0 calc(${p => p.theme.borderRadius} - 1px)
+    calc(${p => p.theme.borderRadius} - 1px);
 
   ${Actions} {
     padding: ${space(1.5)};

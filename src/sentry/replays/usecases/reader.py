@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import functools
 import uuid
 import zlib
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Iterator, List, Optional
+from typing import Any
 
-import sentry_sdk
+from django.conf import settings
 from django.db.models import Prefetch
-from sentry_sdk.tracing import Span
 from snuba_sdk import (
     Column,
     Condition,
@@ -26,8 +25,15 @@ from snuba_sdk import (
 
 from sentry.models.files.file import File
 from sentry.models.files.fileblobindex import FileBlobIndex
-from sentry.replays.lib.storage import RecordingSegmentStorageMeta, filestore, storage
+from sentry.replays.lib.storage import (
+    RecordingSegmentStorageMeta,
+    filestore,
+    make_video_filename,
+    storage,
+    storage_kv,
+)
 from sentry.replays.models import ReplayRecordingSegment
+from sentry.replays.usecases.pack import unpack
 from sentry.utils.snuba import raw_snql_query
 
 # METADATA QUERY BEHAVIOR.
@@ -38,18 +44,15 @@ def fetch_segments_metadata(
     replay_id: str,
     offset: int,
     limit: int,
-) -> List[RecordingSegmentStorageMeta]:
+) -> list[RecordingSegmentStorageMeta]:
     """Return a list of recording segment storage metadata."""
-    # NOTE: This method can miss segments that were split during the deploy.  E.g. half were on
-    # filestore the other half were on direct-storage.
+    if settings.SENTRY_REPLAYS_ATTEMPT_LEGACY_FILESTORE_LOOKUP:
+        segments = fetch_filestore_segments_meta(project_id, replay_id, offset, limit)
+        if segments:
+            return segments
 
-    # TODO: Filestore is privileged until the direct storage is released to all projects.  Once
-    # direct-storage is the default driver we need to invert this.  90 days after deployment we
-    # need to remove filestore querying.
-    segments = fetch_filestore_segments_meta(project_id, replay_id, offset, limit)
-    if segments:
-        return segments
-
+    # If the setting wasn't enabled or no segments were found attempt to lookup using
+    # the default storage method.
     return fetch_direct_storage_segments_meta(project_id, replay_id, offset, limit)
 
 
@@ -59,13 +62,13 @@ def fetch_segment_metadata(
     segment_id: int,
 ) -> RecordingSegmentStorageMeta | None:
     """Return a recording segment storage metadata instance."""
-    # TODO: Filestore is privileged until the direct storage is released to all projects.  Once
-    # direct-storage is the default driver we need to invert this.  90 days after deployment we
-    # need to remove filestore querying.
-    segment = fetch_filestore_segment_meta(project_id, replay_id, segment_id)
-    if segment:
-        return segment
+    if settings.SENTRY_REPLAYS_ATTEMPT_LEGACY_FILESTORE_LOOKUP:
+        segment = fetch_filestore_segment_meta(project_id, replay_id, segment_id)
+        if segment:
+            return segment
 
+    # If the setting wasn't enabled or no segments were found attempt to lookup using
+    # the default storage method.
     return fetch_direct_storage_segment_meta(project_id, replay_id, segment_id)
 
 
@@ -74,9 +77,9 @@ def fetch_filestore_segments_meta(
     replay_id: str,
     offset: int,
     limit: int,
-) -> List[RecordingSegmentStorageMeta]:
+) -> list[RecordingSegmentStorageMeta]:
     """Return filestore metadata derived from our Postgres table."""
-    segments: List[ReplayRecordingSegment] = (
+    segments = (
         ReplayRecordingSegment.objects.filter(project_id=project_id, replay_id=replay_id)
         .order_by("segment_id")
         .all()[offset : limit + offset]
@@ -136,7 +139,7 @@ def fetch_direct_storage_segments_meta(
     replay_id: str,
     offset: int,
     limit: int,
-) -> List[RecordingSegmentStorageMeta]:
+) -> list[RecordingSegmentStorageMeta]:
     """Return direct-storage metadata derived from our Clickhouse table."""
     if not has_archived_segment(project_id, replay_id):
         return _fetch_segments_from_snuba(project_id, replay_id, offset, limit)
@@ -195,7 +198,7 @@ def _fetch_segments_from_snuba(
     offset: int,
     limit: int,
     segment_id: int | None = None,
-) -> List[RecordingSegmentStorageMeta]:
+) -> list[RecordingSegmentStorageMeta]:
     conditions = []
     if segment_id:
         conditions.append(Condition(Column("segment_id"), Op.EQ, segment_id))
@@ -226,78 +229,73 @@ def _fetch_segments_from_snuba(
     )
     response = raw_snql_query(snuba_request, "replays.query.download_replay_segments")
 
-    return [
-        RecordingSegmentStorageMeta(
-            project_id=project_id,
-            replay_id=replay_id,
-            segment_id=item["segment_id"],
-            retention_days=item["retention_days"],
-            date_added=datetime.fromisoformat(item["timestamp"]),
-            file_id=None,
-        )
-        for item in response["data"]
-    ]
+    return [segment_row_to_storage_meta(project_id, replay_id, item) for item in response["data"]]
+
+
+def segment_row_to_storage_meta(
+    project_id: int,
+    replay_id: str,
+    row,
+) -> RecordingSegmentStorageMeta:
+    return RecordingSegmentStorageMeta(
+        project_id=project_id,
+        replay_id=replay_id,
+        segment_id=row["segment_id"],
+        retention_days=row["retention_days"],
+        date_added=datetime.fromisoformat(row["timestamp"]),
+        file_id=None,
+    )
 
 
 # BLOB DOWNLOAD BEHAVIOR.
 
 
-def download_segments(segments: List[RecordingSegmentStorageMeta]) -> Iterator[bytes]:
+def download_segments(segments: list[RecordingSegmentStorageMeta]) -> Iterator[bytes]:
     """Download segment data from remote storage."""
-
-    # start a sentry transaction to pass to the thread pool workers
-    transaction = sentry_sdk.start_transaction(
-        op="http.server",
-        name="ProjectReplayRecordingSegmentIndexEndpoint.download_segments",
-        sampled=True,
-    )
-
-    download_segment_with_fixed_args = functools.partial(
-        download_segment, transaction=transaction, current_hub=sentry_sdk.Hub.current
-    )
-
     yield b"["
-    # Map all of the segments to a worker process for download.
-    with ThreadPoolExecutor(max_workers=10) as exe:
-        results = exe.map(download_segment_with_fixed_args, segments)
 
-        for i, result in enumerate(results):
-            if result is None:
-                yield b"[]"
-            else:
-                yield result
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        segment_data = pool.map(_download_segment, segments)
 
+    for i, result in enumerate(segment_data):
+        if result is None:
+            yield b"[]"
+        else:
+            yield result[1]
             if i < len(segments) - 1:
                 yield b","
     yield b"]"
-    transaction.finish()
 
 
-def download_segment(
-    segment: RecordingSegmentStorageMeta,
-    transaction: Span,
-    current_hub: sentry_sdk.Hub,
-) -> Optional[bytes]:
-    """Return the segment blob data."""
-    with sentry_sdk.Hub(current_hub):
-        with transaction.start_child(
-            op="download_segment",
-            description="thread_task",
-        ):
-            driver = filestore if segment.file_id else storage
-            with sentry_sdk.start_span(
-                op="download_segment",
-                description="download",
-            ):
-                result = driver.get(segment)
-            if result is None:
-                return None
+def download_segment(segment: RecordingSegmentStorageMeta, span: Any) -> bytes:
+    results = _download_segment(segment)
+    return results[1] if results is not None else b"[]"
 
-            with sentry_sdk.start_span(
-                op="download_segment",
-                description="decompress",
-            ):
-                return decompress(result)
+
+def download_video(segment: RecordingSegmentStorageMeta) -> bytes | None:
+    result = _download_segment(segment)
+    if result is None:
+        return storage_kv.get(make_video_filename(segment))
+
+    video, _ = result
+    if video is None:
+        # Fallback -- video was saved separately. This could be removed
+        # post GA if we don't care about breaking beta customers old
+        # replays.
+        return storage_kv.get(make_video_filename(segment))
+    else:
+        return video
+
+
+def _download_segment(segment: RecordingSegmentStorageMeta) -> tuple[bytes | None, bytes] | None:
+    driver = filestore if segment.file_id else storage
+
+    result = driver.get(segment)
+    if result is None:
+        return None
+
+    decompressed = decompress(result)
+    return unpack(decompressed)
 
 
 def decompress(buffer: bytes) -> bytes:

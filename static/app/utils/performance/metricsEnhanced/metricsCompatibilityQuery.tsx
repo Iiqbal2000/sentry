@@ -1,10 +1,11 @@
 import omit from 'lodash/omit';
 
-import EventView from 'sentry/utils/discover/eventView';
-import GenericDiscoverQuery, {
+import type EventView from 'sentry/utils/discover/eventView';
+import type {
   DiscoverQueryProps,
   GenericChildrenProps,
 } from 'sentry/utils/discover/genericDiscoverQuery';
+import GenericDiscoverQuery from 'sentry/utils/discover/genericDiscoverQuery';
 
 export interface MetricsCompatibilityData {
   compatible_projects?: number[];
@@ -29,7 +30,7 @@ function getRequestPayload({
 
 export default function MetricsCompatibilityQuery({children, ...props}: QueryProps) {
   return (
-    <GenericDiscoverQuery<MetricsCompatibilityData, {}>
+    <GenericDiscoverQuery<MetricsCompatibilityData, Record<string, unknown>>
       route="metrics-compatibility-sums"
       getRequestPayload={getRequestPayload}
       {...props}

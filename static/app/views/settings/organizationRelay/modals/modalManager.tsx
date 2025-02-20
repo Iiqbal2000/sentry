@@ -3,10 +3,11 @@ import isEqual from 'lodash/isEqual';
 import omit from 'lodash/omit';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import {Client} from 'sentry/api';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {Client} from 'sentry/api';
 import {t} from 'sentry/locale';
-import {Organization, Relay} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Relay} from 'sentry/types/relay';
 
 import createTrustedRelaysResponseError from './createTrustedRelaysResponseError';
 import Form from './form';
@@ -19,7 +20,7 @@ type Props = ModalRenderProps & {
   api: Client;
   onSubmitSuccess: (organization: Organization) => void;
   orgSlug: Organization['slug'];
-  savedRelays: Array<Relay>;
+  savedRelays: Relay[];
 };
 
 type State = {
@@ -68,7 +69,7 @@ class DialogManager<P extends Props = Props, S extends State = State> extends Co
     return '';
   }
 
-  getData(): {trustedRelays: Array<Relay>} {
+  getData(): {trustedRelays: Relay[]} {
     // Child has to implement this
     throw new Error('Not implemented');
   }

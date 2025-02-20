@@ -1,6 +1,6 @@
 import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
-import {PlatformIcon} from 'platformicons';
+import {PlatformIcon, platforms} from 'platformicons';
 
 import Input from 'sentry/components/input';
 import {Sticky} from 'sentry/components/sticky';
@@ -21,130 +21,6 @@ type TSection = {
   icons: TIcon[];
   id: string;
   label: string;
-};
-
-// TODO: Let the platformicons package could export this object instead.
-const platformToIcon = {
-  android: 'android',
-  apple: 'apple',
-  bun: 'bun',
-  capacitor: 'capacitor',
-  clojure: 'clojure',
-  cocoa: 'apple',
-  'cocoa-objc': 'apple',
-  'cocoa-swift': 'swift',
-  cordova: 'cordova',
-  cpp: 'cpp',
-  cryengine: 'cryengine',
-  csharp: 'csharp',
-  'csharp-aspnetcore': 'csharp',
-  dart: 'dart',
-  default: 'default',
-  dotnet: 'dotnet',
-  'dotnet-aspnetcore': 'dotnet',
-  'dotnet-aspnet': 'dotnet',
-  'dotnet-awslambda': 'aws',
-  'dotnet-blazor': 'blazor',
-  'dotnet-csharp': 'csharp',
-  'dotnet-gcpfunctions': 'gcp',
-  'dotnet-maui': 'maui',
-  'dotnet-uno': 'uno',
-  'dotnet-xamarin': 'xamarin',
-  dotnetcore: 'dotnetcore',
-  dotnetfx: 'dotnetfx',
-  electron: 'electron',
-  elixir: 'elixir',
-  flutter: 'flutter',
-  fsharp: 'fsharp',
-  git: 'git',
-  go: 'go',
-  'go-echo': 'echo',
-  godot: 'godot',
-  java: 'java',
-  'java-appengine': 'app-engine',
-  'java-android': 'android',
-  'java-log4j': 'java',
-  'java-log4j2': 'java',
-  'java-logback': 'logback',
-  'java-logging': 'java',
-  'java-spring': 'spring',
-  'java-spring-boot': 'springboot',
-  javascript: 'javascript',
-  'javascript-angular': 'angularjs',
-  'javascript-angularjs': 'angularjs',
-  'javascript-backbone': 'backbone',
-  'javascript-browser': 'javascript',
-  'javascript-capacitor': 'capacitor',
-  'javascript-cordova': 'cordova',
-  'javascript-electron': 'electron',
-  'javascript-ember': 'ember',
-  'javascript-gatsby': 'gatsby',
-  'javascript-ionic': 'ionic',
-  'javascript-nextjs': 'nextjs',
-  'javascript-react': 'react',
-  'javascript-remix': 'remix',
-  'javascript-svelte': 'svelte',
-  'javascript-sveltekit': 'svelte',
-  'javascript-vue': 'vue',
-  'javascript-wasm': 'wasm',
-  ionic: 'ionic',
-  kotlin: 'kotlin',
-  'kotlin-android': 'android',
-  linux: 'linux',
-  native: 'nativec',
-  'native-qt': 'qt',
-  node: 'nodejs',
-  'node-awslambda': 'aws',
-  'node-azurefunctions': 'azure',
-  'node-connect': 'nodejs',
-  'node-express': 'express',
-  'node-gcpfunctions': 'gcp',
-  'node-koa': 'koa',
-  'node-serverlesscloud': 'serverless',
-  perl: 'perl',
-  php: 'php',
-  'php-laravel': 'laravel',
-  'php-monolog': 'php',
-  'php-symfony': 'symfony',
-  python: 'python',
-  'python-aiohttp': 'aiohttp',
-  'python-awslambda': 'aws',
-  'python-azurefunctions': 'azure',
-  'python-bottle': 'bottle',
-  'python-celery': 'celery',
-  'python-chalice': 'chalice',
-  'python-django': 'django',
-  'python-falcon': 'falcon',
-  'python-fastapi': 'fastapi',
-  'python-flask': 'flask',
-  'python-gcpfunctions': 'gcp',
-  'python-pylons': 'python',
-  'python-pyramid': 'pyramid',
-  'python-pythonawslambda': 'aws',
-  'python-rq': 'redis',
-  'python-sanic': 'python',
-  'python-serverless': 'serverless',
-  'python-starlette': 'starlette',
-  'python-tornado': 'tornado',
-  'python-tryton': 'tryton',
-  qt: 'qt',
-  'react-native': 'react-native',
-  ruby: 'ruby',
-  'ruby-rack': 'ruby',
-  'ruby-rails': 'rails',
-  'ruby-sinatra': 'sinatra',
-  rust: 'rust',
-  'rust-actix': 'actix',
-  scala: 'scala',
-  stride3d: 'stride3d',
-  swift: 'swift',
-  unity: 'unity',
-  // This will be deprecated in favor of 'unrealengine'
-  ue4: 'unreal',
-  unreal: 'unreal',
-  unrealengine: 'unreal',
-  visualbasic: 'visual-basic',
-  windows: 'windows',
 };
 
 const SECTIONS: TSection[] = [
@@ -223,6 +99,13 @@ const SECTIONS: TSection[] = [
         defaultProps: {},
       },
       {
+        id: 'wifi',
+        groups: ['product'],
+        keywords: ['internet'],
+        name: 'Wifi',
+        defaultProps: {},
+      },
+      {
         id: 'telescope',
         groups: ['product'],
         keywords: [],
@@ -289,6 +172,13 @@ const SECTIONS: TSection[] = [
         groups: ['logo'],
         keywords: [],
         name: 'Bitbucket',
+        defaultProps: {},
+      },
+      {
+        id: 'discord',
+        groups: ['logo'],
+        keywords: [],
+        name: 'Discord',
         defaultProps: {},
       },
       {
@@ -381,12 +271,14 @@ const SECTIONS: TSection[] = [
           'expand',
           'collapse',
           'arrow',
+          'double',
         ],
-        additionalProps: ['isCircled', 'direction'],
+        additionalProps: ['isCircled', 'direction', 'isDouble'],
         name: 'Chevron',
         defaultProps: {
           isCircled: false,
           direction: 'left',
+          isDouble: false,
         },
       },
       {
@@ -442,6 +334,38 @@ const SECTIONS: TSection[] = [
         name: 'Chevron',
         defaultProps: {
           isCircled: true,
+          direction: 'down',
+        },
+      },
+      {
+        id: 'chevron-isDouble-direction-left',
+        name: 'Chevron',
+        defaultProps: {
+          isDouble: true,
+          direction: 'left',
+        },
+      },
+      {
+        id: 'chevron-isDouble-direction-right',
+        name: 'Chevron',
+        defaultProps: {
+          isDouble: true,
+          direction: 'right',
+        },
+      },
+      {
+        id: 'chevron-isDouble-direction-up',
+        name: 'Chevron',
+        defaultProps: {
+          isDouble: true,
+          direction: 'up',
+        },
+      },
+      {
+        id: 'chevron-isDouble-direction-down',
+        name: 'Chevron',
+        defaultProps: {
+          isDouble: true,
           direction: 'down',
         },
       },
@@ -517,17 +441,17 @@ const SECTIONS: TSection[] = [
         id: 'lock',
         groups: ['action', 'status'],
         keywords: ['secure'],
-        additionalProps: ['isSolid'],
+        additionalProps: ['locked'],
         name: 'Lock',
         defaultProps: {
-          isSolid: false,
+          locked: false,
         },
       },
       {
-        id: 'lock-isSolid',
+        id: 'lock-locked',
         name: 'Lock',
         defaultProps: {
-          isSolid: true,
+          locked: true,
         },
       },
       {
@@ -615,13 +539,6 @@ const SECTIONS: TSection[] = [
         defaultProps: {},
       },
       {
-        id: 'frozen',
-        groups: ['status'],
-        keywords: ['frame', 'mobile'],
-        name: 'Frozen',
-        defaultProps: {},
-      },
-      {
         id: 'slow',
         groups: ['status'],
         keywords: ['frame', 'mobile'],
@@ -701,6 +618,13 @@ const SECTIONS: TSection[] = [
         defaultProps: {
           isCircled: true,
         },
+      },
+      {
+        id: 'divide',
+        groups: ['action'],
+        keywords: ['divided', 'math'],
+        name: 'Divide',
+        defaultProps: {},
       },
       {
         id: 'upload',
@@ -1009,13 +933,6 @@ const SECTIONS: TSection[] = [
         },
       },
       {
-        id: 'toggle',
-        groups: ['action'],
-        keywords: ['switch', 'form', 'disable', 'enable'],
-        name: 'Toggle',
-        defaultProps: {},
-      },
-      {
         id: 'fix',
         groups: ['action'],
         keywords: ['wrench', 'resolve'],
@@ -1116,11 +1033,57 @@ const SECTIONS: TSection[] = [
         name: 'KeyDown',
         defaultProps: {},
       },
+      {
+        id: 'zoom-out',
+        keywords: [],
+        name: 'Zoom',
+        defaultProps: {isZoomIn: false},
+      },
+      {
+        id: 'zoom-in',
+        keywords: [],
+        name: 'Zoom',
+        defaultProps: {isZoomIn: true},
+      },
+      {
+        id: 'focus',
+        keywords: ['foreground'],
+        name: 'Focus',
+        defaultProps: {isFocused: true},
+      },
+      {
+        id: 'blur',
+        keywords: ['background'],
+        name: 'Focus',
+        defaultProps: {isFocused: false},
+      },
+      {
+        id: 'tap',
+        keywords: ['finger', 'hand', 'cursor'],
+        name: 'Tap',
+        defaultProps: {},
+      },
+      {
+        id: 'thumb',
+        keywords: ['feedback', 'good'],
+        additionalProps: ['direction'],
+        name: 'Thumb',
+        defaultProps: {},
+      },
+      {
+        id: 'thumb',
+        keywords: ['feedback', 'bad', 'poor'],
+        additionalProps: ['direction'],
+        name: 'Thumb',
+        defaultProps: {
+          direction: ['down'],
+        },
+      },
     ],
   },
   {
     id: 'chart',
-    label: 'Chart',
+    label: 'Visualizations',
     icons: [
       {
         id: 'graph-type-line',
@@ -1154,6 +1117,13 @@ const SECTIONS: TSection[] = [
         },
       },
       {
+        id: 'graph-type-scatter',
+        name: 'Graph',
+        defaultProps: {
+          type: 'scatter',
+        },
+      },
+      {
         id: 'stack',
         groups: ['chart'],
         keywords: ['group', 'combine', 'view'],
@@ -1177,6 +1147,23 @@ const SECTIONS: TSection[] = [
       {
         id: 'profiling',
         name: 'Profiling',
+        defaultProps: {},
+      },
+      {
+        id: 'table',
+        name: 'Table',
+        defaultProps: {},
+      },
+      {
+        id: 'grid',
+        name: 'Grid',
+        keywords: ['squares', 'layout'],
+        defaultProps: {},
+      },
+      {
+        id: 'globe',
+        name: 'Globe',
+        keywords: ['map', 'international'],
         defaultProps: {},
       },
     ],
@@ -1284,17 +1271,17 @@ const SECTIONS: TSection[] = [
         defaultProps: {},
       },
       {
-        id: 'option',
-        groups: ['device'],
-        keywords: [''],
-        name: 'Option',
-        defaultProps: {},
-      },
-      {
         id: 'fileBroken',
         groups: ['device'],
         keywords: ['file', 'missing', 'error'],
         name: 'FileBroken',
+        defaultProps: {},
+      },
+      {
+        id: 'image',
+        groups: ['device'],
+        keywords: ['image', 'photo', 'screenshot'],
+        name: 'Image',
         defaultProps: {},
       },
     ],
@@ -1360,17 +1347,29 @@ function Section({section}: {section: TSection}) {
   return (
     <section>
       <SectionHeader>{section.label}</SectionHeader>
+      <p>
+        <code>{"import { ... } from 'sentry/icons';"}</code>
+      </p>
       <Grid style={{gridTemplateColumns: 'repeat(4, 1fr)'}}>
         {section.icons.map(icon => {
           const name = icon.name.startsWith('Icon') ? icon.name : `Icon${icon.name}`;
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           const Component = Icons[name];
+
+          if (!Component) {
+            // The definition is not type safe, so lets log the icon instead of throwing an error
+            // eslint-disable-next-line no-console
+            console.log('Missing icon', name);
+            return null;
+          }
 
           const props = {color: 'gray500', size: 'sm', ...icon.defaultProps};
           return (
             <Tooltip
               key={icon.id}
-              title={<JSXNode name={name} props={props} />}
               isHoverable
+              overlayStyle={{maxWidth: 440}}
+              title={<JSXNode name={name} props={props} />}
             >
               <Cell>
                 <Component {...props} />
@@ -1385,24 +1384,30 @@ function Section({section}: {section: TSection}) {
 }
 
 function PlatformIconsSection({searchTerm}: {searchTerm: string}) {
-  const platforms = Object.keys(platformToIcon).filter(platform =>
-    platform.includes(searchTerm)
-  );
+  const filteredPlatforms = platforms.filter(platform => platform.includes(searchTerm));
 
   return (
     <section>
       <SectionHeader>PlatformIcons</SectionHeader>
+      <p>
+        <code>{"import {PlatformIcon} from 'platformicons';"}</code>
+      </p>
       <Grid
         style={{
           gridAutoFlow: 'column',
-          gridTemplateRows: `repeat(${Math.ceil(platforms.length / 4)}, 1fr)`,
+          gridTemplateRows: `repeat(${Math.ceil(filteredPlatforms.length / 4)}, 1fr)`,
         }}
       >
-        {platforms.map(platform => (
+        {filteredPlatforms.map(platform => (
           <Tooltip
             key={platform}
-            title={<JSXNode name="PlatformIcon" props={{platform}} />}
             isHoverable
+            overlayStyle={{maxWidth: 440}}
+            title={
+              <Fragment>
+                <JSXNode name="PlatformIcon" props={{platform}} />
+              </Fragment>
+            }
           >
             <Cell>
               <PlatformIcon platform={platform} /> {platform}
@@ -1422,8 +1427,10 @@ const StyledSticky = styled(Sticky)`
   }
 `;
 
+// Large scroll margin top due to sticky header
 const SectionHeader = styled('h5')`
   margin-block: ${space(2)};
+  scroll-margin-top: 96px;
 `;
 
 const Grid = styled('div')`

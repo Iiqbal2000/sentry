@@ -1,13 +1,18 @@
-import {useEffect, useMemo} from 'react';
+import {useEffect} from 'react';
 import * as Sentry from '@sentry/react';
 
+import {ChartType} from 'sentry/chartcuterie/types';
 import Chart from 'sentry/components/events/eventStatisticalDetector/lineChart';
-import {DataSection} from 'sentry/components/events/styles';
-import {Event} from 'sentry/types';
+import {t} from 'sentry/locale';
+import type {Event} from 'sentry/types/event';
 import {defined} from 'sentry/utils';
 import {useProfileEventsStats} from 'sentry/utils/profiling/hooks/useProfileEventsStats';
 import {useRelativeDateTime} from 'sentry/utils/profiling/hooks/useRelativeDateTime';
-import {NormalizedTrendsTransaction} from 'sentry/views/performance/trends/types';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
+import type {NormalizedTrendsTransaction} from 'sentry/views/performance/trends/types';
+
+import {RELATIVE_DAYS_WINDOW} from './consts';
 
 type EventFunctionBreakpointChartProps = {
   event: Event;
@@ -52,7 +57,7 @@ type EventFunctionBreakpointChartInnerProps = {
   fingerprint: number;
 };
 
-const SERIES = 'p95()';
+const SERIES = ['p95()'];
 
 function EventFunctionBreakpointChartInner({
   breakpoint,
@@ -61,7 +66,7 @@ function EventFunctionBreakpointChartInner({
 }: EventFunctionBreakpointChartInnerProps) {
   const datetime = useRelativeDateTime({
     anchor: breakpoint,
-    relativeDays: 14,
+    relativeDays: RELATIVE_DAYS_WINDOW,
   });
 
   const functionStats = useProfileEventsStats({
@@ -69,18 +74,8 @@ function EventFunctionBreakpointChartInner({
     datetime,
     query: `fingerprint:${fingerprint}`,
     referrer: 'api.profiling.functions.regression.stats',
-    yAxes: [SERIES],
+    yAxes: SERIES,
   });
-
-  const series = useMemo(() => {
-    const rawData = functionStats?.data?.data?.find(({axis}) => axis === SERIES);
-    const timestamps = functionStats?.data?.timestamps;
-    if (!rawData || !timestamps) {
-      return [];
-    }
-
-    return timestamps.map((timestamp, i) => [timestamp, [{count: rawData.values[i]}]]);
-  }, [functionStats]);
 
   const normalizedOccurrenceEvent = {
     aggregate_range_1: evidenceData.aggregateRange1 / 1e6,
@@ -89,14 +84,16 @@ function EventFunctionBreakpointChartInner({
   } as NormalizedTrendsTransaction;
 
   return (
-    <DataSection>
+    <InterimSection
+      type={SectionKey.REGRESSION_BREAKPOINT_CHART}
+      title={t('Regression Breakpoint Chart')}
+    >
       <Chart
-        statsData={series}
+        percentileData={functionStats}
         evidenceData={normalizedOccurrenceEvent}
-        start={(datetime.start as Date).toISOString()}
-        end={(datetime.end as Date).toISOString()}
-        chartLabel={SERIES}
+        datetime={datetime}
+        chartType={ChartType.SLACK_PERFORMANCE_FUNCTION_REGRESSION}
       />
-    </DataSection>
+    </InterimSection>
   );
 }

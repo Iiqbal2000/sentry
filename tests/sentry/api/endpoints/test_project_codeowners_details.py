@@ -7,10 +7,8 @@ from rest_framework.exceptions import ErrorDetail
 
 from sentry.models.projectcodeowners import ProjectCodeOwners
 from sentry.testutils.cases import APITestCase
-from sentry.testutils.silo import region_silo_test
 
 
-@region_silo_test(stable=True)
 class ProjectCodeOwnersDetailsEndpointTestCase(APITestCase):
     def setUp(self):
         self.user = self.create_user("admin@sentry.io", is_superuser=True)
@@ -39,8 +37,8 @@ class ProjectCodeOwnersDetailsEndpointTestCase(APITestCase):
         self.url = reverse(
             "sentry-api-0-project-codeowners-details",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "codeowners_id": self.codeowners.id,
             },
         )
@@ -51,14 +49,15 @@ class ProjectCodeOwnersDetailsEndpointTestCase(APITestCase):
         assert response.status_code == 204
         assert not ProjectCodeOwners.objects.filter(id=str(self.codeowners.id)).exists()
 
-    def test_basic_update(self):
+    @patch("django.utils.timezone.now")
+    def test_basic_update(self, mock_timezone_now):
         self.create_external_team(external_name="@getsentry/frontend", integration=self.integration)
         self.create_external_team(external_name="@getsentry/docs", integration=self.integration)
         date = datetime(2023, 10, 3, tzinfo=timezone.utc)
+        mock_timezone_now.return_value = date
         raw = "\n# cool stuff comment\n*.js                    @getsentry/frontend @NisanthanNanthakumar\n# good comment\n\n\n  docs/*  @getsentry/docs @getsentry/ecosystem\n\n"
         data = {
             "raw": raw,
-            "date_updated": date,
         }
         with self.feature({"organizations:integrations-codeowners": True}):
             response = self.client.put(self.url, data)
@@ -72,8 +71,8 @@ class ProjectCodeOwnersDetailsEndpointTestCase(APITestCase):
         self.url = reverse(
             "sentry-api-0-project-codeowners-details",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "codeowners_id": 1000,
             },
         )
@@ -156,8 +155,8 @@ class ProjectCodeOwnersDetailsEndpointTestCase(APITestCase):
             url = reverse(
                 "sentry-api-0-project-codeowners-details",
                 kwargs={
-                    "organization_slug": self.organization.slug,
-                    "project_slug": self.project.slug,
+                    "organization_id_or_slug": self.organization.slug,
+                    "project_id_or_slug": self.project.slug,
                     "codeowners_id": codeowners.id,
                 },
             )

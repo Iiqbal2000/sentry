@@ -11,13 +11,14 @@ from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.organization import OrganizationEndpoint
 from sentry.api.validators import AllowedEmailField
+from sentry.auth.services.auth import auth_service
+from sentry.hybridcloud.models.outbox import outbox_context
 from sentry.models.organizationmember import InviteStatus, OrganizationMember
-from sentry.models.outbox import outbox_context
 from sentry.notifications.notifications.organization_request import JoinRequestNotification
 from sentry.notifications.utils.tasks import async_send_notification
-from sentry.services.hybrid_cloud.auth import auth_service
 from sentry.signals import join_request_created
 from sentry.types.ratelimit import RateLimit, RateLimitCategory
+from sentry.utils.demo_mode import is_demo_user
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +53,16 @@ def create_organization_join_request(organization, email, ip_address=None):
 @region_silo_endpoint
 class OrganizationJoinRequestEndpoint(OrganizationEndpoint):
     publish_status = {
-        "POST": ApiPublishStatus.UNKNOWN,
+        "POST": ApiPublishStatus.PRIVATE,
     }
     # Disable authentication and permission requirements.
-    permission_classes = []
+    permission_classes = ()
 
     rate_limits = {
         "POST": {
-            RateLimitCategory.IP: RateLimit(5, 86400),
-            RateLimitCategory.USER: RateLimit(5, 86400),
-            RateLimitCategory.ORGANIZATION: RateLimit(5, 86400),
+            RateLimitCategory.IP: RateLimit(limit=5, window=86400),
+            RateLimitCategory.USER: RateLimit(limit=5, window=86400),
+            RateLimitCategory.ORGANIZATION: RateLimit(limit=5, window=86400),
         }
     }
 
@@ -71,6 +72,9 @@ class OrganizationJoinRequestEndpoint(OrganizationEndpoint):
                 {"detail": "Your organization does not allow join requests."}, status=403
             )
 
+        if is_demo_user(request.user):
+            return Response(status=403)
+
         # users can already join organizations with SSO enabled without an invite
         # so they should join that way and not through a request to the admins
         provider = auth_service.get_auth_provider(organization_id=organization.id)
@@ -79,7 +83,7 @@ class OrganizationJoinRequestEndpoint(OrganizationEndpoint):
 
         ip_address = request.META["REMOTE_ADDR"]
 
-        if ratelimiter.is_limited(
+        if ratelimiter.backend.is_limited(
             f"org-join-request:ip:{ip_address}",
             limit=5,
             window=86400,  # 5 per day, 60 x 60 x 24

@@ -1,8 +1,6 @@
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import {space} from 'sentry/styles/space';
-
 const BadgeDisplayName = styled('span')<{hideOverflow?: string | boolean}>`
   ${p =>
     p.hideOverflow &&
@@ -10,9 +8,9 @@ const BadgeDisplayName = styled('span')<{hideOverflow?: string | boolean}>`
       ${p.theme.overflowEllipsis};
       max-width: ${typeof p.hideOverflow === 'string'
         ? p.hideOverflow
-        : p.theme.settings.maxCrumbWidth};
+        : // @TODO(jonasbadalic) 240px used to be defined as theme.settings.maxCrumbWidth and only used here
+          '240px'};
     `};
-  padding: ${space(0.25)} 0;
 `;
 
 export default BadgeDisplayName;

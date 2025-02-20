@@ -9,15 +9,13 @@ import {HeaderTitleLegend, HeaderValue} from 'sentry/components/charts/styles';
 import {getInterval} from 'sentry/components/charts/utils';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {t} from 'sentry/locale';
-import {
-  Organization,
-  ReleaseComparisonChartType,
-  ReleaseProject,
-  ReleaseWithHealth,
-} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {ReleaseProject, ReleaseWithHealth} from 'sentry/types/release';
+import {ReleaseComparisonChartType} from 'sentry/types/release';
 import {tooltipFormatter} from 'sentry/utils/discover/charts';
 import EventView from 'sentry/utils/discover/eventView';
 import {aggregateOutputType} from 'sentry/utils/discover/fields';
+import {DiscoverDatasets} from 'sentry/utils/discover/types';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import useApi from 'sentry/utils/useApi';
 import {useLocation} from 'sentry/utils/useLocation';
@@ -62,14 +60,14 @@ function ReleaseEventsChart({
   const theme = useTheme();
 
   function getColors() {
-    const colors = theme.charts.getColorPalette(14);
+    const colors = theme.charts.getColorPalette(14) ?? [];
     switch (chartType) {
       case ReleaseComparisonChartType.ERROR_COUNT:
-        return [colors[12]];
+        return [colors[12]!];
       case ReleaseComparisonChartType.TRANSACTION_COUNT:
-        return [colors[0]];
+        return [colors[0]!];
       case ReleaseComparisonChartType.FAILURE_RATE:
-        return [colors[9]];
+        return [colors[9]!];
       default:
         return undefined;
     }
@@ -174,6 +172,7 @@ function ReleaseEventsChart({
           disablePrevious
           showLegend
           projects={projects}
+          dataset={DiscoverDatasets.METRICS_ENHANCED}
           environments={environments}
           start={start ?? null}
           end={end ?? null}

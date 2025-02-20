@@ -1,25 +1,31 @@
 import {forwardRef, useCallback, useMemo} from 'react';
-import ReactSelect, {
-  components as selectComponents,
-  createFilter,
+import Async from 'react-select/async';
+import AsyncCreatable from 'react-select/async-creatable';
+import Creatable from 'react-select/creatable';
+import type {CSSObject} from '@emotion/react';
+import {useTheme} from '@emotion/react';
+import styled from '@emotion/styled';
+import omit from 'lodash/omit';
+
+import {Chevron} from 'sentry/components/chevron';
+import type {
   GroupedOptionsType,
-  mergeStyles,
   OptionsType,
   OptionTypeBase,
   Props as ReactSelectProps,
   StylesConfig as ReactSelectStylesConfig,
-} from 'react-select';
-import Async from 'react-select/async';
-import AsyncCreatable from 'react-select/async-creatable';
-import Creatable from 'react-select/creatable';
-import {CSSObject, useTheme} from '@emotion/react';
-import styled from '@emotion/styled';
-import omit from 'lodash/omit';
-
+} from 'sentry/components/forms/controls/reactSelectWrapper';
+import {
+  components as selectComponents,
+  createFilter,
+  mergeStyles,
+  ReactSelect,
+} from 'sentry/components/forms/controls/reactSelectWrapper';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import {IconChevron, IconClose} from 'sentry/icons';
+import {IconClose} from 'sentry/icons';
+import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {Choices, SelectValue} from 'sentry/types';
+import type {Choices, SelectValue} from 'sentry/types/core';
 import convertFromSelect2Choices from 'sentry/utils/convertFromSelect2Choices';
 import PanelProvider from 'sentry/utils/panelProvider';
 import type {FormSize} from 'sentry/utils/theme';
@@ -36,15 +42,18 @@ function isGroupedOptions<OptionType extends OptionTypeBase>(
   if (!maybe || maybe.length === 0) {
     return false;
   }
-  return (maybe as GroupedOptionsType<OptionType>)[0].options !== undefined;
+  return (maybe as GroupedOptionsType<OptionType>)[0]!.options !== undefined;
 }
 
 function ClearIndicator(
   props: React.ComponentProps<typeof selectComponents.ClearIndicator>
 ) {
+  // XXX(epurkhiser): In react-selct 5 accessibility is greatly improved, for
+  // now we manually add aria labels to these interactive elements to help with
+  // testing
   return (
     <selectComponents.ClearIndicator {...props}>
-      <IconClose legacySize="10px" />
+      <IconClose aria-label={t('Clear choices')} legacySize="10px" />
     </selectComponents.ClearIndicator>
   );
 }
@@ -54,7 +63,7 @@ function DropdownIndicator(
 ) {
   return (
     <selectComponents.DropdownIndicator {...props}>
-      <IconChevron direction="down" legacySize="14px" />
+      <Chevron light color="subText" direction="down" size="medium" />
     </selectComponents.DropdownIndicator>
   );
 }
@@ -62,9 +71,12 @@ function DropdownIndicator(
 function MultiValueRemove(
   props: React.ComponentProps<typeof selectComponents.MultiValueRemove>
 ) {
+  // XXX(epurkhiser): In react-selct 5 accessibility is greatly improved, for
+  // now we manually add aria labels to these interactive elements to help with
+  // testing
   return (
     <selectComponents.MultiValueRemove {...props}>
-      <IconClose legacySize="8px" />
+      <IconClose aria-label={t('Remove item')} legacySize="8px" />
     </selectComponents.MultiValueRemove>
   );
 }
@@ -116,6 +128,10 @@ export interface ControlProps<OptionType extends OptionTypeBase = GeneralSelectV
    */
   inFieldLabel?: string;
   /**
+   * Whether this selector is being rendered inside a modal. If true, the menu will have a higher z-index.
+   */
+  isInsideModal?: boolean;
+  /**
    * Maximum width of the menu component. Menu item labels that overflow the
    * menu's boundaries will automatically be truncated.
    */
@@ -151,7 +167,7 @@ interface WrappedControlProps<OptionType extends OptionTypeBase>
    * Ref forwarded into ReactSelect component.
    * The any is inherited from react-select.
    */
-  forwardedRef: React.Ref<ReactSelect>;
+  forwardedRef: React.Ref<typeof ReactSelect>;
 }
 
 // TODO(ts) The exported component uses forwardRef.
@@ -167,7 +183,7 @@ function SelectControl<OptionType extends GeneralSelectValue = GeneralSelectValu
   props: WrappedControlProps<OptionType>
 ) {
   const theme = useTheme();
-  const {size, maxMenuWidth} = props;
+  const {size, maxMenuWidth, isInsideModal} = props;
 
   // TODO(epurkhiser): The loading indicator should probably also be our loading
   // indicator.
@@ -210,33 +226,27 @@ function SelectControl<OptionType extends GeneralSelectValue = GeneralSelectValu
           cursor: 'pointer',
         }),
         ...omit(theme.form[size ?? 'md'], 'height'),
+        ...(state.isMulti && {
+          maxHeight: '20.8em', // 10 lines (1.8em * 10) + padding
+          overflow: 'hidden',
+        }),
       }),
 
       menu: provided => ({
         ...provided,
         zIndex: theme.zIndex.dropdown,
         background: theme.backgroundElevated,
-        border: `1px solid ${theme.border}`,
         borderRadius: theme.borderRadius,
-        boxShadow: theme.dropShadowHeavy,
+        boxShadow: `${theme.dropShadowHeavy}, 0 0 0 1px ${theme.translucentBorder}`,
         width: 'auto',
         minWidth: '100%',
         maxWidth: maxMenuWidth ?? 'auto',
       }),
 
-      menuPortal: () => ({
+      menuPortal: provided => ({
+        ...provided,
         maxWidth: maxMenuWidth ?? '24rem',
-        zIndex: theme.zIndex.dropdown,
-        width: '90%',
-        position: 'fixed',
-        left: '50%',
-        top: '50%',
-        transform: 'translate(-50%, -50%)',
-        background: theme.backgroundElevated,
-        border: `1px solid ${theme.border}`,
-        borderRadius: theme.borderRadius,
-        boxShadow: theme.dropShadowHeavy,
-        overflow: 'hidden',
+        zIndex: isInsideModal ? theme.zIndex.modal + 1 : theme.zIndex.dropdown,
       }),
 
       option: provided => ({
@@ -256,7 +266,12 @@ function SelectControl<OptionType extends GeneralSelectValue = GeneralSelectValu
         paddingRight: space(0.5),
         // offset horizontal margin/padding from multiValue (space(0.25)) &
         // multiValueLabel (space(0.75))
-        ...(state.isMulti && {marginLeft: `-${space(1)}`}),
+        ...(state.isMulti && {
+          marginLeft: `-${space(1)}`,
+          maxHeight: 'inherit',
+          overflowY: 'auto',
+          scrollbarColor: `${theme.purple200} ${theme.background}`,
+        }),
       }),
       input: provided => ({
         ...provided,
@@ -349,6 +364,7 @@ function SelectControl<OptionType extends GeneralSelectValue = GeneralSelectValu
         },
       }),
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [theme, size, maxMenuWidth, indicatorStyles]
   );
 
@@ -397,7 +413,7 @@ function SelectControl<OptionType extends GeneralSelectValue = GeneralSelectValu
     if (isGroupedOptions<OptionType>(choicesOrOptions)) {
       flatOptions = choicesOrOptions.flatMap(option => option.options);
     } else {
-      flatOptions = choicesOrOptions.flatMap(option => option);
+      flatOptions = choicesOrOptions.flatMap((option: any) => option);
     }
     mappedValue =
       props.multiple && Array.isArray(value)
@@ -456,7 +472,7 @@ function SelectControl<OptionType extends GeneralSelectValue = GeneralSelectValu
       value={mappedValue}
       isMulti={props.multiple || props.multi}
       isDisabled={props.isDisabled || props.disabled}
-      isOptionDisabled={opt => !!opt.disabled}
+      isOptionDisabled={(opt: any) => !!opt.disabled}
       showDividers={props.showDividers}
       options={options || (choicesOrOptions as OptionsType<OptionType>)}
       openMenuOnFocus={props.openMenuOnFocus}
@@ -509,7 +525,7 @@ function SelectPicker<OptionType extends OptionTypeBase>({
 
 // The generics need to be filled here as forwardRef can't expose generics.
 const RefForwardedSelectControl = forwardRef<
-  ReactSelect<GeneralSelectValue>,
+  typeof ReactSelect<GeneralSelectValue>,
   ControlProps
 >(function RefForwardedSelectControl(props, ref) {
   return <SelectControl forwardedRef={ref as any} {...props} />;

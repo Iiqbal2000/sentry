@@ -16,19 +16,18 @@ import * as AnchorLinkManager from 'sentry/components/events/interfaces/spans/sp
 import TraceView from 'sentry/components/events/interfaces/spans/traceView';
 import {spanTargetHash} from 'sentry/components/events/interfaces/spans/utils';
 import WaterfallModel from 'sentry/components/events/interfaces/spans/waterfallModel';
-import {TransactionProfileIdProvider} from 'sentry/components/profiling/transactionProfileIdProvider';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import {QuickTraceContext} from 'sentry/utils/performance/quickTrace/quickTraceContext';
 import QuickTraceQuery from 'sentry/utils/performance/quickTrace/quickTraceQuery';
 
-function initializeData(settings) {
+function initializeData(settings: Parameters<typeof _initializeData>[0]) {
   const data = _initializeData(settings);
-  ProjectsStore.loadInitialData(data.organization.projects);
+  ProjectsStore.loadInitialData(data.projects);
   return data;
 }
 
 describe('TraceView', () => {
-  let data;
+  let data!: ReturnType<typeof initializeData>;
 
   beforeEach(() => {
     data = initializeData({});
@@ -50,7 +49,7 @@ describe('TraceView', () => {
         5
       );
 
-      const waterfallModel = new WaterfallModel(builder.getEvent());
+      const waterfallModel = new WaterfallModel(builder.getEventFixture());
 
       render(
         <TraceView organization={data.organization} waterfallModel={waterfallModel} />
@@ -74,7 +73,7 @@ describe('TraceView', () => {
         5
       );
 
-      const waterfallModel = new WaterfallModel(builder.getEvent());
+      const waterfallModel = new WaterfallModel(builder.getEventFixture());
 
       render(
         <TraceView organization={data.organization} waterfallModel={waterfallModel} />
@@ -132,7 +131,7 @@ describe('TraceView', () => {
         })
       );
 
-      const waterfallModel = new WaterfallModel(builder.getEvent());
+      const waterfallModel = new WaterfallModel(builder.getEventFixture());
 
       render(
         <TraceView organization={data.organization} waterfallModel={waterfallModel} />
@@ -153,7 +152,7 @@ describe('TraceView', () => {
 
       builder.addSpan(span);
 
-      const waterfallModel = new WaterfallModel(builder.getEvent());
+      const waterfallModel = new WaterfallModel(builder.getEventFixture());
 
       render(
         <TraceView organization={data.organization} waterfallModel={waterfallModel} />
@@ -195,7 +194,7 @@ describe('TraceView', () => {
         5
       );
 
-      const waterfallModel = new WaterfallModel(builder.getEvent());
+      const waterfallModel = new WaterfallModel(builder.getEventFixture());
 
       render(
         <TraceView organization={data.organization} waterfallModel={waterfallModel} />
@@ -203,7 +202,7 @@ describe('TraceView', () => {
 
       expect(screen.queryAllByText('group me')).toHaveLength(2);
 
-      const firstGroup = screen.queryAllByText('Autogrouped — http —')[0];
+      const firstGroup = screen.queryAllByText('Autogrouped — http —')[0]!;
       await userEvent.click(firstGroup);
       expect(await screen.findAllByText('group me')).toHaveLength(6);
 
@@ -211,7 +210,7 @@ describe('TraceView', () => {
       await userEvent.click(secondGroup);
       expect(await screen.findAllByText('group me')).toHaveLength(10);
 
-      const firstRegroup = screen.queryAllByText('Regroup')[0];
+      const firstRegroup = screen.queryAllByText('Regroup')[0]!;
       await userEvent.click(firstRegroup);
       expect(await screen.findAllByText('group me')).toHaveLength(6);
 
@@ -237,23 +236,26 @@ describe('TraceView', () => {
       const mockResponse = {
         method: 'GET',
         statusCode: 200,
-        body: [
-          event,
-          {
-            errors: [],
-            event_id: '998d7e2c304c45729545e4434e2967cb',
-            generation: 1,
-            parent_event_id: '2b658a829a21496b87fd1f14a61abf65',
-            parent_span_id: 'b000000000000000',
-            project_id: project.id,
-            project_slug: project.slug,
-            span_id: '8596e2795f88471d',
-            transaction:
-              '/api/0/organizations/{organization_slug}/events/{project_slug}:{event_id}/',
-            'transaction.duration': 159,
-            'transaction.op': 'http.server',
-          },
-        ],
+        body: {
+          transactions: [
+            event,
+            {
+              errors: [],
+              event_id: '998d7e2c304c45729545e4434e2967cb',
+              generation: 1,
+              parent_event_id: '2b658a829a21496b87fd1f14a61abf65',
+              parent_span_id: 'b000000000000000',
+              project_id: project.id,
+              project_slug: project.slug,
+              span_id: '8596e2795f88471d',
+              transaction:
+                '/api/0/organizations/{organization_slug}/events/{project_slug}:{event_id}/',
+              'transaction.duration': 159,
+              'transaction.op': 'http.server',
+            },
+          ],
+          orphan_errors: [],
+        },
       };
 
       const eventsTraceMock = MockApiClient.addMockResponse({
@@ -327,37 +329,40 @@ describe('TraceView', () => {
       const mockResponse = {
         method: 'GET',
         statusCode: 200,
-        body: [
-          event,
-          {
-            errors: [],
-            event_id: '998d7e2c304c45729545e4434e2967cb',
-            generation: 1,
-            parent_event_id: '2b658a829a21496b87fd1f14a61abf65',
-            parent_span_id: 'b000000000000000',
-            project_id: project.id,
-            project_slug: project.slug,
-            span_id: '8596e2795f88471d',
-            transaction:
-              '/api/0/organizations/{organization_slug}/events/{project_slug}:{event_id}/',
-            'transaction.duration': 159,
-            'transaction.op': 'http.server',
-          },
-          {
-            errors: [],
-            event_id: '59e1fe369528499b87dab7221ce6b8a9',
-            generation: 1,
-            parent_event_id: '2b658a829a21496b87fd1f14a61abf65',
-            parent_span_id: 'b000000000000000',
-            project_id: project.id,
-            project_slug: project.slug,
-            span_id: 'aa5abb302ad5b9e1',
-            transaction:
-              '/api/0/organizations/{organization_slug}/events/{project_slug}:{event_id}/',
-            'transaction.duration': 159,
-            'transaction.op': 'middleware.nextjs',
-          },
-        ],
+        body: {
+          transactions: [
+            event,
+            {
+              errors: [],
+              event_id: '998d7e2c304c45729545e4434e2967cb',
+              generation: 1,
+              parent_event_id: '2b658a829a21496b87fd1f14a61abf65',
+              parent_span_id: 'b000000000000000',
+              project_id: project.id,
+              project_slug: project.slug,
+              span_id: '8596e2795f88471d',
+              transaction:
+                '/api/0/organizations/{organization_slug}/events/{project_slug}:{event_id}/',
+              'transaction.duration': 159,
+              'transaction.op': 'http.server',
+            },
+            {
+              errors: [],
+              event_id: '59e1fe369528499b87dab7221ce6b8a9',
+              generation: 1,
+              parent_event_id: '2b658a829a21496b87fd1f14a61abf65',
+              parent_span_id: 'b000000000000000',
+              project_id: project.id,
+              project_slug: project.slug,
+              span_id: 'aa5abb302ad5b9e1',
+              transaction:
+                '/api/0/organizations/{organization_slug}/events/{project_slug}:{event_id}/',
+              'transaction.duration': 159,
+              'transaction.op': 'middleware.nextjs',
+            },
+          ],
+          orphan_errors: [],
+        },
       };
 
       const eventsTraceMock = MockApiClient.addMockResponse({
@@ -457,7 +462,7 @@ describe('TraceView', () => {
       const {rerender} = render(
         <TraceView
           organization={data.organization}
-          waterfallModel={new WaterfallModel(builder1.getEvent())}
+          waterfallModel={new WaterfallModel(builder1.getEventFixture())}
         />
       );
       expect(await screen.findByTestId('span-row-2')).toHaveTextContent(
@@ -478,7 +483,7 @@ describe('TraceView', () => {
       rerender(
         <TraceView
           organization={data.organization}
-          waterfallModel={new WaterfallModel(builder2.getEvent())}
+          waterfallModel={new WaterfallModel(builder2.getEventFixture())}
         />
       );
 
@@ -499,7 +504,7 @@ describe('TraceView', () => {
       rerender(
         <TraceView
           organization={data.organization}
-          waterfallModel={new WaterfallModel(builder3.getEvent())}
+          waterfallModel={new WaterfallModel(builder3.getEventFixture())}
         />
       );
 
@@ -525,14 +530,12 @@ describe('TraceView', () => {
       // Manually set the hash here, the AnchorLinkManager is expected to automatically expand the group and scroll to the span with this id
       location.hash = spanTargetHash('0000000000000003');
 
-      const waterfallModel = new WaterfallModel(builder.getEvent());
+      const waterfallModel = new WaterfallModel(builder.getEventFixture());
 
       render(
-        <TransactionProfileIdProvider transactionId={undefined} timestamp={undefined}>
-          <AnchorLinkManager.Provider>
-            <TraceView organization={data.organization} waterfallModel={waterfallModel} />
-          </AnchorLinkManager.Provider>
-        </TransactionProfileIdProvider>
+        <AnchorLinkManager.Provider>
+          <TraceView organization={data.organization} waterfallModel={waterfallModel} />
+        </AnchorLinkManager.Provider>
       );
 
       expect(await screen.findByText(/0000000000000003/i)).toBeInTheDocument();
@@ -553,14 +556,12 @@ describe('TraceView', () => {
 
       location.hash = spanTargetHash('0000000000000003');
 
-      const waterfallModel = new WaterfallModel(builder.getEvent());
+      const waterfallModel = new WaterfallModel(builder.getEventFixture());
 
       render(
-        <TransactionProfileIdProvider transactionId={undefined} timestamp={undefined}>
-          <AnchorLinkManager.Provider>
-            <TraceView organization={data.organization} waterfallModel={waterfallModel} />
-          </AnchorLinkManager.Provider>
-        </TransactionProfileIdProvider>
+        <AnchorLinkManager.Provider>
+          <TraceView organization={data.organization} waterfallModel={waterfallModel} />
+        </AnchorLinkManager.Provider>
       );
 
       expect(await screen.findByText(/0000000000000003/i)).toBeInTheDocument();

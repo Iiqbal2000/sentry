@@ -4,7 +4,8 @@ import styled from '@emotion/styled';
 import {Button} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import DropdownButton from 'sentry/components/dropdownButton';
-import {DropdownMenu, MenuItemProps} from 'sentry/components/dropdownMenu';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import Input from 'sentry/components/input';
 // import {
 //   NotificationActionCell,
@@ -12,7 +13,7 @@ import Input from 'sentry/components/input';
 // } from 'sentry/components/notificationActions/notificationActionItem';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {
+import type {
   AvailableNotificationAction,
   NotificationAction,
 } from 'sentry/types/notificationActions';
@@ -58,9 +59,9 @@ function SlackForm({
       .map<MenuItemProps>(service => ({
         key: service.action.integrationName ?? '',
         label: service.action.integrationName ?? '',
-        onAction: value => {
+        onAction: () => {
           onChange('integrationId', service.action.integrationId);
-          setSelectedWorkspace(value);
+          setSelectedWorkspace(service.action.integrationName ?? '');
         },
       }))
       .filter(option => option.label);

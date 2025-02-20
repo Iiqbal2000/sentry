@@ -34,7 +34,7 @@ describe('ProjectCspReports', function () {
 
     // Heading
     expect(
-      await screen.findByText('Content Security Policy', {selector: 'h4'})
+      await screen.findByText('Content Security Policy', {selector: 'h1'})
     ).toBeInTheDocument();
   });
 
@@ -66,7 +66,6 @@ describe('ProjectCspReports', function () {
 
     expect(mock).not.toHaveBeenCalled();
 
-    // Click Regenerate Token
     await userEvent.click(
       await screen.findByRole('checkbox', {name: 'Use default ignored sources'})
     );

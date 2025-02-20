@@ -1,12 +1,11 @@
-import {browserHistory} from 'react-router';
-
 import EditableText from 'sentry/components/editableText';
 import * as Layout from 'sentry/components/layouts/thirds';
 import {t} from 'sentry/locale';
-import {Organization, SavedQuery} from 'sentry/types';
+import type {Organization, SavedQuery} from 'sentry/types/organization';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import EventView from 'sentry/utils/discover/eventView';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 import useApi from 'sentry/utils/useApi';
-import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 
 import {handleUpdateQueryName} from './savedQuery/utils';
 
@@ -50,7 +49,7 @@ function EventInputName({organization, eventView, savedQuery, isHomepage}: Props
         renamedEventView.name = nextQueryName;
 
         browserHistory.push(
-          normalizeUrl(renamedEventView.getResultsViewUrlTarget(organization.slug))
+          normalizeUrl(renamedEventView.getResultsViewUrlTarget(organization))
         );
       }
     );

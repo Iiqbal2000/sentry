@@ -1,6 +1,7 @@
 import {Fragment} from 'react';
 
-import {EventGroupComponent} from 'sentry/types';
+import {isStacktraceNewestFirst} from 'sentry/components/events/interfaces/utils';
+import type {EventGroupComponent} from 'sentry/types/event';
 
 import GroupingComponent from './groupingComponent';
 import GroupingComponentFrames from './groupingComponentFrames';
@@ -20,7 +21,10 @@ function GroupingComponentStacktrace({component, showNonContributing}: Props) {
   const getFrameGroups = () => {
     const frameGroups: FrameGroup[] = [];
 
-    (component.values as EventGroupComponent[])
+    const frames = isStacktraceNewestFirst()
+      ? component.values.reverse()
+      : component.values;
+    (frames as EventGroupComponent[])
       .filter(value => groupingComponentFilter(value, showNonContributing))
       .forEach(value => {
         const key = (value.values as EventGroupComponent[])

@@ -1,26 +1,25 @@
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 
 import pytest
-import urllib3
-from django.utils import timezone as django_timezone
+from django.utils import timezone
 from sentry_kafka_schemas.schema_types.group_attributes_v1 import GroupAttributesSnapshot
 
 from sentry import options
 from sentry.api.issue_search import convert_query_values, issue_search_config, parse_search_query
 from sentry.exceptions import InvalidSearchQuery
+from sentry.grouping.grouptype import ErrorGroupType
 from sentry.issues.grouptype import (
-    ErrorGroupType,
+    FeedbackGroup,
     NoiseConfig,
     PerformanceNPlusOneGroupType,
     PerformanceRenderBlockingAssetSpanGroupType,
     ProfileFileIOGroupType,
 )
 from sentry.issues.ingest import send_issue_occurrence_to_eventstream
-from sentry.issues.occurrence_consumer import process_event_and_issue_occurrence
 from sentry.models.environment import Environment
 from sentry.models.group import Group, GroupStatus
 from sentry.models.groupassignee import GroupAssignee
@@ -29,21 +28,15 @@ from sentry.models.groupenvironment import GroupEnvironment
 from sentry.models.grouphistory import GroupHistoryStatus, record_group_history
 from sentry.models.groupowner import GroupOwner
 from sentry.models.groupsubscription import GroupSubscription
-from sentry.models.integrations.integration import Integration
-from sentry.search.snuba.backend import (
-    CdcEventsDatasetSnubaSearchBackend,
-    EventsDatasetSnubaSearchBackend,
-    SnubaSearchBackendBase,
-)
-from sentry.search.snuba.executors import InvalidQueryForExecutor, PrioritySortWeights
+from sentry.search.snuba.backend import EventsDatasetSnubaSearchBackend, SnubaSearchBackendBase
+from sentry.search.snuba.executors import TrendsSortWeights
 from sentry.snuba.dataset import Dataset
 from sentry.testutils.cases import SnubaTestCase, TestCase, TransactionTestCase
 from sentry.testutils.helpers import Feature, apply_feature_flag_on_cls
-from sentry.testutils.helpers.datetime import before_now, iso_format
-from sentry.testutils.skips import xfail_if_not_postgres
-from sentry.types.group import GroupSubStatus
+from sentry.testutils.helpers.datetime import before_now
+from sentry.types.group import GroupSubStatus, PriorityLevel
 from sentry.utils import json
-from sentry.utils.snuba import SENTRY_SNUBA_MAP, SnubaError
+from sentry.utils.snuba import SENTRY_SNUBA_MAP
 from tests.sentry.issues.test_utils import OccurrenceTestMixin
 
 
@@ -86,7 +79,7 @@ class SharedSnubaMixin(SnubaTestCase):
         if limit is not None:
             kwargs["limit"] = limit
         if aggregate_kwargs:
-            kwargs["aggregate_kwargs"] = {"priority": {**aggregate_kwargs}}
+            kwargs["aggregate_kwargs"] = {"trends": {**aggregate_kwargs}}
 
         return self.backend.query(
             projects,
@@ -119,14 +112,14 @@ class EventsDatasetTestSetup(SharedSnubaMixin):
 
     def setUp(self):
         super().setUp()
-        self.base_datetime = (datetime.utcnow() - timedelta(days=3)).replace(tzinfo=timezone.utc)
+        self.base_datetime = before_now(days=3).replace(microsecond=0)
 
-        event1_timestamp = iso_format(self.base_datetime - timedelta(days=21))
+        event1_timestamp = (self.base_datetime - timedelta(days=21)).isoformat()
         self.event1 = self.store_event(
             data={
                 "fingerprint": ["put-me-in-group1"],
                 "event_id": "a" * 32,
-                "message": "foo. Also, this message is intended to be greater than 256 characters so that we can put some unique string identifier after that point in the string. The purpose of this is in order to verify we are using snuba to search messages instead of Postgres (postgres truncates at 256 characters and clickhouse does not). santryrox.",
+                "message": "foo. Indeed, this message is intended to be greater than 256 characters such that we can put this unique string identifier after that point in the string. The purpose of this is in order to verify we are using snuba to search messages instead of Postgres (postgres truncates at 256 characters and clickhouse does not). santryrox.",
                 "environment": "production",
                 "tags": {"server": "example.com", "sentry:user": "event1@example.com"},
                 "timestamp": event1_timestamp,
@@ -142,7 +135,7 @@ class EventsDatasetTestSetup(SharedSnubaMixin):
                 "message": "group1",
                 "environment": "production",
                 "tags": {"server": "example.com", "sentry:user": "event3@example.com"},
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "stacktrace": {"frames": [{"module": "group1"}]},
                 "level": "fatal",
             },
@@ -159,6 +152,7 @@ class EventsDatasetTestSetup(SharedSnubaMixin):
         self.group1.times_seen = 5
         self.group1.status = GroupStatus.UNRESOLVED
         self.group1.substatus = GroupSubStatus.ONGOING
+        self.group1.priority = PriorityLevel.HIGH
         self.group1.update(type=ErrorGroupType.type_id)
         self.group1.save()
         self.store_group(self.group1)
@@ -167,7 +161,7 @@ class EventsDatasetTestSetup(SharedSnubaMixin):
             data={
                 "fingerprint": ["put-me-in-group2"],
                 "event_id": "b" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
                 "message": "bar",
                 "stacktrace": {"frames": [{"module": "group2"}]},
                 "environment": "staging",
@@ -189,6 +183,7 @@ class EventsDatasetTestSetup(SharedSnubaMixin):
         self.group2.substatus = None
         self.group2.times_seen = 10
         self.group2.update(type=ErrorGroupType.type_id)
+        self.group2.priority = PriorityLevel.HIGH
         self.group2.save()
         self.store_group(self.group2)
 
@@ -219,7 +214,7 @@ class EventsDatasetTestSetup(SharedSnubaMixin):
             data={
                 "event_id": "a" * 32,
                 "fingerprint": ["put-me-in-groupP2"],
-                "timestamp": iso_format(self.base_datetime - timedelta(days=21)),
+                "timestamp": (self.base_datetime - timedelta(days=21)).isoformat(),
                 "message": "foo",
                 "stacktrace": {"frames": [{"module": "group_p2"}]},
                 "tags": {"server": "example.com"},
@@ -239,13 +234,14 @@ class EventsDatasetTestSetup(SharedSnubaMixin):
             data={
                 "fingerprint": ["linked_group1"],
                 "event_id": uuid.uuid4().hex,
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "environment": environment,
             },
             project_id=self.project.id,
         )
-        integration = Integration.objects.create(provider="example", name="Example")
-        integration.add_organization(event.group.organization, self.user)
+        integration, _ = self.create_provider_integration_for(
+            event.group.organization, self.user, provider="example", name="Example"
+        )
         self.create_integration_external_issue(
             group=event.group,
             integration=integration,
@@ -258,7 +254,7 @@ class EventsDatasetTestSetup(SharedSnubaMixin):
             data={
                 "fingerprint": ["linked_group2"],
                 "event_id": uuid.uuid4().hex,
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "environment": environment,
             },
             project_id=self.project.id,
@@ -352,7 +348,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         results = self.make_query(
             [self.project],
             environments=[self.environments["production"]],
-            search_filter_query=f"timestamp:>{iso_format(self.event1.datetime)} timestamp:<{iso_format(self.event3.datetime)}",
+            search_filter_query=f"timestamp:>{self.event1.datetime.isoformat()} timestamp:<{self.event3.datetime.isoformat()}",
         )
 
         assert set(results) == {self.group1}
@@ -367,14 +363,14 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         results = self.make_query(sort_by="freq")
         assert list(results) == [self.group1, self.group2]
 
-        results = self.make_query(sort_by="priority")
+        results = self.make_query(sort_by="trends")
         assert list(results) == [self.group2, self.group1]
 
         results = self.make_query(sort_by="user")
         assert list(results) == [self.group1, self.group2]
 
-    def test_priority_sort(self):
-        weights: PrioritySortWeights = {
+    def test_trends_sort(self):
+        weights: TrendsSortWeights = {
             "log_level": 5,
             "has_stacktrace": 5,
             "relative_volume": 1,
@@ -384,7 +380,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             "norm": False,
         }
         results = self.make_query(
-            sort_by="priority",
+            sort_by="trends",
             aggregate_kwargs=weights,
         )
         assert list(results) == [self.group2, self.group1]
@@ -398,7 +394,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             self.store_event(
                 data={
                     "fingerprint": ["put-me-in-group2"],
-                    "timestamp": iso_format(dt),
+                    "timestamp": dt.isoformat(),
                     "stacktrace": {"frames": [{"module": "group2"}]},
                     "environment": "production",
                     "message": "group2",
@@ -414,9 +410,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         results = self.make_query(environments=[self.environments["production"]], sort_by="freq")
         assert list(results) == [self.group2, self.group1]
 
-        results = self.make_query(
-            environments=[self.environments["production"]], sort_by="priority"
-        )
+        results = self.make_query(environments=[self.environments["production"]], sort_by="trends")
         assert list(results) == [self.group2, self.group1]
 
         results = self.make_query(environments=[self.environments["production"]], sort_by="user")
@@ -433,7 +427,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "fingerprint": ["put-me-in-group3"],
                 "event_id": "c" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
             },
             project_id=self.project.id,
         )
@@ -446,14 +440,8 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         self.run_test_query("status:[resolved, muted]", [self.group2, group_3], [self.group1])
 
     def test_substatus(self):
-        with Feature("organizations:escalating-issues"):
-            results = self.make_query(search_filter_query="is:ongoing")
-            assert set(results) == {self.group1}
-
-        with pytest.raises(
-            InvalidSearchQuery, match="The substatus filter is not supported for this organization"
-        ):
-            self.make_query(search_filter_query="is:ongoing")
+        results = self.make_query(search_filter_query="is:ongoing")
+        assert set(results) == {self.group1}
 
     def test_category(self):
         results = self.make_query(search_filter_query="issue.category:error")
@@ -463,7 +451,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "fingerprint": ["put-me-in-group3"],
                 "event_id": "c" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
             },
             project_id=self.project.id,
         )
@@ -493,7 +481,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "fingerprint": ["put-me-in-group3"],
                 "event_id": "c" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
                 "type": PerformanceNPlusOneGroupType.type_id,
             },
             project_id=self.project.id,
@@ -510,7 +498,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "fingerprint": ["put-me-in-group4"],
                 "event_id": "d" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
             },
             project_id=self.project.id,
         )
@@ -628,47 +616,47 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         )
         assert set(results) == set()
 
-    def test_search_filter_query_with_custom_priority_tag(self):
-        priority = "high"
+    def test_search_filter_query_with_custom_trends_tag(self):
+        trends = "high"
         self.store_event(
             data={
                 "fingerprint": ["put-me-in-group2"],
-                "timestamp": iso_format(self.group2.first_seen + timedelta(days=1)),
+                "timestamp": (self.group2.first_seen + timedelta(days=1)).isoformat(),
                 "stacktrace": {"frames": [{"module": "group2"}]},
                 "message": "group2",
-                "tags": {"priority": priority},
+                "tags": {"trends": trends},
             },
             project_id=self.project.id,
         )
 
-        results = self.make_query(search_filter_query="priority:%s" % priority)
+        results = self.make_query(search_filter_query="trends:%s" % trends)
 
         assert set(results) == {self.group2}
 
-    def test_search_filter_query_with_custom_priority_tag_and_priority_sort(self):
-        priority = "high"
+    def test_search_filter_query_with_custom_trends_tag_and_trends_sort(self):
+        trends = "high"
         for i in range(1, 3):
             self.store_event(
                 data={
                     "fingerprint": ["put-me-in-group1"],
-                    "timestamp": iso_format(self.group2.last_seen + timedelta(days=i)),
+                    "timestamp": (self.group2.last_seen + timedelta(days=i)).isoformat(),
                     "stacktrace": {"frames": [{"module": "group1"}]},
                     "message": "group1",
-                    "tags": {"priority": priority},
+                    "tags": {"trends": trends},
                 },
                 project_id=self.project.id,
             )
         self.store_event(
             data={
                 "fingerprint": ["put-me-in-group2"],
-                "timestamp": iso_format(self.group2.last_seen + timedelta(days=2)),
+                "timestamp": (self.group2.last_seen + timedelta(days=2)).isoformat(),
                 "stacktrace": {"frames": [{"module": "group2"}]},
                 "message": "group2",
-                "tags": {"priority": priority},
+                "tags": {"trends": trends},
             },
             project_id=self.project.id,
         )
-        results = self.make_query(search_filter_query="priority:%s" % priority, sort_by="priority")
+        results = self.make_query(search_filter_query="trends:%s" % trends, sort_by="trends")
         assert list(results) == [self.group2, self.group1]
 
     def test_search_tag_overlapping_with_internal_fields(self):
@@ -677,7 +665,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         self.store_event(
             data={
                 "fingerprint": ["put-me-in-group2"],
-                "timestamp": iso_format(self.group2.first_seen + timedelta(days=1)),
+                "timestamp": (self.group2.first_seen + timedelta(days=1)).isoformat(),
                 "stacktrace": {"frames": [{"module": "group2"}]},
                 "message": "group2",
                 "tags": {"email": "tags@example.com"},
@@ -755,7 +743,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             self.store_event(
                 data={
                     "fingerprint": ["put-me-in-group2"],
-                    "timestamp": iso_format(dt),
+                    "timestamp": dt.isoformat(),
                     "environment": "production",
                     "message": "group2",
                     "stacktrace": {"frames": [{"module": "group2"}]},
@@ -843,7 +831,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         self.store_event(
             data={
                 "fingerprint": ["put-me-in-group1"],
-                "timestamp": iso_format(group1_first_seen + timedelta(days=1)),
+                "timestamp": (group1_first_seen + timedelta(days=1)).isoformat(),
                 "message": "group1",
                 "stacktrace": {"frames": [{"module": "group1"}]},
                 "environment": "development",
@@ -910,7 +898,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         self.store_event(
             data={
                 "fingerprint": ["put-me-in-group1"],
-                "timestamp": iso_format(self.group1.last_seen + timedelta(days=1)),
+                "timestamp": (self.group1.last_seen + timedelta(days=1)).isoformat(),
                 "message": "group1",
                 "stacktrace": {"frames": [{"module": "group1"}]},
                 "environment": "development",
@@ -1106,7 +1094,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "fingerprint": ["put-me-in-group-my-teams"],
                 "event_id": "f" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
                 "message": "baz",
                 "environment": "staging",
                 "tags": {
@@ -1142,7 +1130,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "fingerprint": ["put-me-in-group-my-teams"],
                 "event_id": "f" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
                 "message": "baz",
                 "environment": "staging",
                 "tags": {
@@ -1188,7 +1176,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "fingerprint": ["put-me-in-group3"],
                 "event_id": "c" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
             },
             project_id=self.project.id,
         ).group
@@ -1240,21 +1228,21 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         Group.objects.all().delete()
         group = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=180)),
+                "timestamp": before_now(seconds=180).isoformat(),
                 "fingerprint": ["group-1"],
             },
             project_id=self.project.id,
         ).group
         group1 = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=185)),
+                "timestamp": before_now(seconds=185).isoformat(),
                 "fingerprint": ["group-2"],
             },
             project_id=self.project.id,
         ).group
         group2 = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=190)),
+                "timestamp": before_now(seconds=190).isoformat(),
                 "fingerprint": ["group-3"],
             },
             project_id=self.project.id,
@@ -1262,7 +1250,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
 
         assigned_group = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=195)),
+                "timestamp": before_now(seconds=195).isoformat(),
                 "fingerprint": ["group-4"],
             },
             project_id=self.project.id,
@@ -1270,7 +1258,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
 
         assigned_to_other_group = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=195)),
+                "timestamp": before_now(seconds=195).isoformat(),
                 "fingerprint": ["group-5"],
             },
             project_id=self.project.id,
@@ -1380,35 +1368,35 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         Group.objects.all().delete()
         group = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=180)),
+                "timestamp": before_now(seconds=180).isoformat(),
                 "fingerprint": ["group-1"],
             },
             project_id=self.project.id,
         ).group
         group1 = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=185)),
+                "timestamp": before_now(seconds=185).isoformat(),
                 "fingerprint": ["group-2"],
             },
             project_id=self.project.id,
         ).group
         group2 = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=190)),
+                "timestamp": before_now(seconds=190).isoformat(),
                 "fingerprint": ["group-3"],
             },
             project_id=self.project.id,
         ).group
         assigned_group = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=195)),
+                "timestamp": before_now(seconds=195).isoformat(),
                 "fingerprint": ["group-4"],
             },
             project_id=self.project.id,
         ).group
         assigned_to_other_group = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=195)),
+                "timestamp": before_now(seconds=195).isoformat(),
                 "fingerprint": ["group-5"],
             },
             project_id=self.project.id,
@@ -1417,7 +1405,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "fingerprint": ["put-me-in-group-my-teams"],
                 "event_id": "f" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
                 "message": "baz",
                 "environment": "staging",
                 "tags": {
@@ -1534,35 +1522,35 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         Group.objects.all().delete()
         group = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=180)),
+                "timestamp": before_now(seconds=180).isoformat(),
                 "fingerprint": ["group-1"],
             },
             project_id=self.project.id,
         ).group
         group1 = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=185)),
+                "timestamp": before_now(seconds=185).isoformat(),
                 "fingerprint": ["group-2"],
             },
             project_id=self.project.id,
         ).group
         group2 = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=190)),
+                "timestamp": before_now(seconds=190).isoformat(),
                 "fingerprint": ["group-3"],
             },
             project_id=self.project.id,
         ).group
         assigned_group = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=195)),
+                "timestamp": before_now(seconds=195).isoformat(),
                 "fingerprint": ["group-4"],
             },
             project_id=self.project.id,
         ).group
         assigned_to_other_group = self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=195)),
+                "timestamp": before_now(seconds=195).isoformat(),
                 "fingerprint": ["group-5"],
             },
             project_id=self.project.id,
@@ -1571,7 +1559,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "fingerprint": ["put-me-in-group-my-teams"],
                 "event_id": "f" * 32,
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
                 "message": "baz",
                 "environment": "staging",
                 "tags": {
@@ -1839,7 +1827,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
 
         assert (
             self.make_query(
-                search_filter_query="last_seen:>%s" % date_to_query_format(django_timezone.now()),
+                search_filter_query="last_seen:>%s" % date_to_query_format(timezone.now()),
                 sort_by="date",
             ).results
             == []
@@ -1855,7 +1843,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
 
         assert (
             self.make_query(
-                search_filter_query="last_seen:>%s" % date_to_query_format(django_timezone.now()),
+                search_filter_query="last_seen:>%s" % date_to_query_format(timezone.now()),
                 sort_by="date",
             ).results
             == []
@@ -1871,7 +1859,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
 
         assert (
             self.make_query(
-                search_filter_query="last_seen:>%s" % date_to_query_format(django_timezone.now()),
+                search_filter_query="last_seen:>%s" % date_to_query_format(timezone.now()),
                 sort_by="date",
             ).results
             == []
@@ -1912,7 +1900,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             options.set("snuba.search.pre-snuba-candidates-optimizer", prev_optimizer_enabled)
 
     def test_search_out_of_range(self):
-        the_date = datetime(2000, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        the_date = datetime(2000, 1, 1, 0, 0, 0, tzinfo=UTC)
         results = self.make_query(
             search_filter_query=f"event.timestamp:>{the_date} event.timestamp:<{the_date}",
             date_from=the_date,
@@ -1965,7 +1953,6 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         assert set(results) == {group_2}
 
     def test_first_release(self):
-
         # expect no groups within the results since there are no releases
 
         results = self.make_query(search_filter_query="first_release:%s" % "fake")
@@ -2007,7 +1994,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
 
         self.run_test_query(f"first_release:[{release_1.version}, {release_2.version}]", [])
 
-        # Create a new event so that we get a group in this release
+        # Create a new event so that we get a group in release 1
         group = self.store_event(
             data={
                 "fingerprint": ["put-me-in-group9001"],
@@ -2027,7 +2014,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             [self.group1, self.group2],
         )
 
-        # Create a new event so that we get a group in this release
+        # Create a new event so that we get a group in release 2
         group_2 = self.store_event(
             data={
                 "fingerprint": ["put-me-in-group9002"],
@@ -2044,6 +2031,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         self.run_test_query(
             f"first_release:[{release_1.version}, {release_2.version}]",
             [group, group_2],
+            [self.group1, self.group2],
         )
 
     def test_first_release_environments(self):
@@ -2086,6 +2074,8 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             group_id=self.group1.id, environment_id=self.environments["production"].id
         )
         group_1_env.update(first_release=release)
+        self.group1.first_release = release
+        self.group1.save()
 
         self.run_test_query(
             f"first_release:[{release.version}, fake2]",
@@ -2098,6 +2088,9 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             group_id=self.group2.id, environment_id=self.environments["staging"].id
         )
         group_2_env.update(first_release=release)
+        self.group2.first_release = release
+        self.group2.save()
+
         self.run_test_query(
             f"first_release:[{release.version}, fake2]",
             [self.group1, self.group2],
@@ -2125,7 +2118,6 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         results = self.make_query(search_filter_query='"bar"')
         assert set(results) == {self.group2}
 
-    @xfail_if_not_postgres("Wildcard searching only supported in Postgres")
     def test_wildcard(self):
         escaped_event = self.store_event(
             data={
@@ -2134,7 +2126,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
                 "message": "somet[hing]",
                 "environment": "production",
                 "tags": {"server": "example.net"},
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "stacktrace": {"frames": [{"module": "group1"}]},
             },
             project_id=self.project.id,
@@ -2176,7 +2168,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
                 "message": "something",
                 "environment": "production",
                 "tags": {"server": "example.net"},
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "stacktrace": {"frames": [{"module": "group1"}]},
             },
             project_id=self.project.id,
@@ -2187,7 +2179,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
                 "event_id": "5" * 32,
                 "message": "something",
                 "environment": "production",
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "stacktrace": {"frames": [{"module": "group2"}]},
             },
             project_id=self.project.id,
@@ -2213,7 +2205,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
                 "message": "something",
                 "environment": "production",
                 "tags": {"logger": "csp"},
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "stacktrace": {"frames": [{"module": "group1"}]},
             },
             project_id=self.project.id,
@@ -2224,7 +2216,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
                 "event_id": "5" * 32,
                 "message": "something",
                 "environment": "production",
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "stacktrace": {"frames": [{"module": "group2"}]},
             },
             project_id=self.project.id,
@@ -2253,7 +2245,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         results = self.make_query([self.project, self.project2], sort_by="freq")
         assert list(results) == [self.group1, self.group_p2, self.group2]
 
-        results = self.make_query([self.project, self.project2], sort_by="priority")
+        results = self.make_query([self.project, self.project2], sort_by="trends")
         assert list(results) == [
             self.group_p2,
             self.group2,
@@ -2294,7 +2286,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
         #         env=[production]: nothing
         #
         #     first_release: 2
-        #         env=[]: A, C
+        #         env=[]: C
         #         env=[production, staging]: A
         #         env=[staging]: nothing
         #         env=[production]: A
@@ -2360,58 +2352,56 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
 
         # query by release release_1
 
-        results = self.make_query(search_filter_query="first_release:%s" % "release_1")
+        results = self.make_query(search_filter_query="first_release:release_1")
         assert set(results) == {group_a, group_b}
 
         results = self.make_query(
             environments=[staging_env, prod_env],
-            search_filter_query="first_release:%s" % "release_1",
+            search_filter_query="first_release:release_1",
         )
         assert set(results) == {group_a}
 
         results = self.make_query(
-            environments=[staging_env], search_filter_query="first_release:%s" % "release_1"
+            environments=[staging_env], search_filter_query="first_release:release_1"
         )
         assert set(results) == {group_a}
 
         results = self.make_query(
-            environments=[prod_env], search_filter_query="first_release:%s" % "release_1"
+            environments=[prod_env], search_filter_query="first_release:release_1"
         )
         assert set(results) == set()
 
         # query by release release_2
 
-        results = self.make_query(search_filter_query="first_release:%s" % "release_2")
-        assert set(results) == {group_a, group_c}
+        results = self.make_query(search_filter_query="first_release:release_2")
+        assert set(results) == {group_c}
 
         results = self.make_query(
             environments=[staging_env, prod_env],
-            search_filter_query="first_release:%s" % "release_2",
+            search_filter_query="first_release:release_2",
         )
         assert set(results) == {group_a}
 
         results = self.make_query(
-            environments=[staging_env], search_filter_query="first_release:%s" % "release_2"
+            environments=[staging_env], search_filter_query="first_release:release_2"
         )
         assert set(results) == set()
 
         results = self.make_query(
-            environments=[prod_env], search_filter_query="first_release:%s" % "release_2"
+            environments=[prod_env], search_filter_query="first_release:release_2"
         )
         assert set(results) == {group_a}
 
+    @pytest.mark.skip(reason="test runs far too slowly, causing timeouts atm.")
     def test_all_fields_do_not_error(self):
         # Just a sanity check to make sure that all fields can be successfully
         # searched on without returning type errors and other schema related
         # issues.
         def test_query(query):
-            try:
-                self.make_query(search_filter_query=query)
-            except SnubaError as e:
-                self.fail(f"Query {query} errored. Error info: {e}")  # type:ignore[attr-defined]
+            self.make_query(search_filter_query=query)
 
         for key in SENTRY_SNUBA_MAP:
-            if key in ["project.id", "issue.id", "performance.issue_ids"]:
+            if key in ["project.id", "issue.id", "performance.issue_ids", "status"]:
                 continue
             test_query("has:%s" % key)
             test_query("!has:%s" % key)
@@ -2438,7 +2428,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
                 "fingerprint": ["put-me-in-group1"],
                 "event_id": "2" * 32,
                 "message": "something",
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
             },
             project_id=self.project.id,
         )
@@ -2457,7 +2447,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "event_id": "1" * 32,
                 "message": "something",
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "exception": {
                     "values": [
                         {
@@ -2498,7 +2488,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "event_id": "2" * 32,
                 "message": "something",
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "exception": {
                     "values": [
                         {
@@ -2539,7 +2529,7 @@ class EventsSnubaSearchTestCases(EventsDatasetTestSetup):
             data={
                 "event_id": "3" * 32,
                 "message": "something",
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "exception": {
                     "values": [
                         {
@@ -2576,27 +2566,18 @@ class EventsSnubaSearchTest(TestCase, EventsSnubaSearchTestCases):
 @apply_feature_flag_on_cls("organizations:issue-search-group-attributes-side-query")
 class EventsJoinedGroupAttributesSnubaSearchTest(TransactionTestCase, EventsSnubaSearchTestCases):
     def setUp(self):
-        def post_insert(snapshot: GroupAttributesSnapshot):
+        def post_insert(snapshot: GroupAttributesSnapshot) -> None:
             from sentry.utils import snuba
 
-            try:
-                resp = snuba._snuba_pool.urlopen(
-                    "POST",
-                    "/tests/entities/group_attributes/insert",
-                    body=json.dumps([snapshot]),
-                    headers={},
-                )
-                if resp.status != 200:
-                    raise snuba.SnubaError(
-                        f"HTTP {resp.status} response from Snuba! {json.loads(resp.data)}"
-                    )
-                return None
-            except urllib3.exceptions.HTTPError as err:
-                raise snuba.SnubaError(err)
+            resp = snuba._snuba_pool.urlopen(
+                "POST",
+                "/tests/entities/group_attributes/insert",
+                body=json.dumps([snapshot]),
+                headers={},
+            )
+            assert resp.status == 200
 
-        with self.options({"issues.group_attributes.send_kafka": True}), mock.patch(
-            "sentry.issues.attributes.produce_snapshot_to_kafka", post_insert
-        ):
+        with mock.patch("sentry.issues.attributes.produce_snapshot_to_kafka", post_insert):
             super().setUp()
 
     @mock.patch("sentry.utils.metrics.timer")
@@ -2606,7 +2587,7 @@ class EventsJoinedGroupAttributesSnubaSearchTest(TransactionTestCase, EventsSnub
         assert set(results) == {self.group1}
 
         # introduce a slight delay so the async future has time to run and log the metric
-        time.sleep(0.10)
+        time.sleep(1)
 
         metrics_incr_called = False
         for call in metrics_incr.call_args_list:
@@ -2622,16 +2603,39 @@ class EventsJoinedGroupAttributesSnubaSearchTest(TransactionTestCase, EventsSnub
                 metrics_timer_called = True
         assert metrics_timer_called
 
+    def test_issue_priority(self):
+        results = self.make_query(search_filter_query="issue.priority:high")
+        assert set(results) == {self.group1, self.group2}
 
-class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
+        event_3 = self.store_event(
+            data={
+                "fingerprint": ["put-me-in-group3"],
+                "event_id": "c" * 32,
+                "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
+            },
+            project_id=self.project.id,
+        )
+        group_3 = event_3.group
+        group_3.update(priority=PriorityLevel.LOW)
+        results = self.make_query(search_filter_query="issue.priority:low")
+        assert set(results) == {group_3}
+
+        results = self.make_query(search_filter_query="issue.priority:[high, low]")
+        assert set(results) == {self.group1, self.group2, group_3}
+
+        with pytest.raises(InvalidSearchQuery):
+            self.make_query(search_filter_query="issue.category:wrong")
+
+
+class EventsTrendsTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
     @property
     def backend(self):
         return EventsDatasetSnubaSearchBackend()
 
-    def test_priority_sort_old_and_new_events(self):
+    def test_trends_sort_old_and_new_events(self):
         """Test that an issue with only one old event is ranked lower than an issue with only one new event"""
         new_project = self.create_project(organization=self.project.organization)
-        base_datetime = (datetime.utcnow() - timedelta(days=3)).replace(tzinfo=timezone.utc)
+        base_datetime = before_now(days=3)
 
         recent_event = self.store_event(
             data={
@@ -2640,7 +2644,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
                 "message": "group1",
                 "environment": "production",
                 "tags": {"server": "example.com", "sentry:user": "event3@example.com"},
-                "timestamp": iso_format(base_datetime),
+                "timestamp": base_datetime.isoformat(),
                 "stacktrace": {"frames": [{"module": "group1"}]},
             },
             project_id=new_project.id,
@@ -2652,7 +2656,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
                 "message": "foo. Also, this message is intended to be greater than 256 characters so that we can put some unique string identifier after that point in the string. The purpose of this is in order to verify we are using snuba to search messages instead of Postgres (postgres truncates at 256 characters and clickhouse does not). santryrox.",
                 "environment": "production",
                 "tags": {"server": "example.com", "sentry:user": "old_event@example.com"},
-                "timestamp": iso_format(base_datetime - timedelta(days=20)),
+                "timestamp": (base_datetime - timedelta(days=20)).isoformat(),
                 "stacktrace": {"frames": [{"module": "group1"}]},
             },
             project_id=new_project.id,
@@ -2660,7 +2664,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         # datetime(2017, 9, 6, 0, 0)
         old_event.data["timestamp"] = 1504656000.0
 
-        weights: PrioritySortWeights = {
+        weights: TrendsSortWeights = {
             "log_level": 0,
             "has_stacktrace": 0,
             "relative_volume": 1,
@@ -2670,7 +2674,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
             "norm": False,
         }
         results = self.make_query(
-            sort_by="priority",
+            sort_by="trends",
             projects=[new_project],
             aggregate_kwargs=weights,
         )
@@ -2678,10 +2682,10 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         old_group = Group.objects.get(id=old_event.group.id)
         assert list(results) == [recent_group, old_group]
 
-    def test_priority_sort_v2(self):
+    def test_trends_sort_v2(self):
         """Test that the v2 formula works."""
         new_project = self.create_project(organization=self.project.organization)
-        base_datetime = (datetime.utcnow() - timedelta(days=3)).replace(tzinfo=timezone.utc)
+        base_datetime = before_now(days=3)
 
         recent_event = self.store_event(
             data={
@@ -2690,7 +2694,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
                 "message": "group1",
                 "environment": "production",
                 "tags": {"server": "example.com", "sentry:user": "event3@example.com"},
-                "timestamp": iso_format(base_datetime),
+                "timestamp": base_datetime.isoformat(),
                 "stacktrace": {"frames": [{"module": "group1"}]},
             },
             project_id=new_project.id,
@@ -2702,7 +2706,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
                 "message": "foo. Also, this message is intended to be greater than 256 characters so that we can put some unique string identifier after that point in the string. The purpose of this is in order to verify we are using snuba to search messages instead of Postgres (postgres truncates at 256 characters and clickhouse does not). santryrox.",
                 "environment": "production",
                 "tags": {"server": "example.com", "sentry:user": "old_event@example.com"},
-                "timestamp": iso_format(base_datetime - timedelta(days=20)),
+                "timestamp": (base_datetime - timedelta(days=20)).isoformat(),
                 "stacktrace": {"frames": [{"module": "group1"}]},
             },
             project_id=new_project.id,
@@ -2710,7 +2714,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         # datetime(2017, 9, 6, 0, 0)
         old_event.data["timestamp"] = 1504656000.0
 
-        weights: PrioritySortWeights = {
+        weights: TrendsSortWeights = {
             "log_level": 0,
             "has_stacktrace": 0,
             "relative_volume": 1,
@@ -2720,7 +2724,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
             "norm": False,
         }
         results = self.make_query(
-            sort_by="priority",
+            sort_by="trends",
             projects=[new_project],
             aggregate_kwargs=weights,
         )
@@ -2728,14 +2732,14 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         old_group = Group.objects.get(id=old_event.group.id)
         assert list(results) == [recent_group, old_group]
 
-    def test_priority_log_level_results(self):
+    def test_trends_log_level_results(self):
         """Test that the scoring results change when we pass in different log level weights"""
-        base_datetime = (datetime.utcnow() - timedelta(hours=1)).replace(tzinfo=timezone.utc)
+        base_datetime = before_now(hours=1)
         event1 = self.store_event(
             data={
                 "fingerprint": ["put-me-in-group1"],
                 "event_id": "c" * 32,
-                "timestamp": iso_format(base_datetime - timedelta(hours=1)),
+                "timestamp": (base_datetime - timedelta(hours=1)).isoformat(),
                 "message": "foo",
                 "stacktrace": {"frames": [{"module": "group1"}]},
                 "environment": "staging",
@@ -2747,7 +2751,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
             data={
                 "fingerprint": ["put-me-in-group2"],
                 "event_id": "d" * 32,
-                "timestamp": iso_format(base_datetime),
+                "timestamp": base_datetime.isoformat(),
                 "message": "bar",
                 "stacktrace": {"frames": [{"module": "group2"}]},
                 "environment": "staging",
@@ -2759,7 +2763,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         group2 = Group.objects.get(id=event2.group.id)
 
         agg_kwargs = {
-            "priority": {
+            "trends": {
                 "log_level": 0,
                 "has_stacktrace": 0,
                 "relative_volume": 1,
@@ -2775,7 +2779,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
             end=None,
             project_ids=[self.project.id],
             environment_ids=[],
-            sort_field="priority",
+            sort_field="trends",
             organization=self.organization,
             group_ids=[group1.id, group2.id],
             limit=150,
@@ -2786,14 +2790,14 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         # initially group 2's score is higher since it has a more recent event
         assert group2_score_before > group1_score_before
 
-        agg_kwargs["priority"].update({"log_level": 5})
+        agg_kwargs["trends"].update({"log_level": 5})
 
         results2 = query_executor.snuba_search(
             start=None,
             end=None,
             project_ids=[self.project.id],
             environment_ids=[],
-            sort_field="priority",
+            sort_field="trends",
             organization=self.organization,
             group_ids=[group1.id, group2.id],
             limit=150,
@@ -2804,11 +2808,11 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         # ensure fatal has a higher score than error
         assert group1_score_after > group2_score_after
 
-    def test_priority_has_stacktrace_results(self):
+    def test_trends_has_stacktrace_results(self):
         """Test that the scoring results change when we pass in different has_stacktrace weights"""
-        base_datetime = (datetime.utcnow() - timedelta(hours=1)).replace(tzinfo=timezone.utc)
+        base_datetime = before_now(hours=1)
         agg_kwargs = {
-            "priority": {
+            "trends": {
                 "log_level": 0,
                 "has_stacktrace": 0,
                 "relative_volume": 1,
@@ -2824,7 +2828,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
             data={
                 "event_id": "d" * 32,
                 "message": "oh no",
-                "timestamp": iso_format(base_datetime - timedelta(hours=1)),
+                "timestamp": (base_datetime - timedelta(hours=1)).isoformat(),
             },
             project_id=self.project.id,
         )
@@ -2848,7 +2852,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
                         }
                     ]
                 },
-                "timestamp": iso_format(base_datetime - timedelta(hours=1)),
+                "timestamp": (base_datetime - timedelta(hours=1)).isoformat(),
             },
             project_id=self.project.id,
         )
@@ -2859,7 +2863,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
             end=None,
             project_ids=[self.project.id],
             environment_ids=[],
-            sort_field="priority",
+            sort_field="trends",
             organization=self.organization,
             group_ids=[group1.id, group2.id],
             limit=150,
@@ -2869,13 +2873,13 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         group2_score = results[1][1]
         assert group1_score == group2_score
 
-        agg_kwargs["priority"].update({"has_stacktrace": 3})
+        agg_kwargs["trends"].update({"has_stacktrace": 3})
         results = query_executor.snuba_search(
             start=None,
             end=None,
             project_ids=[self.project.id],
             environment_ids=[],
-            sort_field="priority",
+            sort_field="trends",
             organization=self.organization,
             group_ids=[group1.id, group2.id],
             limit=150,
@@ -2886,14 +2890,14 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         # check that a group with an event with a stacktrace has a higher weight than one without
         assert group1_score < group2_score
 
-    def test_priority_event_halflife_results(self):
+    def test_trends_event_halflife_results(self):
         """Test that the scoring results change when we pass in different event halflife weights"""
-        base_datetime = (datetime.utcnow() - timedelta(hours=1)).replace(tzinfo=timezone.utc)
+        base_datetime = before_now(hours=1)
         event1 = self.store_event(
             data={
                 "fingerprint": ["put-me-in-group1"],
                 "event_id": "a" * 32,
-                "timestamp": iso_format(base_datetime - timedelta(hours=1)),
+                "timestamp": (base_datetime - timedelta(hours=1)).isoformat(),
                 "message": "foo",
                 "stacktrace": {"frames": [{"module": "group1"}]},
                 "environment": "staging",
@@ -2905,7 +2909,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
             data={
                 "fingerprint": ["put-me-in-group2"],
                 "event_id": "b" * 32,
-                "timestamp": iso_format(base_datetime),
+                "timestamp": base_datetime.isoformat(),
                 "message": "bar",
                 "stacktrace": {"frames": [{"module": "group2"}]},
                 "environment": "staging",
@@ -2917,7 +2921,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         group2 = Group.objects.get(id=event2.group.id)
 
         agg_kwargs = {
-            "priority": {
+            "trends": {
                 "log_level": 0,
                 "has_stacktrace": 0,
                 "relative_volume": 1,
@@ -2933,7 +2937,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
             end=None,
             project_ids=[self.project.id],
             environment_ids=[],
-            sort_field="priority",
+            sort_field="trends",
             organization=self.organization,
             group_ids=[group1.id, group2.id],
             limit=150,
@@ -2944,13 +2948,13 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         # initially group 2's score is higher since it has a more recent event
         assert group2_score_before > group1_score_before
 
-        agg_kwargs["priority"].update({"event_halflife_hours": 2})
+        agg_kwargs["trends"].update({"event_halflife_hours": 2})
         results = query_executor.snuba_search(
             start=None,
             end=None,
             project_ids=[self.project.id],
             environment_ids=[],
-            sort_field="priority",
+            sort_field="trends",
             organization=self.organization,
             group_ids=[group1.id, group2.id],
             limit=150,
@@ -2960,14 +2964,14 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         group2_score_after = results[1][1]
         assert group1_score_after < group2_score_after
 
-    def test_priority_mixed_group_types(self):
-        base_datetime = (datetime.utcnow() - timedelta(hours=1)).replace(tzinfo=timezone.utc)
+    def test_trends_mixed_group_types(self):
+        base_datetime = before_now(hours=1)
 
         error_event = self.store_event(
             data={
                 "fingerprint": ["put-me-in-group1"],
                 "event_id": "a" * 32,
-                "timestamp": iso_format(base_datetime - timedelta(hours=1)),
+                "timestamp": (base_datetime - timedelta(hours=1)).isoformat(),
                 "message": "foo",
                 "stacktrace": {"frames": [{"module": "group1"}]},
                 "environment": "staging",
@@ -2978,11 +2982,10 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         error_group = error_event.group
 
         profile_event_id = uuid.uuid4().hex
-        _, group_info = process_event_and_issue_occurrence(
-            self.build_occurrence_data(event_id=profile_event_id),
-            {
-                "event_id": profile_event_id,
-                "project_id": self.project.id,
+        _, group_info = self.process_occurrence(
+            event_id=profile_event_id,
+            project_id=self.project.id,
+            event_data={
                 "title": "some problem",
                 "platform": "python",
                 "tags": {"my_tag": "1"},
@@ -2994,7 +2997,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         profile_group_1 = group_info.group
 
         agg_kwargs = {
-            "priority": {
+            "trends": {
                 "log_level": 0,
                 "has_stacktrace": 0,
                 "relative_volume": 1,
@@ -3007,7 +3010,6 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
         query_executor = self.backend._get_query_executor()
         with self.feature(
             [
-                "organizations:issue-platform",
                 ProfileFileIOGroupType.build_visible_feature_name(),
             ]
         ):
@@ -3016,7 +3018,7 @@ class EventsPriorityTest(TestCase, SharedSnubaMixin, OccurrenceTestMixin):
                 end=None,
                 project_ids=[self.project.id],
                 environment_ids=[],
-                sort_field="priority",
+                sort_field="trends",
                 organization=self.organization,
                 group_ids=[profile_group_1.id, error_group.id],
                 limit=150,
@@ -3035,7 +3037,7 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
 
     def setUp(self):
         super().setUp()
-        self.base_datetime = (datetime.utcnow() - timedelta(days=3)).replace(tzinfo=timezone.utc)
+        self.base_datetime = before_now(days=3)
 
         transaction_event_data = {
             "level": "info",
@@ -3044,22 +3046,23 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
             "culprit": "app/components/events/eventEntries in map",
             "contexts": {"trace": {"trace_id": "b" * 32, "span_id": "c" * 16, "op": ""}},
         }
-        with mock.patch(
-            "sentry.issues.ingest.send_issue_occurrence_to_eventstream",
-            side_effect=send_issue_occurrence_to_eventstream,
-        ) as mock_eventstream, mock.patch.object(
-            PerformanceRenderBlockingAssetSpanGroupType,
-            "noise_config",
-            new=NoiseConfig(0, timedelta(minutes=1)),
-        ), self.feature(
-            "organizations:issue-platform"
+        with (
+            mock.patch(
+                "sentry.issues.ingest.send_issue_occurrence_to_eventstream",
+                side_effect=send_issue_occurrence_to_eventstream,
+            ) as mock_eventstream,
+            mock.patch.object(
+                PerformanceRenderBlockingAssetSpanGroupType,
+                "noise_config",
+                new=NoiseConfig(0, timedelta(minutes=1)),
+            ),
         ):
             self.store_event(
                 data={
                     **transaction_event_data,
                     "event_id": "a" * 32,
-                    "timestamp": iso_format(before_now(minutes=1)),
-                    "start_timestamp": iso_format(before_now(minutes=1, seconds=5)),
+                    "timestamp": before_now(minutes=1).isoformat(),
+                    "start_timestamp": (before_now(minutes=1, seconds=5)).isoformat(),
                     "tags": {"my_tag": 1},
                     "fingerprint": [
                         f"{PerformanceRenderBlockingAssetSpanGroupType.type_id}-group1"
@@ -3073,8 +3076,8 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
                 data={
                     **transaction_event_data,
                     "event_id": "a" * 32,
-                    "timestamp": iso_format(before_now(minutes=2)),
-                    "start_timestamp": iso_format(before_now(minutes=2, seconds=5)),
+                    "timestamp": before_now(minutes=2).isoformat(),
+                    "start_timestamp": before_now(minutes=2, seconds=5).isoformat(),
                     "tags": {"my_tag": 1},
                     "fingerprint": [
                         f"{PerformanceRenderBlockingAssetSpanGroupType.type_id}-group2"
@@ -3084,7 +3087,7 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
             )
             self.perf_group_2 = mock_eventstream.call_args[0][2].group
         error_event_data = {
-            "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+            "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
             "message": "bar",
             "environment": "staging",
             "tags": {
@@ -3120,7 +3123,6 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
     def test_performance_query(self):
         with self.feature(
             [
-                "organizations:issue-platform",
                 self.perf_group_1.issue_type.build_visible_feature_name(),
             ]
         ):
@@ -3138,7 +3140,6 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
         # issue platform. We'd end up reading the same issue twice and duplicate it in the response.
         with self.feature(
             [
-                "organizations:issue-platform",
                 self.perf_group_1.issue_type.build_visible_feature_name(),
             ]
         ):
@@ -3151,7 +3152,6 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
             assert list(results) == []
         with self.feature(
             [
-                "organizations:issue-platform",
                 self.perf_group_1.issue_type.build_visible_feature_name(),
             ]
         ):
@@ -3161,7 +3161,6 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
     def test_error_performance_query(self):
         with self.feature(
             [
-                "organizations:issue-platform",
                 self.perf_group_1.issue_type.build_visible_feature_name(),
             ]
         ):
@@ -3195,7 +3194,6 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
     def test_cursor_performance_issues(self):
         with self.feature(
             [
-                "organizations:issue-platform",
                 self.perf_group_1.issue_type.build_visible_feature_name(),
             ]
         ):
@@ -3239,15 +3237,16 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
 
         transaction_name = "im a little tea pot"
 
-        with mock.patch(
-            "sentry.issues.ingest.send_issue_occurrence_to_eventstream",
-            side_effect=send_issue_occurrence_to_eventstream,
-        ) as mock_eventstream, mock.patch.object(
-            PerformanceRenderBlockingAssetSpanGroupType,
-            "noise_config",
-            new=NoiseConfig(0, timedelta(minutes=1)),
-        ), self.feature(
-            "organizations:issue-platform"
+        with (
+            mock.patch(
+                "sentry.issues.ingest.send_issue_occurrence_to_eventstream",
+                side_effect=send_issue_occurrence_to_eventstream,
+            ) as mock_eventstream,
+            mock.patch.object(
+                PerformanceRenderBlockingAssetSpanGroupType,
+                "noise_config",
+                new=NoiseConfig(0, timedelta(minutes=1)),
+            ),
         ):
             tx = self.store_event(
                 data={
@@ -3258,8 +3257,8 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
                         f"{PerformanceRenderBlockingAssetSpanGroupType.type_id}-group12"
                     ],
                     "event_id": "e" * 32,
-                    "timestamp": iso_format(self.base_datetime),
-                    "start_timestamp": iso_format(self.base_datetime),
+                    "timestamp": self.base_datetime.isoformat(),
+                    "start_timestamp": self.base_datetime.isoformat(),
                     "type": "transaction",
                     "transaction": transaction_name,
                 },
@@ -3275,7 +3274,6 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
         assert created_group == find_group
         with self.feature(
             [
-                "organizations:issue-platform",
                 created_group.issue_type.build_visible_feature_name(),
             ]
         ):
@@ -3302,15 +3300,16 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
             assert set(results2) == {created_group}
 
     def test_search_message_error_and_perf_issues(self):
-        with mock.patch(
-            "sentry.issues.ingest.send_issue_occurrence_to_eventstream",
-            side_effect=send_issue_occurrence_to_eventstream,
-        ) as mock_eventstream, mock.patch.object(
-            PerformanceRenderBlockingAssetSpanGroupType,
-            "noise_config",
-            new=NoiseConfig(0, timedelta(minutes=1)),
-        ), self.feature(
-            "organizations:issue-platform"
+        with (
+            mock.patch(
+                "sentry.issues.ingest.send_issue_occurrence_to_eventstream",
+                side_effect=send_issue_occurrence_to_eventstream,
+            ) as mock_eventstream,
+            mock.patch.object(
+                PerformanceRenderBlockingAssetSpanGroupType,
+                "noise_config",
+                new=NoiseConfig(0, timedelta(minutes=1)),
+            ),
         ):
             self.store_event(
                 data={
@@ -3321,8 +3320,8 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
                         f"{PerformanceRenderBlockingAssetSpanGroupType.type_id}-group12"
                     ],
                     "event_id": "e" * 32,
-                    "timestamp": iso_format(self.base_datetime),
-                    "start_timestamp": iso_format(self.base_datetime),
+                    "timestamp": self.base_datetime.isoformat(),
+                    "start_timestamp": self.base_datetime.isoformat(),
                     "type": "transaction",
                     "transaction": "/api/0/events",
                 },
@@ -3339,7 +3338,7 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
                 "message": "Uncaught exception on api /api/0/events",
                 "environment": "production",
                 "tags": {"server": "example.com", "sentry:user": "event3@example.com"},
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
                 "stacktrace": {"frames": [{"module": "group1"}]},
             },
             project_id=self.project.id,
@@ -3351,7 +3350,6 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
 
         with self.feature(
             [
-                "organizations:issue-platform",
                 perf_issue.issue_type.build_visible_feature_name(),
             ]
         ):
@@ -3371,7 +3369,7 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
                 "fingerprint": ["put-me-in-group1"],
                 "event_id": "2" * 32,
                 "message": "something",
-                "timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
             },
             project_id=self.project.id,
         )
@@ -3383,8 +3381,8 @@ class EventsTransactionsSnubaSearchTest(TestCase, SharedSnubaMixin):
                 "contexts": {"trace": {"trace_id": "b" * 32, "span_id": "c" * 16, "op": ""}},
                 "fingerprint": [f"{PerformanceRenderBlockingAssetSpanGroupType.type_id}-group12"],
                 "event_id": "e" * 32,
-                "timestamp": iso_format(self.base_datetime),
-                "start_timestamp": iso_format(self.base_datetime),
+                "timestamp": self.base_datetime.isoformat(),
+                "start_timestamp": self.base_datetime.isoformat(),
                 "type": "transaction",
                 "transaction": "something",
             },
@@ -3406,14 +3404,14 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
 
     def setUp(self):
         super().setUp()
-        self.base_datetime = (datetime.utcnow() - timedelta(days=3)).replace(tzinfo=timezone.utc)
+        self.base_datetime = before_now(days=3)
 
         event_id_1 = uuid.uuid4().hex
-        _, group_info = process_event_and_issue_occurrence(
-            self.build_occurrence_data(event_id=event_id_1, issue_title="File I/O on Main Thread"),
-            {
-                "event_id": event_id_1,
-                "project_id": self.project.id,
+        _, group_info = self.process_occurrence(
+            event_id=event_id_1,
+            project_id=self.project.id,
+            issue_title="File I/O on Main Thread",
+            event_data={
                 "title": "some problem",
                 "platform": "python",
                 "tags": {"my_tag": "1"},
@@ -3425,15 +3423,12 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
         self.profile_group_1 = group_info.group
 
         event_id_2 = uuid.uuid4().hex
-        _, group_info = process_event_and_issue_occurrence(
-            self.build_occurrence_data(
-                event_id=event_id_2,
-                fingerprint=["put-me-in-group-2"],
-                issue_title="File I/O on Main Thread",
-            ),
-            {
-                "event_id": event_id_2,
-                "project_id": self.project.id,
+        _, group_info = self.process_occurrence(
+            event_id=event_id_2,
+            project_id=self.project.id,
+            fingerprint=["put-me-in-group-2"],
+            issue_title="File I/O on Main Thread",
+            event_data={
                 "title": "some other problem",
                 "platform": "python",
                 "tags": {"my_tag": "1"},
@@ -3445,11 +3440,11 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
         self.profile_group_2 = group_info.group
 
         event_id_3 = uuid.uuid4().hex
-        process_event_and_issue_occurrence(
-            self.build_occurrence_data(event_id=event_id_3, fingerprint=["put-me-in-group-3"]),
-            {
-                "event_id": event_id_3,
-                "project_id": self.project.id,
+        self.process_occurrence(
+            event_id=event_id_3,
+            project_id=self.project.id,
+            fingerprint=["put-me-in-group-3"],
+            event_data={
                 "title": "some other problem",
                 "platform": "python",
                 "tags": {"my_tag": "2"},
@@ -3459,7 +3454,7 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
         )
 
         error_event_data = {
-            "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
+            "timestamp": (self.base_datetime - timedelta(days=20)).isoformat(),
             "message": "bar",
             "environment": "staging",
             "tags": {
@@ -3497,9 +3492,7 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
         assert list(results) == []
 
     def test_generic_query(self):
-        with self.feature(
-            ["organizations:issue-platform", ProfileFileIOGroupType.build_visible_feature_name()]
-        ):
+        with self.feature([ProfileFileIOGroupType.build_visible_feature_name()]):
             results = self.make_query(search_filter_query="issue.category:performance my_tag:1")
             assert list(results) == [self.profile_group_1, self.profile_group_2]
             results = self.make_query(
@@ -3508,9 +3501,7 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
             assert list(results) == [self.profile_group_1, self.profile_group_2]
 
     def test_generic_query_message(self):
-        with self.feature(
-            ["organizations:issue-platform", ProfileFileIOGroupType.build_visible_feature_name()]
-        ):
+        with self.feature([ProfileFileIOGroupType.build_visible_feature_name()]):
             results = self.make_query(search_filter_query="File I/O")
             assert list(results) == [self.profile_group_1, self.profile_group_2]
 
@@ -3522,13 +3513,12 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
             PerformanceNPlusOneGroupType, "noise_config", new=NoiseConfig(0, timedelta(minutes=1))
         ):
             with self.feature(group_type.build_ingest_feature_name()):
-                _, group_info = process_event_and_issue_occurrence(
-                    self.build_occurrence_data(
-                        event_id=event_id, type=group_type.type_id, fingerprint=["some perf issue"]
-                    ),
-                    {
-                        "event_id": event_id,
-                        "project_id": self.project.id,
+                _, group_info = self.process_occurrence(
+                    event_id=event_id,
+                    project_id=self.project.id,
+                    type=group_type.type_id,
+                    fingerprint=["some perf issue"],
+                    event_data={
                         "title": "some problem",
                         "platform": "python",
                         "tags": {"my_tag": "2"},
@@ -3538,11 +3528,8 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
                 )
                 assert group_info is not None
 
-            results = self.make_query(search_filter_query="issue.category:performance my_tag:2")
-            assert list(results) == []
             with self.feature(
                 [
-                    "organizations:issue-platform",
                     group_type.build_visible_feature_name(),
                     "organizations:performance-issues-search",
                 ]
@@ -3551,9 +3538,7 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
         assert list(results) == [group_info.group]
 
     def test_error_generic_query(self):
-        with self.feature(
-            ["organizations:issue-platform", ProfileFileIOGroupType.build_visible_feature_name()]
-        ):
+        with self.feature([ProfileFileIOGroupType.build_visible_feature_name()]):
             results = self.make_query(search_filter_query="my_tag:1")
             assert list(results) == [
                 self.profile_group_1,
@@ -3582,9 +3567,7 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
             ]
 
     def test_cursor_profile_issues(self):
-        with self.feature(
-            ["organizations:issue-platform", ProfileFileIOGroupType.build_visible_feature_name()]
-        ):
+        with self.feature([ProfileFileIOGroupType.build_visible_feature_name()]):
             results = self.make_query(
                 projects=[self.project],
                 search_filter_query="issue.category:performance my_tag:1",
@@ -3623,9 +3606,7 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
         Any queries with `error.handled` or `error.unhandled` filters querying the search_issues dataset
         should be rejected and return empty results.
         """
-        with self.feature(
-            ["organizations:issue-platform", ProfileFileIOGroupType.build_visible_feature_name()]
-        ):
+        with self.feature([ProfileFileIOGroupType.build_visible_feature_name()]):
             results = self.make_query(
                 projects=[self.project],
                 search_filter_query="issue.category:performance error.unhandled:0",
@@ -3684,261 +3665,59 @@ class EventsGenericSnubaSearchTest(TestCase, SharedSnubaMixin, OccurrenceTestMix
                 == []
             )
 
+    def test_feedback_category_hidden_default(self):
+        with self.feature([FeedbackGroup.build_visible_feature_name()]):
+            event_id_1 = uuid.uuid4().hex
+            self.process_occurrence(
+                **{
+                    "project_id": self.project.id,
+                    "event_id": event_id_1,
+                    "fingerprint": ["c" * 32],
+                    "issue_title": "User Feedback",
+                    "type": FeedbackGroup.type_id,
+                    "detection_time": datetime.now().timestamp(),
+                    "level": "info",
+                },
+                event_data={
+                    "platform": "python",
+                    "timestamp": before_now(minutes=1).isoformat(),
+                    "received": before_now(minutes=1).isoformat(),
+                },
+            )
+            results = self.make_query(
+                date_from=self.base_datetime,
+                date_to=self.base_datetime + timedelta(days=10),
+            )
+            assert set(results) == set()
 
-class CdcEventsSnubaSearchTest(TestCase, SharedSnubaMixin):
-    @property
-    def backend(self):
-        return CdcEventsDatasetSnubaSearchBackend()
-
-    def setUp(self):
-        super().setUp()
-        self.base_datetime = (datetime.utcnow() - timedelta(days=3)).replace(tzinfo=timezone.utc)
-
-        self.event1 = self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group1"],
-                "event_id": "a" * 32,
-                "environment": "production",
-                "timestamp": iso_format(self.base_datetime - timedelta(days=21)),
-                "tags": {"sentry:user": "user1"},
-            },
-            project_id=self.project.id,
-        )
-        self.env1 = self.event1.get_environment()
-        self.group1 = self.event1.group
-        self.event3 = self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group1"],
-                "environment": "staging",
-                "timestamp": iso_format(self.base_datetime),
-                "tags": {"sentry:user": "user2"},
-            },
-            project_id=self.project.id,
-        )
-
-        self.event2 = self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group2"],
-                "timestamp": iso_format(self.base_datetime - timedelta(days=20)),
-                "environment": "staging",
-                "tags": {"sentry:user": "user1"},
-            },
-            project_id=self.project.id,
-        )
-        self.group2 = self.event2.group
-        self.env2 = self.event2.get_environment()
-
-    def run_test(
-        self,
-        search_filter_query,
-        expected_groups,
-        expected_hits,
-        projects=None,
-        environments=None,
-        sort_by="date",
-        limit=None,
-        count_hits=False,
-        date_from=None,
-        date_to=None,
-        cursor=None,
-    ):
-        results = self.make_query(
-            projects=projects,
-            search_filter_query=search_filter_query,
-            environments=environments,
-            sort_by=sort_by,
-            limit=limit,
-            count_hits=count_hits,
-            date_from=date_from,
-            date_to=date_to,
-            cursor=cursor,
-        )
-        assert list(results) == expected_groups
-        assert results.hits == expected_hits
-        return results
-
-    def test(self):
-        self.run_test("is:unresolved", [self.group1, self.group2], None)
-
-    def test_invalid(self):
-        with pytest.raises(InvalidQueryForExecutor):
-            self.make_query(search_filter_query="is:unresolved abc:123")
-
-    def test_resolved_group(self):
-        self.group2.status = GroupStatus.RESOLVED
-        self.group2.substatus = None
-        self.group2.save()
-        self.store_group(self.group2)
-        self.run_test("is:unresolved", [self.group1], None)
-        self.run_test("is:resolved", [self.group2], None)
-        self.run_test("is:unresolved is:resolved", [], None)
-
-    def test_environment(self):
-        self.run_test("is:unresolved", [self.group1], None, environments=[self.env1])
-        self.run_test("is:unresolved", [self.group1, self.group2], None, environments=[self.env2])
-
-    def test_sort_times_seen(self):
-        self.run_test(
-            "is:unresolved",
-            [self.group1, self.group2],
-            None,
-            sort_by="freq",
-            date_from=self.base_datetime - timedelta(days=30),
-        )
-
-        self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group2"],
-                "timestamp": iso_format(self.base_datetime - timedelta(days=15)),
-            },
-            project_id=self.project.id,
-        )
-        self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group2"],
-                "timestamp": iso_format(self.base_datetime - timedelta(days=10)),
-                "tags": {"sentry:user": "user2"},
-            },
-            project_id=self.project.id,
-        )
-
-        self.run_test(
-            "is:unresolved",
-            [self.group2, self.group1],
-            None,
-            sort_by="freq",
-            # Change the date range to bust the
-            date_from=self.base_datetime - timedelta(days=29),
-        )
-
-    def test_sort_first_seen(self):
-        self.run_test(
-            "is:unresolved",
-            [self.group2, self.group1],
-            None,
-            sort_by="new",
-            date_from=self.base_datetime - timedelta(days=30),
-        )
-
-        group3 = self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group3"],
-                "timestamp": iso_format(self.base_datetime + timedelta(days=1)),
-            },
-            project_id=self.project.id,
-        ).group
-
-        self.run_test(
-            "is:unresolved",
-            [group3, self.group2, self.group1],
-            None,
-            sort_by="new",
-            # Change the date range to bust the
-            date_from=self.base_datetime - timedelta(days=29),
-        )
-
-    def test_sort_user(self):
-        self.run_test(
-            "is:unresolved",
-            [self.group1, self.group2],
-            None,
-            sort_by="user",
-            date_from=self.base_datetime - timedelta(days=30),
-        )
-
-        self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group2"],
-                "timestamp": iso_format(self.base_datetime + timedelta(days=1)),
-                "tags": {"sentry:user": "user2"},
-            },
-            project_id=self.project.id,
-        )
-        self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group2"],
-                "timestamp": iso_format(self.base_datetime + timedelta(days=1)),
-                "tags": {"sentry:user": "user2"},
-            },
-            project_id=self.project.id,
-        )
-        self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group1"],
-                "timestamp": iso_format(self.base_datetime + timedelta(days=1)),
-                "tags": {"sentry:user": "user1"},
-            },
-            project_id=self.project.id,
-        )
-        self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group1"],
-                "timestamp": iso_format(self.base_datetime + timedelta(days=1)),
-                "tags": {"sentry:user": "user1"},
-            },
-            project_id=self.project.id,
-        )
-        # Test group with no users, which can return a null count
-        group3 = self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group3"],
-                "timestamp": iso_format(self.base_datetime + timedelta(days=1)),
-            },
-            project_id=self.project.id,
-        ).group
-
-        self.run_test(
-            "is:unresolved",
-            [self.group2, self.group1, group3],
-            None,
-            sort_by="user",
-            # Change the date range to bust the
-            date_from=self.base_datetime - timedelta(days=29),
-        )
-
-    def test_sort_priority(self):
-        self.run_test(
-            "is:unresolved",
-            [self.group1, self.group2],
-            None,
-            sort_by="priority",
-            date_from=self.base_datetime - timedelta(days=30),
-        )
-
-    def test_cursor(self):
-        group3 = self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group3"],
-                "timestamp": iso_format(self.base_datetime + timedelta(days=1)),
-                "tags": {"sentry:user": "user2"},
-            },
-            project_id=self.project.id,
-        ).group
-        group4 = self.store_event(
-            data={
-                "fingerprint": ["put-me-in-group7"],
-                "timestamp": iso_format(self.base_datetime + timedelta(days=2)),
-                "tags": {"sentry:user": "user2"},
-            },
-            project_id=self.project.id,
-        ).group
-
-        results = self.run_test("is:unresolved", [group4], 4, limit=1, count_hits=True)
-        results = self.run_test(
-            "is:unresolved", [group3], 4, limit=1, cursor=results.next, count_hits=True
-        )
-        results = self.run_test(
-            "is:unresolved", [group4], 4, limit=1, cursor=results.prev, count_hits=True
-        )
-        self.run_test(
-            "is:unresolved", [group3, self.group1], 4, limit=2, cursor=results.next, count_hits=True
-        )
-
-    def test_rechecking(self):
-        self.group2.status = GroupStatus.RESOLVED
-        self.group2.substatus = None
-        self.group2.save()
-        # Explicitly avoid calling `store_group` here. This means that Clickhouse will still see
-        # this group as `UNRESOLVED` and it will be returned in the snuba results. This group
-        # should still be filtered out by our recheck.
-        self.run_test("is:unresolved", [self.group1], None)
+    def test_feedback_category_show_when_filtered_on(self):
+        with self.feature(
+            [
+                FeedbackGroup.build_visible_feature_name(),
+                FeedbackGroup.build_ingest_feature_name(),
+            ]
+        ):
+            event_id_1 = uuid.uuid4().hex
+            _, group_info = self.process_occurrence(
+                **{
+                    "project_id": self.project.id,
+                    "event_id": event_id_1,
+                    "fingerprint": ["c" * 32],
+                    "issue_title": "User Feedback",
+                    "type": FeedbackGroup.type_id,
+                    "detection_time": datetime.now().timestamp(),
+                    "level": "info",
+                },
+                event_data={
+                    "platform": "python",
+                    "timestamp": before_now(minutes=1).isoformat(),
+                    "received": before_now(minutes=1).isoformat(),
+                },
+            )
+            results = self.make_query(
+                search_filter_query="issue.category:feedback",
+                date_from=self.base_datetime,
+                date_to=self.base_datetime + timedelta(days=10),
+            )
+            assert group_info is not None
+            assert list(results) == [group_info.group]

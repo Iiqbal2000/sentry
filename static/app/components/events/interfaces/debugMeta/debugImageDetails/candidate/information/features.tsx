@@ -1,12 +1,9 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import Tag from 'sentry/components/tag';
-import {
-  CandidateDownload,
-  CandidateDownloadStatus,
-  ImageFeature,
-} from 'sentry/types/debugImage';
+import Tag from 'sentry/components/badge/tag';
+import type {CandidateDownload} from 'sentry/types/debugImage';
+import {CandidateDownloadStatus, ImageFeature} from 'sentry/types/debugImage';
 
 import {getImageFeatureDescription} from '../utils';
 
@@ -23,7 +20,7 @@ function Features({download}: Props) {
     download.status === CandidateDownloadStatus.UNAPPLIED
   ) {
     features = Object.keys(download.features).filter(
-      feature => download.features[feature]
+      feature => download.features[feature as keyof typeof download.features]
     );
   }
 

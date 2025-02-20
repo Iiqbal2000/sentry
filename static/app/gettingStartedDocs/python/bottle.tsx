@@ -1,96 +1,129 @@
 import ExternalLink from 'sentry/components/links/externalLink';
-import {Layout, LayoutProps} from 'sentry/components/onboarding/gettingStartedDoc/layout';
-import {ModuleProps} from 'sentry/components/onboarding/gettingStartedDoc/sdkDocumentation';
 import {StepType} from 'sentry/components/onboarding/gettingStartedDoc/step';
-import {ProductSolution} from 'sentry/components/onboarding/productSelection';
+import {
+  type Docs,
+  DocsPageLocation,
+  type DocsParams,
+  type OnboardingConfig,
+} from 'sentry/components/onboarding/gettingStartedDoc/types';
+import {
+  feedbackOnboardingJsLoader,
+  replayOnboardingJsLoader,
+} from 'sentry/gettingStartedDocs/javascript/jsLoader/jsLoader';
+import {
+  AlternativeConfiguration,
+  crashReportOnboardingPython,
+  featureFlagOnboarding,
+} from 'sentry/gettingStartedDocs/python/python';
 import {t, tct} from 'sentry/locale';
 
-// Configuration Start
-const performanceConfiguration = `    # Set traces_sample_rate to 1.0 to capture 100%
-    # of transactions for performance monitoring.
-    traces_sample_rate=1.0,`;
+type Params = DocsParams;
 
-const profilingConfiguration = `    # Set profiles_sample_rate to 1.0 to profile 100%
-    # of sampled transactions.
-    # We recommend adjusting this value in production.
-    profiles_sample_rate=1.0,`;
+const getInstallSnippet = () => `pip install --upgrade 'sentry-sdk[bottle]'`;
 
-const introduction = (
-  <p>
-    {tct('The Bottle integration adds support for the [link:Bottle Web Framework].', {
-      link: <ExternalLink href="https://bottlepy.org/docs/dev/" />,
-    })}
-  </p>
-);
-
-export const steps = ({
-  sentryInitContent,
-}: {
-  sentryInitContent: string;
-}): LayoutProps['steps'] => [
-  {
-    type: StepType.INSTALL,
-    description: (
-      <p>
-        {tct(
-          'Install [sentrySdkCode:sentry-sdk] from PyPI with the [sentryBotteCode:bottle] extra:',
-          {
-            sentrySdkCode: <code />,
-            sentryBotteCode: <code />,
-          }
-        )}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'bash',
-        code: 'pip install --upgrade sentry-sdk[bottle]',
-      },
-    ],
-  },
-  {
-    type: StepType.CONFIGURE,
-    description: (
-      <p>
-        {tct(
-          'If you have the [code:bottle] package in your dependencies, the Bottle integration will be enabled automatically when you initialize the Sentry SDK. Initialize the Sentry SDK before your app has been initialized:',
-          {
-            code: <code />,
-          }
-        )}
-      </p>
-    ),
-    configurations: [
-      {
-        language: 'python',
-        code: `
+const getSdkSetupSnippet = (params: Params) => `
 import sentry_sdk
 
-from bottle import Bottle
-
 sentry_sdk.init(
-${sentryInitContent}
+    dsn="${params.dsn.public}",
+    # Add data like request headers and IP for users,
+    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+    send_default_pii=True,${
+      params.isPerformanceSelected
+        ? `
+    # Set traces_sample_rate to 1.0 to capture 100%
+    # of transactions for tracing.
+    traces_sample_rate=1.0,`
+        : ''
+    }${
+      params.isProfilingSelected &&
+      params.profilingOptions?.defaultProfilingMode !== 'continuous'
+        ? `
+    # Set profiles_sample_rate to 1.0 to profile 100%
+    # of sampled transactions.
+    # We recommend adjusting this value in production.
+    profiles_sample_rate=1.0,`
+        : params.isProfilingSelected &&
+            params.profilingOptions?.defaultProfilingMode === 'continuous'
+          ? `
+    _experiments={
+        # Set continuous_profiling_auto_start to True
+        # to automatically start the profiler on when
+        # possible.
+        "continuous_profiling_auto_start": True,
+    },`
+          : ''
+    }
 )
+`;
 
+const onboarding: OnboardingConfig = {
+  introduction: () =>
+    tct('The Bottle integration adds support for the [link:Bottle Web Framework].', {
+      link: <ExternalLink href="https://bottlepy.org/docs/dev/" />,
+    }),
+  install: (params: Params) => [
+    {
+      type: StepType.INSTALL,
+      description: tct(
+        'Install [code:sentry-sdk] from PyPI with the [code:bottle] extra:',
+        {
+          code: <code />,
+        }
+      ),
+      configurations: [
+        {
+          description:
+            params.docsLocation === DocsPageLocation.PROFILING_PAGE
+              ? tct(
+                  'You need a minimum version [code:1.18.0] of the [code:sentry-python] SDK for the profiling feature.',
+                  {
+                    code: <code />,
+                  }
+                )
+              : undefined,
+          language: 'bash',
+          code: getInstallSnippet(),
+        },
+      ],
+    },
+  ],
+  configure: (params: Params) => [
+    {
+      type: StepType.CONFIGURE,
+      description: tct(
+        'If you have the [code:bottle] package in your dependencies, the Bottle integration will be enabled automatically when you initialize the Sentry SDK. Initialize the Sentry SDK before your app has been initialized:',
+        {
+          code: <code />,
+        }
+      ),
+      configurations: [
+        {
+          language: 'python',
+          code: `from bottle import Bottle
+${getSdkSetupSnippet(params)}
 app = Bottle()
-      `,
-      },
-    ],
-  },
-  {
-    type: StepType.VERIFY,
-    description: (
-      <p>{t('To verify that everything is working trigger an error on purpose:')}</p>
-    ),
-    configurations: [
-      {
-        language: 'python',
-        code: `from bottle import Bottle, run
+`,
+        },
+      ],
+      additionalInfo: params.isProfilingSelected &&
+        params.profilingOptions?.defaultProfilingMode === 'continuous' && (
+          <AlternativeConfiguration />
+        ),
+    },
+  ],
+  verify: (params: Params) => [
+    {
+      type: StepType.VERIFY,
+      description: t(
+        'To verify that everything is working, trigger an error on purpose:'
+      ),
+      configurations: [
+        {
+          language: 'python',
 
-sentry_sdk.init(
-  ${sentryInitContent}
-)
-
+          code: `from bottle import Bottle, run
+${getSdkSetupSnippet(params)}
 app = Bottle()
 
 @app.route('/')
@@ -99,59 +132,39 @@ def hello():
     return "Hello World!"
 
 run(app, host='localhost', port=8000)
-      `,
-      },
-    ],
-    additionalInfo: (
-      <span>
-        <p>
-          {tct(
-            'When you point your browser to [link:http://localhost:8000/] a transaction in the Performance section of Sentry will be created.',
-            {
-              link: <ExternalLink href="http://localhost:8000/" />,
-            }
-          )}
-        </p>
-        <p>
-          {t(
-            'Additionally, an error event will be sent to Sentry and will be connected to the transaction.'
-          )}
-        </p>
-        <p>{t('It takes a couple of moments for the data to appear in Sentry.')}</p>
-      </span>
-    ),
-  },
-];
-// Configuration End
+`,
+        },
+      ],
+      additionalInfo: (
+        <span>
+          <p>
+            {tct(
+              'When you point your browser to [link:http://localhost:8000/] a transaction in the Performance section of Sentry will be created.',
+              {
+                link: <ExternalLink href="http://localhost:8000/" />,
+              }
+            )}
+          </p>
+          <p>
+            {t(
+              'Additionally, an error event will be sent to Sentry and will be connected to the transaction.'
+            )}
+          </p>
+          <p>{t('It takes a couple of moments for the data to appear in Sentry.')}</p>
+        </span>
+      ),
+    },
+  ],
+  nextSteps: () => [],
+};
 
-export function GettingStartedWithBottle({
-  dsn,
-  activeProductSelection = [],
-  ...props
-}: ModuleProps) {
-  const otherConfigs: string[] = [];
+const docs: Docs = {
+  onboarding,
+  replayOnboardingJsLoader,
 
-  let sentryInitContent: string[] = [`    dsn="${dsn}",`];
+  crashReportOnboarding: crashReportOnboardingPython,
+  featureFlagOnboarding,
+  feedbackOnboardingJsLoader,
+};
 
-  if (activeProductSelection.includes(ProductSolution.PERFORMANCE_MONITORING)) {
-    otherConfigs.push(performanceConfiguration);
-  }
-
-  if (activeProductSelection.includes(ProductSolution.PROFILING)) {
-    otherConfigs.push(profilingConfiguration);
-  }
-
-  sentryInitContent = sentryInitContent.concat(otherConfigs);
-
-  return (
-    <Layout
-      introduction={introduction}
-      steps={steps({
-        sentryInitContent: sentryInitContent.join('\n'),
-      })}
-      {...props}
-    />
-  );
-}
-
-export default GettingStartedWithBottle;
+export default docs;

@@ -1,460 +1,404 @@
-import {Component, Fragment} from 'react';
-import LazyLoad from 'react-lazyload';
-import {WithRouterProps} from 'react-router';
-import {useSortable} from '@dnd-kit/sortable';
+import {useContext, useState} from 'react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {LegendComponentOption} from 'echarts';
+import type {Location} from 'history';
 
-import {Client} from 'sentry/api';
-import {Alert} from 'sentry/components/alert';
-import {Button} from 'sentry/components/button';
-import ErrorPanel from 'sentry/components/charts/errorPanel';
-import {HeaderTitle} from 'sentry/components/charts/styles';
-import CircleIndicator from 'sentry/components/circleIndicator';
+import type {Client} from 'sentry/api';
+import type {BadgeProps} from 'sentry/components/badge/badge';
 import ErrorBoundary from 'sentry/components/errorBoundary';
-import ExternalLink from 'sentry/components/links/externalLink';
-import Panel from 'sentry/components/panels/panel';
+import {isWidgetViewerPath} from 'sentry/components/modals/widgetViewerModal/utils';
 import PanelAlert from 'sentry/components/panels/panelAlert';
 import Placeholder from 'sentry/components/placeholder';
-import {parseSearch} from 'sentry/components/searchSyntax/parser';
-import {Tooltip} from 'sentry/components/tooltip';
-import {IconCopy, IconDelete, IconEdit, IconGrabbable, IconWarning} from 'sentry/icons';
-import {t, tct} from 'sentry/locale';
+import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, PageFilters} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {PageFilters} from 'sentry/types/core';
+import type {Series} from 'sentry/types/echarts';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
+import type {Confidence, Organization} from 'sentry/types/organization';
+import {defined} from 'sentry/utils';
 import {getFormattedDate} from 'sentry/utils/dates';
-import {TableDataWithTitle} from 'sentry/utils/discover/discoverQuery';
-import {AggregationOutputType, parseFunction} from 'sentry/utils/discover/fields';
-import {
-  MEPConsumer,
-  MEPState,
-} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
+import type {TableDataWithTitle} from 'sentry/utils/discover/discoverQuery';
+import type {AggregationOutputType} from 'sentry/utils/discover/fields';
+import {statsPeriodToDays} from 'sentry/utils/duration/statsPeriodToDays';
+import {hasOnDemandMetricWidgetFeature} from 'sentry/utils/onDemandMetrics/features';
+import {useExtractionStatus} from 'sentry/utils/performance/contexts/metricsEnhancedPerformanceDataContext';
 import {VisuallyCompleteWithData} from 'sentry/utils/performanceForSentry';
+import useOrganization from 'sentry/utils/useOrganization';
+import usePageFilters from 'sentry/utils/usePageFilters';
 import withApi from 'sentry/utils/withApi';
 import withOrganization from 'sentry/utils/withOrganization';
 import withPageFilters from 'sentry/utils/withPageFilters';
 // eslint-disable-next-line no-restricted-imports
 import withSentryRouter from 'sentry/utils/withSentryRouter';
+import {DASHBOARD_CHART_GROUP} from 'sentry/views/dashboards/dashboard';
+import {useDiscoverSplitAlert} from 'sentry/views/dashboards/discoverSplitAlert';
+import WidgetCardChartContainer from 'sentry/views/dashboards/widgetCard/widgetCardChartContainer';
 
-import {DRAG_HANDLE_CLASS} from '../dashboard';
-import {DashboardFilters, DisplayType, Widget, WidgetType} from '../types';
-import {getWidgetIndicatorColor, hasThresholdMaxValue} from '../utils';
-import ThresholdsHoverWrapper from '../widgetBuilder/buildSteps/thresholdsStep/thresholdsHoverWrapper';
+import type {DashboardFilters, Widget} from '../types';
+import {DisplayType, OnDemandExtractionState, WidgetType} from '../types';
 import {DEFAULT_RESULTS_LIMIT} from '../widgetBuilder/utils';
+import type WidgetLegendSelectionState from '../widgetLegendSelectionState';
+import {BigNumberWidget} from '../widgets/bigNumberWidget/bigNumberWidget';
+import type {Meta} from '../widgets/common/types';
+import {WidgetFrame} from '../widgets/common/widgetFrame';
+import {WidgetViewerContext} from '../widgetViewer/widgetViewerContext';
 
-import {DashboardsMEPConsumer, DashboardsMEPProvider} from './dashboardsMEPContext';
-import WidgetCardChartContainer from './widgetCardChartContainer';
-import WidgetCardContextMenu from './widgetCardContextMenu';
+import {useDashboardsMEPContext} from './dashboardsMEPContext';
+import {getMenuOptions, useIndexedEventsWarning} from './widgetCardContextMenu';
+import {WidgetCardDataLoader} from './widgetCardDataLoader';
 
 const SESSION_DURATION_INGESTION_STOP_DATE = new Date('2023-01-12');
-export const SESSION_DURATION_ALERT = (
-  <PanelAlert type="warning">
-    {t(
-      'session.duration is no longer being recorded as of %s. Data in this widget may be incomplete.',
-      getFormattedDate(SESSION_DURATION_INGESTION_STOP_DATE, 'MMM D, YYYY')
-    )}
-  </PanelAlert>
+
+export const SESSION_DURATION_ALERT_TEXT = t(
+  'session.duration is no longer being recorded as of %s. Data in this widget may be incomplete.',
+  getFormattedDate(SESSION_DURATION_INGESTION_STOP_DATE, 'MMM D, YYYY')
 );
 
-type DraggableProps = Pick<ReturnType<typeof useSortable>, 'attributes' | 'listeners'>;
+export const SESSION_DURATION_ALERT = (
+  <PanelAlert type="warning">{SESSION_DURATION_ALERT_TEXT}</PanelAlert>
+);
 
 type Props = WithRouterProps & {
   api: Client;
-  isEditing: boolean;
+  isEditingDashboard: boolean;
   location: Location;
   organization: Organization;
   selection: PageFilters;
   widget: Widget;
+  widgetLegendState: WidgetLegendSelectionState;
   widgetLimitReached: boolean;
+  borderless?: boolean;
   dashboardFilters?: DashboardFilters;
-  draggableProps?: DraggableProps;
-  hideToolbar?: boolean;
+  disableFullscreen?: boolean;
+  forceDescriptionTooltip?: boolean;
+  hasEditAccess?: boolean;
   index?: string;
+  isEditingWidget?: boolean;
   isMobile?: boolean;
   isPreview?: boolean;
   isWidgetInvalid?: boolean;
-  noDashboardsMEPProvider?: boolean;
-  noLazyLoad?: boolean;
+  legendOptions?: LegendComponentOption;
+  minTableColumnWidth?: string;
   onDataFetched?: (results: TableDataWithTitle[]) => void;
   onDelete?: () => void;
   onDuplicate?: () => void;
   onEdit?: () => void;
+  onLegendSelectChanged?: () => void;
+  onSetTransactionsDataset?: () => void;
+  onUpdate?: (widget: Widget | null) => void;
+  onWidgetSplitDecision?: (splitDecision: WidgetType) => void;
   renderErrorMessage?: (errorMessage?: string) => React.ReactNode;
+  shouldResize?: boolean;
+  showConfidenceWarning?: boolean;
   showContextMenu?: boolean;
   showStoredAlert?: boolean;
   tableItemLimit?: number;
   windowWidth?: number;
 };
 
-type State = {
+type Data = {
+  confidence?: Confidence;
   pageLinks?: string;
-  seriesData?: Series[];
-  seriesResultsType?: Record<string, AggregationOutputType>;
-  tableData?: TableDataWithTitle[];
+  tableResults?: TableDataWithTitle[];
+  timeseriesResults?: Series[];
+  timeseriesResultsTypes?: Record<string, AggregationOutputType>;
   totalIssuesCount?: string;
 };
 
-type SearchFilterKey = {key?: {value: string}};
+function WidgetCard(props: Props) {
+  const [data, setData] = useState<Data>();
+  const {setData: setWidgetViewerData} = useContext(WidgetViewerContext);
 
-const ERROR_FIELDS = [
-  'error.handled',
-  'error.unhandled',
-  'error.mechanism',
-  'error.type',
-  'error.value',
-];
-
-class WidgetCard extends Component<Props, State> {
-  state: State = {};
-  renderToolbar() {
-    const {
-      onEdit,
-      onDelete,
-      onDuplicate,
-      draggableProps,
-      hideToolbar,
-      isEditing,
-      isMobile,
-    } = this.props;
-
-    if (!isEditing) {
-      return null;
+  const onDataFetched = (newData: Data) => {
+    if (props.onDataFetched && newData.tableResults) {
+      props.onDataFetched(newData.tableResults);
     }
 
-    return (
-      <ToolbarPanel>
-        <IconContainer style={{visibility: hideToolbar ? 'hidden' : 'visible'}}>
-          {!isMobile && (
-            <GrabbableButton
-              size="xs"
-              aria-label={t('Drag Widget')}
-              icon={<IconGrabbable />}
-              borderless
-              className={DRAG_HANDLE_CLASS}
-              {...draggableProps?.listeners}
-              {...draggableProps?.attributes}
-            />
-          )}
-          <Button
-            data-test-id="widget-edit"
-            aria-label={t('Edit Widget')}
-            size="xs"
-            borderless
-            onClick={onEdit}
-            icon={<IconEdit />}
-          />
-          <Button
-            aria-label={t('Duplicate Widget')}
-            size="xs"
-            borderless
-            onClick={onDuplicate}
-            icon={<IconCopy />}
-          />
-          <Button
-            data-test-id="widget-delete"
-            aria-label={t('Delete Widget')}
-            borderless
-            size="xs"
-            onClick={onDelete}
-            icon={<IconDelete />}
-          />
-        </IconContainer>
-      </ToolbarPanel>
-    );
-  }
-
-  renderContextMenu() {
-    const {
-      widget,
-      selection,
-      organization,
-      showContextMenu,
-      isPreview,
-      widgetLimitReached,
-      onEdit,
-      onDuplicate,
-      onDelete,
-      isEditing,
-      router,
-      location,
-      index,
-    } = this.props;
-
-    const {seriesData, tableData, pageLinks, totalIssuesCount, seriesResultsType} =
-      this.state;
-
-    if (isEditing) {
-      return null;
-    }
-
-    return (
-      <WidgetCardContextMenu
-        organization={organization}
-        widget={widget}
-        selection={selection}
-        showContextMenu={showContextMenu}
-        isPreview={isPreview}
-        widgetLimitReached={widgetLimitReached}
-        onDuplicate={onDuplicate}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        router={router}
-        location={location}
-        index={index}
-        seriesData={seriesData}
-        seriesResultsType={seriesResultsType}
-        tableData={tableData}
-        pageLinks={pageLinks}
-        totalIssuesCount={totalIssuesCount}
-      />
-    );
-  }
-
-  setData = ({
-    tableResults,
-    timeseriesResults,
-    totalIssuesCount,
-    pageLinks,
-    timeseriesResultsTypes,
-  }: {
-    pageLinks?: string;
-    tableResults?: TableDataWithTitle[];
-    timeseriesResults?: Series[];
-    timeseriesResultsTypes?: Record<string, AggregationOutputType>;
-    totalIssuesCount?: string;
-  }) => {
-    const {onDataFetched} = this.props;
-
-    if (onDataFetched && tableResults) {
-      onDataFetched(tableResults);
-    }
-
-    this.setState({
-      seriesData: timeseriesResults,
-      tableData: tableResults,
-      totalIssuesCount,
-      pageLinks,
-      seriesResultsType: timeseriesResultsTypes,
-    });
+    setData(prevData => ({...prevData, ...newData}));
   };
 
-  render() {
-    const {
-      api,
-      organization,
-      selection,
-      widget,
-      isMobile,
-      renderErrorMessage,
-      tableItemLimit,
-      windowWidth,
-      noLazyLoad,
-      showStoredAlert,
-      noDashboardsMEPProvider,
-      dashboardFilters,
-      isWidgetInvalid,
-      location,
-    } = this.props;
+  const {
+    api,
+    organization,
+    selection,
+    widget,
+    isMobile,
+    renderErrorMessage,
+    tableItemLimit,
+    windowWidth,
+    dashboardFilters,
+    isWidgetInvalid,
+    location,
+    onWidgetSplitDecision,
+    shouldResize,
+    onLegendSelectChanged,
+    onSetTransactionsDataset,
+    legendOptions,
+    widgetLegendState,
+    disableFullscreen,
+    showConfidenceWarning,
+    minTableColumnWidth,
+  } = props;
 
-    if (widget.displayType === DisplayType.TOP_N) {
-      const queries = widget.queries.map(query => ({
-        ...query,
-        // Use the last aggregate because that's where the y-axis is stored
-        aggregates: query.aggregates.length
-          ? [query.aggregates[query.aggregates.length - 1]]
-          : [],
-      }));
-      widget.queries = queries;
-      widget.limit = DEFAULT_RESULTS_LIMIT;
-    }
-
-    const hasSessionDuration = widget.queries.some(query =>
-      query.aggregates.some(aggregate => aggregate.includes('session.duration'))
-    );
-
-    function conditionalWrapWithDashboardsMEPProvider(component: React.ReactNode) {
-      if (noDashboardsMEPProvider) {
-        return component;
-      }
-      return <DashboardsMEPProvider>{component}</DashboardsMEPProvider>;
-    }
-    const widgetContainsErrorFields = widget.queries.some(
-      ({columns, aggregates, conditions}) =>
-        ERROR_FIELDS.some(
-          errorField =>
-            columns.includes(errorField) ||
-            aggregates.some(
-              aggregate => parseFunction(aggregate)?.arguments.includes(errorField)
-            ) ||
-            parseSearch(conditions)?.some(
-              filter => (filter as SearchFilterKey).key?.value === errorField
-            )
-        )
-    );
-
-    return (
-      <ErrorBoundary
-        customComponent={<ErrorCard>{t('Error loading widget data')}</ErrorCard>}
-      >
-        {conditionalWrapWithDashboardsMEPProvider(
-          <Fragment>
-            <VisuallyCompleteWithData
-              id="DashboardList-FirstWidgetCard"
-              hasData={
-                ((this.state.tableData?.length || this.state.seriesData?.length) ?? 0) > 0
-              }
-              disabled={Number(this.props.index) !== 0}
-            >
-              <WidgetCardPanel isDragging={false}>
-                <WidgetHeader>
-                  <WidgetHeaderDescription>
-                    <WidgetTitleRow>
-                      <Tooltip
-                        title={widget.title}
-                        containerDisplayMode="grid"
-                        showOnlyOnOverflow
-                      >
-                        <WidgetTitle>{widget.title}</WidgetTitle>
-                      </Tooltip>
-                      {widget.thresholds &&
-                        hasThresholdMaxValue(widget.thresholds) &&
-                        this.state.tableData &&
-                        organization.features.includes('dashboard-widget-indicators') && (
-                          <ThresholdsHoverWrapper
-                            thresholds={widget.thresholds}
-                            tableData={this.state.tableData}
-                          >
-                            <CircleIndicator
-                              color={getWidgetIndicatorColor(
-                                widget.thresholds,
-                                this.state.tableData
-                              )}
-                              size={12}
-                            />
-                          </ThresholdsHoverWrapper>
-                        )}
-                    </WidgetTitleRow>
-                    {widget.description && (
-                      <Tooltip
-                        title={widget.description}
-                        containerDisplayMode="grid"
-                        showOnlyOnOverflow
-                      >
-                        <WidgetDescription>{widget.description}</WidgetDescription>
-                      </Tooltip>
-                    )}
-                    <DashboardsMEPConsumer>
-                      {({}) => {
-                        // TODO(Tele-Team): Re-enable this when we have a better way to determine if the data is transaction only
-                        // if (
-                        //   isMetricsData === false &&
-                        //   widget.widgetType === WidgetType.DISCOVER
-                        // ) {
-                        //   return (
-                        //     <Tooltip
-                        //       containerDisplayMode="inline-flex"
-                        //       title={t(
-                        //         'Based on your search criteria, the sampled events available may be limited and may not be representative of all events.'
-                        //       )}
-                        //     >
-                        //       <IconWarning color="warningText" />
-                        //     </Tooltip>
-                        //   );
-                        // }
-                        return null;
-                      }}
-                    </DashboardsMEPConsumer>
-                  </WidgetHeaderDescription>
-                  {this.renderContextMenu()}
-                </WidgetHeader>
-                {hasSessionDuration && SESSION_DURATION_ALERT}
-
-                {isWidgetInvalid ? (
-                  <Fragment>
-                    {renderErrorMessage?.('Widget query condition is invalid.')}
-                    <StyledErrorPanel>
-                      <IconWarning color="gray500" size="lg" />
-                    </StyledErrorPanel>
-                  </Fragment>
-                ) : noLazyLoad ? (
-                  <WidgetCardChartContainer
-                    location={location}
-                    api={api}
-                    organization={organization}
-                    selection={selection}
-                    widget={widget}
-                    isMobile={isMobile}
-                    renderErrorMessage={renderErrorMessage}
-                    tableItemLimit={tableItemLimit}
-                    windowWidth={windowWidth}
-                    onDataFetched={this.setData}
-                    dashboardFilters={dashboardFilters}
-                  />
-                ) : (
-                  <LazyLoad once resize height={200}>
-                    <WidgetCardChartContainer
-                      location={location}
-                      api={api}
-                      organization={organization}
-                      selection={selection}
-                      widget={widget}
-                      isMobile={isMobile}
-                      renderErrorMessage={renderErrorMessage}
-                      tableItemLimit={tableItemLimit}
-                      windowWidth={windowWidth}
-                      onDataFetched={this.setData}
-                      dashboardFilters={dashboardFilters}
-                    />
-                  </LazyLoad>
-                )}
-                {this.renderToolbar()}
-              </WidgetCardPanel>
-            </VisuallyCompleteWithData>
-            {!organization.features.includes('performance-mep-bannerless-ui') && (
-              <MEPConsumer>
-                {metricSettingContext => {
-                  return (
-                    <DashboardsMEPConsumer>
-                      {({isMetricsData}) => {
-                        if (
-                          showStoredAlert &&
-                          isMetricsData === false &&
-                          widget.widgetType === WidgetType.DISCOVER &&
-                          metricSettingContext &&
-                          metricSettingContext.metricSettingState !==
-                            MEPState.TRANSACTIONS_ONLY
-                        ) {
-                          if (!widgetContainsErrorFields) {
-                            return (
-                              <StoredDataAlert showIcon>
-                                {tct(
-                                  "Your selection is only applicable to [indexedData: indexed event data]. We've automatically adjusted your results.",
-                                  {
-                                    indexedData: (
-                                      <ExternalLink href="https://docs.sentry.io/product/dashboards/widget-builder/#errors--transactions" />
-                                    ),
-                                  }
-                                )}
-                              </StoredDataAlert>
-                            );
-                          }
-                        }
-                        return null;
-                      }}
-                    </DashboardsMEPConsumer>
-                  );
-                }}
-              </MEPConsumer>
-            )}
-          </Fragment>
-        )}
-      </ErrorBoundary>
-    );
+  if (widget.displayType === DisplayType.TOP_N) {
+    const queries = widget.queries.map(query => ({
+      ...query,
+      // Use the last aggregate because that's where the y-axis is stored
+      aggregates: query.aggregates.length
+        ? [query.aggregates[query.aggregates.length - 1]!]
+        : [],
+    }));
+    widget.queries = queries;
+    widget.limit = DEFAULT_RESULTS_LIMIT;
   }
+
+  const hasSessionDuration = widget.queries.some(query =>
+    query.aggregates.some(aggregate => aggregate.includes('session.duration'))
+  );
+
+  const {isMetricsData} = useDashboardsMEPContext();
+  const extractionStatus = useExtractionStatus({queryKey: widget});
+  const indexedEventsWarning = useIndexedEventsWarning();
+  const onDemandWarning = useOnDemandWarning({widget});
+  const discoverSplitAlert = useDiscoverSplitAlert({widget, onSetTransactionsDataset});
+  const sessionDurationWarning = hasSessionDuration ? SESSION_DURATION_ALERT_TEXT : null;
+  const spanTimeRangeWarning = useTimeRangeWarning({widget});
+
+  const onFullScreenViewClick = () => {
+    if (!isWidgetViewerPath(location.pathname)) {
+      setWidgetViewerData({
+        pageLinks: data?.pageLinks,
+        seriesData: data?.timeseriesResults,
+        tableData: data?.tableResults,
+        seriesResultsType: data?.timeseriesResultsTypes,
+        totalIssuesCount: data?.totalIssuesCount,
+        confidence: data?.confidence,
+      });
+
+      props.router.push({
+        pathname: `${location.pathname}${
+          location.pathname.endsWith('/') ? '' : '/'
+        }widget/${props.index}/`,
+        query: location.query,
+      });
+    }
+  };
+
+  const onDemandExtractionBadge: BadgeProps | undefined =
+    extractionStatus === 'extracted'
+      ? {
+          text: t('Extracted'),
+        }
+      : extractionStatus === 'not-extracted'
+        ? {
+            text: t('Not Extracted'),
+          }
+        : undefined;
+
+  const indexedDataBadge: BadgeProps | undefined = indexedEventsWarning
+    ? {
+        text: t('Indexed'),
+      }
+    : undefined;
+
+  const badges = [indexedDataBadge, onDemandExtractionBadge].filter(
+    Boolean
+  ) as BadgeProps[];
+
+  const warnings = [
+    onDemandWarning,
+    discoverSplitAlert,
+    sessionDurationWarning,
+    spanTimeRangeWarning,
+  ].filter(Boolean) as string[];
+
+  const actionsDisabled = Boolean(props.isPreview);
+  const actionsMessage = actionsDisabled
+    ? t('This is a preview only. To edit, you must add this dashboard.')
+    : undefined;
+
+  const actions = props.showContextMenu
+    ? getMenuOptions(
+        organization,
+        selection,
+        widget,
+        Boolean(isMetricsData),
+        props.widgetLimitReached,
+        props.hasEditAccess,
+        props.onDelete,
+        props.onDuplicate,
+        props.onEdit
+      )
+    : [];
+
+  const widgetQueryError = isWidgetInvalid
+    ? t('Widget query condition is invalid.')
+    : undefined;
+
+  return (
+    <ErrorBoundary
+      customComponent={() => <ErrorCard>{t('Error loading widget data')}</ErrorCard>}
+    >
+      <VisuallyCompleteWithData
+        id="DashboardList-FirstWidgetCard"
+        hasData={
+          ((data?.tableResults?.length || data?.timeseriesResults?.length) ?? 0) > 0
+        }
+        disabled={Number(props.index) !== 0}
+      >
+        {widget.displayType === DisplayType.BIG_NUMBER ? (
+          <WidgetCardDataLoader
+            widget={widget}
+            selection={selection}
+            dashboardFilters={dashboardFilters}
+            onDataFetched={onDataFetched}
+            onWidgetSplitDecision={onWidgetSplitDecision}
+            tableItemLimit={tableItemLimit}
+          >
+            {({loading, errorMessage, tableResults}) => {
+              // Big Number widgets only support one query, so we take the first query's results and meta
+              const tableData = tableResults?.[0]?.data;
+              const tableMeta = tableResults?.[0]?.meta as Meta | undefined;
+              const fields = Object.keys(tableMeta?.fields ?? {});
+
+              let field = fields[0]!;
+              let selectedField = field;
+
+              if (defined(widget.queries[0]!.selectedAggregate)) {
+                const index = widget.queries[0]!.selectedAggregate;
+                selectedField = widget.queries[0]!.aggregates[index]!;
+                if (fields.includes(selectedField)) {
+                  field = selectedField;
+                }
+              }
+
+              const value = tableData?.[0]?.[selectedField];
+
+              return (
+                <BigNumberWidget
+                  title={widget.title}
+                  description={widget.description}
+                  badgeProps={badges}
+                  warnings={warnings}
+                  actionsDisabled={actionsDisabled}
+                  actionsMessage={actionsMessage}
+                  actions={actions}
+                  onFullScreenViewClick={
+                    disableFullscreen ? undefined : onFullScreenViewClick
+                  }
+                  isLoading={loading}
+                  thresholds={widget.thresholds ?? undefined}
+                  value={value}
+                  field={field}
+                  meta={tableMeta}
+                  error={widgetQueryError || errorMessage || undefined}
+                  preferredPolarity="-"
+                  borderless={props.borderless}
+                  revealTooltip={props.forceDescriptionTooltip ? 'always' : undefined}
+                />
+              );
+            }}
+          </WidgetCardDataLoader>
+        ) : (
+          <WidgetFrame
+            title={widget.title}
+            description={widget.description}
+            badgeProps={badges}
+            warnings={warnings}
+            actionsDisabled={actionsDisabled}
+            error={widgetQueryError}
+            actionsMessage={actionsMessage}
+            actions={actions}
+            onFullScreenViewClick={disableFullscreen ? undefined : onFullScreenViewClick}
+            borderless={props.borderless}
+            revealTooltip={props.forceDescriptionTooltip ? 'always' : undefined}
+            noVisualizationPadding
+          >
+            <WidgetCardChartContainer
+              location={location}
+              api={api}
+              organization={organization}
+              selection={selection}
+              widget={widget}
+              isMobile={isMobile}
+              renderErrorMessage={renderErrorMessage}
+              tableItemLimit={tableItemLimit}
+              windowWidth={windowWidth}
+              onDataFetched={onDataFetched}
+              dashboardFilters={dashboardFilters}
+              chartGroup={DASHBOARD_CHART_GROUP}
+              onWidgetSplitDecision={onWidgetSplitDecision}
+              shouldResize={shouldResize}
+              onLegendSelectChanged={onLegendSelectChanged}
+              legendOptions={legendOptions}
+              widgetLegendState={widgetLegendState}
+              showConfidenceWarning={showConfidenceWarning}
+              minTableColumnWidth={minTableColumnWidth}
+            />
+          </WidgetFrame>
+        )}
+      </VisuallyCompleteWithData>
+    </ErrorBoundary>
+  );
 }
 
 export default withApi(withOrganization(withPageFilters(withSentryRouter(WidgetCard))));
+
+function useOnDemandWarning(props: {widget: Widget}): string | null {
+  const organization = useOrganization();
+
+  if (!hasOnDemandMetricWidgetFeature(organization)) {
+    return null;
+  }
+  // prettier-ignore
+  const widgetContainsHighCardinality = props.widget.queries.some(
+    wq =>
+      wq.onDemand?.some(
+        d => d.extractionState === OnDemandExtractionState.DISABLED_HIGH_CARDINALITY
+      )
+  );
+  // prettier-ignore
+  const widgetReachedSpecLimit = props.widget.queries.some(
+    wq =>
+      wq.onDemand?.some(
+        d => d.extractionState === OnDemandExtractionState.DISABLED_SPEC_LIMIT
+      )
+  );
+
+  if (widgetContainsHighCardinality) {
+    return t(
+      'This widget is using indexed data because it has a column with too many unique values.'
+    );
+  }
+
+  if (widgetReachedSpecLimit) {
+    return t(
+      "This widget is using indexed data because you've reached your organization limit for dynamically extracted metrics."
+    );
+  }
+
+  return null;
+}
+
+function useTimeRangeWarning(props: {widget: Widget}) {
+  const {
+    selection: {datetime},
+  } = usePageFilters();
+
+  if (props.widget.widgetType !== WidgetType.SPANS) {
+    return null;
+  }
+
+  if (statsPeriodToDays(datetime.period, datetime.start, datetime.end) > 30) {
+    // This message applies if the user has selected a time range >30d because we truncate the
+    // snuba response to 30 days to reduce load on the system.
+    return t(
+      "Spans-based widgets have been truncated to 30 days of data. We're working on ramping this up."
+    );
+  }
+
+  return null;
+}
 
 const ErrorCard = styled(Placeholder)`
   display: flex;
@@ -467,77 +411,7 @@ const ErrorCard = styled(Placeholder)`
   margin-bottom: ${space(2)};
 `;
 
-export const WidgetCardPanel = styled(Panel, {
-  shouldForwardProp: prop => prop !== 'isDragging',
-})<{
-  isDragging: boolean;
-}>`
-  margin: 0;
-  visibility: ${p => (p.isDragging ? 'hidden' : 'visible')};
-  /* If a panel overflows due to a long title stretch its grid sibling */
-  height: 100%;
-  min-height: 96px;
-  display: flex;
-  flex-direction: column;
-`;
-
-const ToolbarPanel = styled('div')`
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 2;
-
-  width: 100%;
-  height: 100%;
-
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-start;
-
-  background-color: ${p => p.theme.overlayBackgroundAlpha};
-  border-radius: calc(${p => p.theme.panelBorderRadius} - 1px);
-`;
-
-const IconContainer = styled('div')`
-  display: flex;
-  margin: ${space(1)};
-  touch-action: none;
-`;
-
-const GrabbableButton = styled(Button)`
-  cursor: grab;
-`;
-
-const WidgetTitle = styled(HeaderTitle)`
-  ${p => p.theme.overflowEllipsis};
-  font-weight: normal;
-`;
-
-const WidgetHeader = styled('div')`
-  padding: ${space(2)} ${space(1)} 0 ${space(3)};
-  min-height: 36px;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-`;
-
-const StoredDataAlert = styled(Alert)`
-  margin-top: ${space(1)};
-  margin-bottom: 0;
-`;
-
-const StyledErrorPanel = styled(ErrorPanel)`
-  padding: ${space(2)};
-`;
-
-const WidgetHeaderDescription = styled('div')`
-  display: flex;
-  flex-direction: column;
-  gap: ${space(0.5)};
-`;
-
-const WidgetTitleRow = styled('span')`
+export const WidgetTitleRow = styled('span')`
   display: flex;
   align-items: center;
   gap: ${space(0.75)};

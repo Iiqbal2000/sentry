@@ -1,6 +1,5 @@
-import {DeprecatedApiKey} from 'sentry-fixture/deprecatedApiKey';
+import {DeprecatedApiKeyFixture} from 'sentry-fixture/deprecatedApiKey';
 
-import {initializeOrg} from 'sentry-test/initializeOrg';
 import {
   render,
   renderGlobalModal,
@@ -8,18 +7,9 @@ import {
   userEvent,
 } from 'sentry-test/reactTestingLibrary';
 
-import {RouteWithName} from 'sentry/views/settings/components/settingsBreadcrumb/types';
 import OrganizationApiKeys from 'sentry/views/settings/organizationApiKeys';
 
-const routes: RouteWithName[] = [
-  {path: '/'},
-  {path: '/:orgId/'},
-  {path: '/organizations/:orgId/'},
-  {path: 'api-keys/', name: 'API Key'},
-];
-
 describe('OrganizationApiKeys', function () {
-  const {routerProps} = initializeOrg();
   let getMock: jest.Mock;
   let deleteMock: jest.Mock;
 
@@ -28,12 +18,12 @@ describe('OrganizationApiKeys', function () {
     getMock = MockApiClient.addMockResponse({
       url: '/organizations/org-slug/api-keys/',
       method: 'GET',
-      body: [DeprecatedApiKey()],
+      body: [DeprecatedApiKeyFixture()],
     });
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/api-keys/1/',
       method: 'GET',
-      body: DeprecatedApiKey(),
+      body: DeprecatedApiKeyFixture(),
     });
     deleteMock = MockApiClient.addMockResponse({
       url: '/organizations/org-slug/api-keys/1/',
@@ -41,20 +31,20 @@ describe('OrganizationApiKeys', function () {
     });
   });
 
-  it('fetches api keys', function () {
-    render(<OrganizationApiKeys {...routerProps} routes={routes} />);
+  it('fetches api keys', async function () {
+    render(<OrganizationApiKeys />);
 
-    expect(screen.getByRole('textbox')).toBeInTheDocument();
+    expect(await screen.findByRole('textbox')).toBeInTheDocument();
     expect(getMock).toHaveBeenCalledTimes(1);
   });
 
   it('can delete a key', async function () {
-    render(<OrganizationApiKeys {...routerProps} routes={routes} />);
-
-    expect(deleteMock).toHaveBeenCalledTimes(0);
-    await userEvent.click(screen.getByRole('link', {name: 'Remove API Key?'}));
-
+    render(<OrganizationApiKeys />);
     renderGlobalModal();
+
+    await userEvent.click(await screen.findByRole('link', {name: 'Remove API Key?'}));
+    expect(deleteMock).toHaveBeenCalledTimes(0);
+
     await userEvent.click(screen.getByTestId('confirm-button'));
 
     expect(deleteMock).toHaveBeenCalledTimes(1);

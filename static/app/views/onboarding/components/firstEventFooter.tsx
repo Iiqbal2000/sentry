@@ -1,18 +1,21 @@
 import {useCallback} from 'react';
 import styled from '@emotion/styled';
-import {motion, Variants} from 'framer-motion';
+import type {Variants} from 'framer-motion';
+import {motion} from 'framer-motion';
 
-import {Button} from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import Link from 'sentry/components/links/link';
 import {IconCheckmark} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import pulsingIndicatorStyles from 'sentry/styles/pulsingIndicator';
 import {space} from 'sentry/styles/space';
-import {OnboardingRecentCreatedProject, Organization} from 'sentry/types';
+import type {OnboardingRecentCreatedProject} from 'sentry/types/onboarding';
+import type {Organization} from 'sentry/types/organization';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import testableTransition from 'sentry/utils/testableTransition';
 import CreateSampleEventButton from 'sentry/views/onboarding/createSampleEventButton';
+import {useOnboardingSidebar} from 'sentry/views/onboarding/useOnboardingSidebar';
 
 import GenericFooter from './genericFooter';
 
@@ -29,6 +32,8 @@ export default function FirstEventFooter({
   onClickSetupLater,
   isLast,
 }: FirstEventFooterProps) {
+  const {activateSidebar} = useOnboardingSidebar();
+
   const source = 'targeted_onboarding_first_event_footer';
 
   const getSecondaryCta = useCallback(() => {
@@ -46,7 +51,7 @@ export default function FirstEventFooter({
       return (
         <CreateSampleEventButton
           project={project}
-          source="targted-onboarding"
+          source="targeted-onboarding"
           priority="primary"
         >
           {t('View Sample Error')}
@@ -54,7 +59,13 @@ export default function FirstEventFooter({
       );
     }
     return (
-      <Button
+      <LinkButton
+        onClick={() =>
+          trackAnalytics('growth.onboarding_take_to_error', {
+            organization: project.organization,
+            platform: project.platform,
+          })
+        }
         to={`/organizations/${organization.slug}/issues/${
           project?.firstIssue && 'id' in project.firstIssue
             ? `${project.firstIssue.id}/`
@@ -63,7 +74,7 @@ export default function FirstEventFooter({
         priority="primary"
       >
         {t('Take me to my error')}
-      </Button>
+      </LinkButton>
     );
   }, [project, organization.slug]);
 
@@ -75,18 +86,42 @@ export default function FirstEventFooter({
             organization,
             source,
           });
+          activateSidebar();
         }}
         to={`/organizations/${organization.slug}/issues/?referrer=onboarding-first-event-footer-skip`}
       >
         {t('Skip Onboarding')}
       </SkipOnboardingLink>
-      <StatusWrapper>
+      <StatusWrapper
+        initial="initial"
+        animate="animate"
+        exit="exit"
+        variants={{
+          initial: {opacity: 0, y: -10},
+          animate: {
+            opacity: 1,
+            y: 0,
+            transition: testableTransition({
+              when: 'beforeChildren',
+              staggerChildren: 0.35,
+            }),
+          },
+          exit: {opacity: 0, y: 10},
+        }}
+      >
         {project?.firstError ? (
           <IconCheckmark isCircled color="green400" />
         ) : (
-          <WaitingIndicator />
+          <WaitingIndicator
+            variants={indicatorAnimation}
+            transition={testableTransition()}
+          />
         )}
-        <AnimatedText errorReceived={project?.firstError}>
+        <AnimatedText
+          errorReceived={project?.firstError}
+          variants={indicatorAnimation}
+          transition={testableTransition()}
+        >
           {project?.firstError ? t('Error Received') : t('Waiting for error')}
         </AnimatedText>
       </StatusWrapper>
@@ -117,20 +152,10 @@ const indicatorAnimation: Variants = {
   exit: {opacity: 0, y: 10},
 };
 
-AnimatedText.defaultProps = {
-  variants: indicatorAnimation,
-  transition: testableTransition(),
-};
-
 const WaitingIndicator = styled(motion.div)`
   ${pulsingIndicatorStyles};
   background-color: ${p => p.theme.pink300};
 `;
-
-WaitingIndicator.defaultProps = {
-  variants: indicatorAnimation,
-  transition: testableTransition(),
-};
 
 const StatusWrapper = styled(motion.div)`
   display: flex;
@@ -142,21 +167,6 @@ const StatusWrapper = styled(motion.div)`
     display: none;
   }
 `;
-
-StatusWrapper.defaultProps = {
-  initial: 'initial',
-  animate: 'animate',
-  exit: 'exit',
-  variants: {
-    initial: {opacity: 0, y: -10},
-    animate: {
-      opacity: 1,
-      y: 0,
-      transition: testableTransition({when: 'beforeChildren', staggerChildren: 0.35}),
-    },
-    exit: {opacity: 0, y: 10},
-  },
-};
 
 const SkipOnboardingLink = styled(Link)`
   margin: auto ${space(4)};

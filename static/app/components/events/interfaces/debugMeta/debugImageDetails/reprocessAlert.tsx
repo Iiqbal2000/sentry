@@ -1,12 +1,12 @@
 import {useCallback, useEffect, useState} from 'react';
-import styled from '@emotion/styled';
 
-import {Client} from 'sentry/api';
-import {Alert} from 'sentry/components/alert';
+import type {Client} from 'sentry/api';
 import AlertLink from 'sentry/components/alertLink';
+import {Alert} from 'sentry/components/core/alert';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 
 enum ReprocessableEventReason {
   // It can have many reasons. The event is too old to be reprocessed (very unlikely!)
@@ -86,11 +86,7 @@ function ReprocessAlert({onReprocessEvent, api, orgSlug, projSlug, eventId}: Pro
     }
   }
 
-  return <StyledAlert type="info">{getAlertInfoMessage()}</StyledAlert>;
+  return <Alert type="info">{getAlertInfoMessage()}</Alert>;
 }
 
 export default ReprocessAlert;
-
-const StyledAlert = styled(Alert)`
-  margin-bottom: 0;
-`;

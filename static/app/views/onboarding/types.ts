@@ -1,16 +1,15 @@
-import {RouteComponentProps} from 'react-router';
-
-import {OnboardingRecentCreatedProject, OnboardingSelectedSDK} from 'sentry/types';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {
+  OnboardingRecentCreatedProject,
+  OnboardingSelectedSDK,
+} from 'sentry/types/onboarding';
 
 export type StepData = {
   platform?: OnboardingSelectedSDK | null;
 };
 
 // Not sure if we need platform info to be passed down
-export type StepProps = Pick<
-  RouteComponentProps<{}, {}>,
-  'router' | 'route' | 'location'
-> & {
+export type StepProps = Pick<RouteComponentProps, 'router' | 'route' | 'location'> & {
   active: boolean;
   genSkipOnboardingLink: () => React.ReactNode;
   onComplete: (selectedPlatforms?: OnboardingSelectedSDK) => void;

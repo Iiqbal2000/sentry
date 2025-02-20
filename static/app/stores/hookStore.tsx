@@ -1,6 +1,7 @@
-import {createStore, StoreDefinition} from 'reflux';
+import type {StoreDefinition} from 'reflux';
+import {createStore} from 'reflux';
 
-import {HookName, Hooks} from 'sentry/types/hooks';
+import type {HookName, Hooks} from 'sentry/types/hooks';
 
 interface Internals {
   // XXX(epurkhiser): We could type this as {[H in HookName]?:
@@ -49,7 +50,7 @@ const storeConfig: HookStoreDefinition = {
     if (this.hooks[hookName] === undefined) {
       return;
     }
-    this.hooks[hookName] = this.hooks[hookName]!.filter(cb => cb !== callback);
+    this.hooks[hookName] = this.hooks[hookName]!.filter((cb: any) => cb !== callback);
     this.trigger(hookName, this.hooks[hookName]);
   },
 

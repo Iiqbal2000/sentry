@@ -1,4 +1,6 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {TeamFixture} from 'sentry-fixture/team';
 
 import {act, render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
@@ -8,12 +10,12 @@ import TeamStore from 'sentry/stores/teamStore';
 import TeamKeyTransactionField from 'sentry/utils/discover/teamKeyTransactionField';
 
 describe('TeamKeyTransactionField', function () {
-  const organization = Organization();
+  const organization = OrganizationFixture();
   const teams = [
-    TestStubs.Team({id: '1', slug: 'team1', name: 'Team 1'}),
-    TestStubs.Team({id: '2', slug: 'team2', name: 'Team 2'}),
+    TeamFixture({id: '1', slug: 'team1', name: 'Team 1'}),
+    TeamFixture({id: '2', slug: 'team2', name: 'Team 2'}),
   ];
-  const project = TestStubs.Project({teams});
+  const project = ProjectFixture({teams});
 
   beforeEach(function () {
     MockApiClient.clearMockResponses();
@@ -66,9 +68,9 @@ describe('TeamKeyTransactionField', function () {
       url: `/organizations/${organization.slug}/key-transactions-list/`,
       body: teams.map(({id}) => ({
         team: id,
-        count: id === teams[0].id ? 1 : 0,
+        count: id === teams[0]!.id ? 1 : 0,
         keyed:
-          id === teams[0].id
+          id === teams[0]!.id
             ? [{project_id: String(project.id), transaction: 'transaction'}]
             : [],
       })),
@@ -158,7 +160,7 @@ describe('TeamKeyTransactionField', function () {
       body: [],
       match: [
         MockApiClient.matchQuery({project: [project.id]}),
-        MockApiClient.matchData({team: [teams[0].id], transaction: 'transaction'}),
+        MockApiClient.matchData({team: [teams[0]!.id], transaction: 'transaction'}),
       ],
     });
 
@@ -183,7 +185,7 @@ describe('TeamKeyTransactionField', function () {
 
     await userEvent.click(screen.getByRole('button', {name: 'Toggle star for team'}));
 
-    const teamOneOption = screen.getAllByRole('option')[0];
+    const teamOneOption = screen.getAllByRole('option')[0]!;
     expect(teamOneOption).toHaveAttribute('aria-selected', 'false');
 
     await userEvent.click(teamOneOption);
@@ -212,7 +214,7 @@ describe('TeamKeyTransactionField', function () {
       body: [],
       match: [
         MockApiClient.matchQuery({project: [project.id]}),
-        MockApiClient.matchData({team: [teams[0].id], transaction: 'transaction'}),
+        MockApiClient.matchData({team: [teams[0]!.id], transaction: 'transaction'}),
       ],
     });
 
@@ -237,7 +239,7 @@ describe('TeamKeyTransactionField', function () {
 
     await userEvent.click(screen.getByRole('button', {name: 'Toggle star for team'}));
 
-    const teamOneOption = screen.getAllByRole('option')[0];
+    const teamOneOption = screen.getAllByRole('option')[0]!;
     expect(teamOneOption).toHaveAttribute('aria-selected', 'true');
 
     await userEvent.click(teamOneOption);
@@ -267,7 +269,7 @@ describe('TeamKeyTransactionField', function () {
       match: [
         MockApiClient.matchQuery({project: [project.id]}),
         MockApiClient.matchData({
-          team: [teams[0].id, teams[1].id],
+          team: [teams[0]!.id, teams[1]!.id],
           transaction: 'transaction',
         }),
       ],
@@ -324,7 +326,7 @@ describe('TeamKeyTransactionField', function () {
       match: [
         MockApiClient.matchQuery({project: [project.id]}),
         MockApiClient.matchData({
-          team: [teams[0].id, teams[1].id],
+          team: [teams[0]!.id, teams[1]!.id],
           transaction: 'transaction',
         }),
       ],

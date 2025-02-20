@@ -1,13 +1,15 @@
 import {useState} from 'react';
 
 import {addLoadingMessage, clearIndicators} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import {Alert} from 'sentry/components/alert';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import {Alert} from 'sentry/components/core/alert';
 import Form from 'sentry/components/forms/form';
-import {OnSubmitCallback} from 'sentry/components/forms/types';
+import type {OnSubmitCallback} from 'sentry/components/forms/types';
 import {SavedSearchModalContent} from 'sentry/components/modals/savedSearchModal/savedSearchModalContent';
 import {t} from 'sentry/locale';
-import {Organization, SavedSearch, SavedSearchType} from 'sentry/types';
+import type {SavedSearch} from 'sentry/types/group';
+import {SavedSearchType} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
 import {useModifySavedSearch} from 'sentry/views/issueList/mutations/useModifySavedSearch';
 
 interface EditSavedSearchModalProps extends ModalRenderProps {
@@ -82,7 +84,11 @@ export function EditSavedSearchModal({
       </Header>
 
       <Body>
-        {error && <Alert type="error">{error}</Alert>}
+        {error && (
+          <Alert.Container>
+            <Alert type="error">{error}</Alert>
+          </Alert.Container>
+        )}
         <SavedSearchModalContent {...{organization}} />
       </Body>
     </Form>

@@ -7,20 +7,16 @@ import responses
 from requests import Response
 from requests.exceptions import ConnectionError, HTTPError, Timeout
 from requests.sessions import Session
-from sentry_sdk import Scope
-from sentry_sdk.consts import OP
-from sentry_sdk.tracing import Transaction
 from urllib3.exceptions import InvalidChunkLength
 from urllib3.response import HTTPResponse
 
-from sentry.identity.oauth2 import OAuth2Provider
 from sentry.integrations.client import ApiClient
 from sentry.shared_integrations.exceptions import (
     ApiConnectionResetError,
+    ApiError,
     ApiHostError,
     ApiTimeoutError,
 )
-from sentry.shared_integrations.exceptions.base import ApiError
 from sentry.shared_integrations.response.base import BaseApiResponse
 from sentry.testutils.cases import TestCase
 
@@ -281,37 +277,6 @@ class ApiClientTest(TestCase):
                         == "Connection broken: invalid chunk length"
                     )
 
-    @mock.patch(
-        "sentry.shared_integrations.client.base.BaseApiResponse.from_response",
-        return_value=BaseApiResponse(),
-    )
-    def test_request_creates_transaction_when_appropriate(
-        self,
-        mock_from_response: mock.MagicMock,
-    ):
-        # pytest parameterization doesn't work in test classes, but we can fake it
-        cases = [
-            ("no transaction", None, 1),
-            ("non-server transaction", Transaction(op="some non-server op"), 1),
-            ("server transaction", Transaction(op=OP.HTTP_SERVER), 0),
-        ]
-
-        for case_name, existing_transaction, expected_call_count in cases:
-            client = ApiClient()
-
-            mock_scope = Scope()
-            mock_scope.span = existing_transaction
-
-            with mock.patch("sentry_sdk.configure_scope") as mock_configure_scope:
-                mock_configure_scope.return_value.__enter__.return_value = mock_scope
-
-                with mock.patch("sentry_sdk.start_transaction") as mock_start_transaction:
-                    client.get("http://example.com")
-
-                    assert (
-                        mock_start_transaction.call_count == expected_call_count
-                    ), f"Case {case_name} failed"
-
     @responses.activate
     def test_verify_ssl_handling(self):
         """
@@ -354,17 +319,3 @@ class ApiClientTest(TestCase):
                 verify=False,
                 cert=None,
             )
-
-
-class OAuthProvider(OAuth2Provider):
-    key = "oauth"
-    name = "OAuth Provider"
-
-    def get_client_id(self):
-        return "client_id"
-
-    def get_client_secret(self):
-        return "client_secret"
-
-    def get_refresh_token_url(self):
-        return "https://example.com"

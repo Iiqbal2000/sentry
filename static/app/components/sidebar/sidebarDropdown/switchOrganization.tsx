@@ -1,4 +1,5 @@
 import {Fragment} from 'react';
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 import sortBy from 'lodash/sortBy';
 
@@ -9,11 +10,12 @@ import SidebarOrgSummary from 'sentry/components/sidebar/sidebarOrgSummary';
 import {IconAdd, IconChevron} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import ConfigStore from 'sentry/stores/configStore';
+import OrganizationsStore from 'sentry/stores/organizationsStore';
+import {useLegacyStore} from 'sentry/stores/useLegacyStore';
 import {space} from 'sentry/styles/space';
-import {OrganizationSummary} from 'sentry/types';
+import type {OrganizationSummary} from 'sentry/types/organization';
 import {localizeDomain, resolveRoute} from 'sentry/utils/resolveRoute';
 import useOrganization from 'sentry/utils/useOrganization';
-import withOrganizations from 'sentry/utils/withOrganizations';
 
 import Divider from './divider.styled';
 
@@ -42,15 +44,15 @@ function OrganizationMenuItem({organization}: {organization: OrganizationSummary
 }
 
 function CreateOrganization({canCreateOrganization}: {canCreateOrganization: boolean}) {
-  const currentOrganization = useOrganization({allowNull: true});
   if (!canCreateOrganization) {
     return null;
   }
+  const configFeatures = ConfigStore.get('features');
   const sentryUrl = localizeDomain(ConfigStore.get('links').sentryUrl);
   const route = '/organizations/new/';
   const menuItemProps: Partial<React.ComponentProps<typeof SidebarMenuItem>> = {};
 
-  if (currentOrganization?.features.includes('customer-domains')) {
+  if (configFeatures.has('system:multi-region')) {
     menuItemProps.href = sentryUrl + route;
     menuItemProps.openInNewTab = false;
   } else {
@@ -73,13 +75,14 @@ function CreateOrganization({canCreateOrganization}: {canCreateOrganization: boo
 
 type Props = {
   canCreateOrganization: boolean;
-  organizations: OrganizationSummary[];
 };
 
 /**
  * Switch Organization Menu Label + Sub Menu
  */
-function SwitchOrganization({organizations, canCreateOrganization}: Props) {
+function SwitchOrganization({canCreateOrganization}: Props) {
+  const {organizations} = useLegacyStore(OrganizationsStore);
+
   return (
     <DeprecatedDropdownMenu isNestedDropdown>
       {({isOpen, getMenuProps, getActorProps}) => (
@@ -110,7 +113,7 @@ function SwitchOrganization({organizations, canCreateOrganization}: Props) {
               {...getMenuProps({})}
             >
               <OrganizationList role="list">
-                {sortBy(organizations, ['status.id']).map(organization => {
+                {sortBy(organizations, ['status.id', 'name']).map(organization => {
                   return (
                     <OrganizationMenuItem
                       key={organization.slug}
@@ -120,7 +123,11 @@ function SwitchOrganization({organizations, canCreateOrganization}: Props) {
                 })}
               </OrganizationList>
               {organizations && !!organizations.length && canCreateOrganization && (
-                <Divider css={{marginTop: 0}} />
+                <Divider
+                  css={css`
+                    margin-top: 0;
+                  `}
+                />
               )}
               <CreateOrganization canCreateOrganization={canCreateOrganization} />
             </SwitchOrganizationMenu>
@@ -131,10 +138,7 @@ function SwitchOrganization({organizations, canCreateOrganization}: Props) {
   );
 }
 
-const SwitchOrganizationContainer = withOrganizations(SwitchOrganization);
-
-export {SwitchOrganization};
-export default SwitchOrganizationContainer;
+export default SwitchOrganization;
 
 const StyledIconAdd = styled(IconAdd)`
   margin-right: ${space(1)};
@@ -163,8 +167,9 @@ const SwitchOrganizationMenuActor = styled('span')`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin: 0 -${p => p.theme.sidebar.menuSpacing};
-  padding: 0 ${p => p.theme.sidebar.menuSpacing};
+  /* @TODO(jonasbadalic): the 15px is non standard spacing. Should it be space(2) which is 16px? */
+  margin: 0 -15px;
+  padding: 0 15px;
 `;
 
 const SwitchOrganizationMenu = styled('div')`

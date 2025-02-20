@@ -41,6 +41,10 @@ Variants
     in the past were able to provide a grouping hash (the checksum) which was
     used for grouping exclusively.
 
+`HashedChecksumVariant`:
+    A ChecksumVariant with a hash value which has been normalized by running the
+    provided checksum through a hashing function.
+
 `FallbackVariant`:
     This variant produces always the same hash.  It's used if nothing else works.
 
@@ -55,6 +59,10 @@ Variants
     events produced by the server as well as events which are fingerprinted
     by the SDK.  If the special `{{ default }}` value is used then this
     variant is not used.
+
+`BuiltInFingerprintVariant`:
+    Same as the custom fingerprint variant but produced by pre-defined
+    built-in rules.  This is used for server-side fingerprinting.
 
 `SaltedComponentVariant`:
     This variant is used when the server or client produces a fingerprint
@@ -79,7 +87,7 @@ removes a component (and its children) entirely from the grouping output.
 Here an example of how components can be used::
 
     function_name = 'lambda$1234'
-    threads = GroupingComponent(
+    threads = BaseGroupingComponent(
         id="function",
         values=[function_name],
         contributes=False,
@@ -106,14 +114,14 @@ overridden.
 This for instance is how one of the configurations is defined::
 
     register_strategy_config(
-        id="newstyle:2019-10-29",
-        base="newstyle:2019-05-08",
+        id="newstyle:SomeDate",
+        base="newstyle:AnotherDate",
         delegates=["frame:v4"],
         risk=RISK_LEVEL_MEDIUM,
         changelog="...",
     )
 
-The configuration ID (`newstyle:2019-10-29`) is defined in the project
+The configuration ID (`newstyle:SomeDate`) is defined in the project
 options and then becomes the strategy configuration of choice for all new
 events.  Because in this case it inherits from another strategy, the default
 configurations from that strategy are reused.  Here the `frame` is changed

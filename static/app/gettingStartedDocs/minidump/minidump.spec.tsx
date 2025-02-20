@@ -1,18 +1,26 @@
-import {render, screen} from 'sentry-test/reactTestingLibrary';
+import {ProjectFixture} from 'sentry-fixture/project';
 
-import {StepTitle} from 'sentry/components/onboarding/gettingStartedDoc/step';
+import {renderWithOnboardingLayout} from 'sentry-test/onboarding/renderWithOnboardingLayout';
+import {screen} from 'sentry-test/reactTestingLibrary';
 
-import {GettingStartedWithMinidump, steps} from './minidump';
+import docs from './minidump';
 
-describe('GettingStartedWithMinidump', function () {
-  it('renders doc correctly', function () {
-    render(<GettingStartedWithMinidump dsn="test-dsn" projectSlug="test-project" />);
+function renderMockRequests() {
+  MockApiClient.addMockResponse({
+    url: '/projects/org-slug/project-slug/',
+    body: [ProjectFixture()],
+  });
+}
 
-    // Steps
-    for (const step of steps()) {
-      expect(
-        screen.getByRole('heading', {name: step.title ?? StepTitle[step.type]})
-      ).toBeInTheDocument();
-    }
+describe('getting started with minidump', function () {
+  it('renders gradle docs correctly', function () {
+    renderMockRequests();
+
+    renderWithOnboardingLayout(docs);
+
+    // Renders main headings
+    expect(
+      screen.getByRole('heading', {name: 'Creating and Uploading Minidumps'})
+    ).toBeInTheDocument();
   });
 });

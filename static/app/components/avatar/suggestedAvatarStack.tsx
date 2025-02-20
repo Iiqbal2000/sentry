@@ -2,14 +2,15 @@ import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import ActorAvatar from 'sentry/components/avatar/actorAvatar';
-import BaseAvatar from 'sentry/components/avatar/baseAvatar';
-import {Actor} from 'sentry/types';
+import type {BaseAvatarProps} from 'sentry/components/avatar/baseAvatar';
+import type {Actor} from 'sentry/types/core';
 
-type Props = {
+interface Props
+  extends BaseAvatarProps,
+    Omit<React.ComponentProps<typeof ActorAvatar>, 'actor' | 'hasTooltip'> {
   owners: Actor[];
   reverse?: boolean;
-} & BaseAvatar['props'] &
-  Omit<React.ComponentProps<typeof ActorAvatar>, 'actor' | 'hasTooltip'>;
+}
 
 // Constrain the number of visible suggestions
 const MAX_SUGGESTIONS = 3;
@@ -28,7 +29,7 @@ function SuggestedAvatarStack({
     <AvatarStack reverse={reverse} data-test-id="suggested-avatar-stack">
       {suggestedOwners.slice(0, numAvatars - 1).map((owner, i) => (
         <Avatar
-          round={firstSuggestion.type === 'user'}
+          round={firstSuggestion!.type === 'user'}
           actor={owner}
           hasTooltip={false}
           {...props}
@@ -39,7 +40,7 @@ function SuggestedAvatarStack({
         />
       ))}
       <Avatar
-        actor={firstSuggestion}
+        actor={firstSuggestion!}
         tooltip={tooltip}
         tooltipOptions={{...tooltipOptions, skipWrapper: true}}
         {...props}

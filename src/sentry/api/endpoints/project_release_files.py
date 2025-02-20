@@ -1,15 +1,17 @@
+from __future__ import annotations
+
 import logging
 import re
-from typing import List, Optional, Tuple
 
 from django.db import IntegrityError, router
 from django.db.models import Q
+from django.db.models.query import QuerySet
 from django.utils.functional import cached_property
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry.api.api_publish_status import ApiPublishStatus
-from sentry.api.base import region_silo_endpoint
+from sentry.api.base import BaseEndpointMixin, region_silo_endpoint
 from sentry.api.bases.project import ProjectEndpoint, ProjectReleasePermission
 from sentry.api.exceptions import ResourceDoesNotExist
 from sentry.api.paginator import ChainPaginator
@@ -20,6 +22,7 @@ from sentry.models.files.file import File
 from sentry.models.release import Release
 from sentry.models.releasefile import ReleaseFile, read_artifact_index
 from sentry.ratelimits.config import SENTRY_RATELIMITER_GROUP_DEFAULTS, RateLimitConfig
+from sentry.utils import metrics
 from sentry.utils.db import atomic_transaction
 
 ERR_FILE_EXISTS = "A file matching this name already exists for the given release"
@@ -33,28 +36,29 @@ def load_dist(results):
     # Dists are pretty uncommon.  In case they do appear load them now
     # as trying to join this on the DB does terrible things with large
     # offsets (it would otherwise generate a left outer join).
-    dists = dict.fromkeys(x.dist_id for x in results)
-    if not dists:
+    dist_map = {}
+    dist_ids = dict.fromkeys(x.dist_id for x in results)
+    if not dist_ids:
         return results
 
-    for dist in Distribution.objects.filter(pk__in=dists.keys()):
-        dists[dist.id] = dist
+    for d in Distribution.objects.filter(pk__in=dist_ids.keys()):
+        dist_map[d.id] = d
 
     for result in results:
         if result.dist_id is not None:
-            dist = dists.get(result.dist_id)
-            if dist is not None:
-                result.dist = dist
+            result_dist = dist_map.get(result.dist_id)
+            if result_dist is not None:
+                result.dist = result_dist
 
     return results
 
 
-class ReleaseFilesMixin:
+class ReleaseFilesMixin(BaseEndpointMixin):
     def get_releasefiles(self, request: Request, release, organization_id):
         query = request.GET.getlist("query")
         checksums = request.GET.getlist("checksum")
 
-        data_sources = []
+        data_sources: list[QuerySet[ReleaseFile] | ArtifactSource] = []
 
         # Exclude files which are also present in archive:
         file_list = ReleaseFile.public_objects.filter(release_id=release.id).exclude(
@@ -63,18 +67,12 @@ class ReleaseFilesMixin:
         file_list = file_list.select_related("file").order_by("name")
 
         if query:
-            if not isinstance(query, list):
-                query = [query]
-
             condition = Q(name__icontains=query[0])
             for name in query[1:]:
                 condition |= Q(name__icontains=name)
             file_list = file_list.filter(condition)
 
         if checksums:
-            if not isinstance(checksums, list):
-                checksums = [checksums]
-
             condition = Q(file__checksum__in=checksums)
             file_list = file_list.filter(condition)
 
@@ -86,8 +84,8 @@ class ReleaseFilesMixin:
             try:
                 # Only Read from artifact index if it has a positive artifact count
                 artifact_index = read_artifact_index(release, dist, artifact_count__gt=0)
-            except Exception as exc:
-                logger.error("Failed to read artifact index", exc_info=exc)
+            except Exception:
+                logger.exception("Failed to read artifact index")
                 artifact_index = None
 
             if artifact_index is not None:
@@ -158,6 +156,8 @@ class ReleaseFilesMixin:
         file = File.objects.create(name=name, type="release.file", headers=headers)
         file.putfile(fileobj, logger=logger)
 
+        metrics.incr("sourcemaps.upload.single_release_file")
+
         try:
             with atomic_transaction(using=router.db_for_write(ReleaseFile)):
                 releasefile = ReleaseFile.objects.create(
@@ -178,7 +178,7 @@ class ArtifactSource:
     """Provides artifact data to ChainPaginator on-demand"""
 
     def __init__(
-        self, dist: Optional[Distribution], files: dict, query: List[str], checksums: List[str]
+        self, dist: Distribution | None, files: dict, query: list[str], checksums: list[str]
     ):
         self._dist = dist
         self._files = files
@@ -186,7 +186,7 @@ class ArtifactSource:
         self._checksums = checksums
 
     @cached_property
-    def sorted_and_filtered_files(self) -> List[Tuple[str, dict]]:
+    def sorted_and_filtered_files(self) -> list[tuple[str, dict]]:
         query = self._query
         checksums = self._checksums
         files = [
@@ -242,9 +242,9 @@ class ProjectReleaseFilesEndpoint(ProjectEndpoint, ReleaseFilesMixin):
 
         Retrieve a list of files for a given release.
 
-        :pparam string organization_slug: the slug of the organization the
+        :pparam string organization_id_or_slug: the id or slug of the organization the
                                           release belongs to.
-        :pparam string project_slug: the slug of the project to list the
+        :pparam string project_id_or_slug: the id or slug of the project to list the
                                      release files of.
         :pparam string version: the version identifier of the release.
         :qparam string query: If set, only files with these partial names will be returned.
@@ -270,13 +270,16 @@ class ProjectReleaseFilesEndpoint(ProjectEndpoint, ReleaseFilesMixin):
         Unlike other API requests, files must be uploaded using the
         traditional multipart/form-data content-type.
 
+        Requests to this endpoint should use the region-specific domain
+        eg. `us.sentry.io` or `de.sentry.io`
+
         The optional 'name' attribute should reflect the absolute path
         that this file will be referenced as. For example, in the case of
         JavaScript you might specify the full web URI.
 
-        :pparam string organization_slug: the slug of the organization the
+        :pparam string organization_id_or_slug: the id or slug of the organization the
                                           release belongs to.
-        :pparam string project_slug: the slug of the project to change the
+        :pparam string project_id_or_slug: the id or slug of the project to change the
                                      release of.
         :pparam string version: the version identifier of the release.
         :param string name: the name (full path) of the file.

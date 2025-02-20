@@ -1,15 +1,16 @@
 import {useState} from 'react';
 
-import SelectAsyncControl, {
+import type {
   Result,
   SelectAsyncControlProps,
 } from 'sentry/components/forms/controls/selectAsyncControl';
+import SelectAsyncControl from 'sentry/components/forms/controls/selectAsyncControl';
 // projects can be passed as a direct prop as well
-import {GeneralSelectValue} from 'sentry/components/forms/controls/selectControl';
+import type {GeneralSelectValue} from 'sentry/components/forms/controls/selectControl';
 import FormField from 'sentry/components/forms/formField';
 
 // XXX(epurkhiser): This is wrong, it should not be inheriting these props
-import {InputFieldProps} from './inputField';
+import type {InputFieldProps} from './inputField';
 
 export interface SelectAsyncFieldProps
   extends Omit<InputFieldProps, 'highlighted' | 'visible' | 'required' | 'value'>,
@@ -37,7 +38,7 @@ function SelectAsyncField({onChangeOption, ...props}: SelectAsyncFieldProps) {
         onResults,
         value,
         ...fieldProps
-      }) => {
+      }: any) => {
         const {defaultOptions} = props;
         // We don't use defaultOptions if it is undefined or a boolean
         const options = typeof defaultOptions === 'object' ? defaultOptions : [];
@@ -54,24 +55,26 @@ function SelectAsyncField({onChangeOption, ...props}: SelectAsyncFieldProps) {
         return (
           <SelectAsyncControl
             {...fieldProps}
-            onChange={(option, e) => {
+            onChange={(option: any, e: any) => {
               const resultValue = !option
                 ? option
                 : props.multiple && Array.isArray(option)
-                ? // List of optionObjs
-                  option.map(({value: val}) => val)
-                : !Array.isArray(option)
-                ? option.value
-                : option;
+                  ? // List of optionObjs
+                    option.map(({value: val}) => val)
+                  : !Array.isArray(option)
+                    ? option.value
+                    : option;
 
               setLatestSelection(option);
               onChange?.(resultValue, e);
               onChangeOption?.(option, e);
               onBlur?.(resultValue, e);
             }}
-            onResults={data => {
+            onResults={(data: any) => {
               const newResults = onResults(data);
-              const resultSelection = newResults.find(result => result.value === value);
+              const resultSelection = newResults.find(
+                (result: any) => result.value === value
+              );
 
               setResults(newResults);
               if (resultSelection) {

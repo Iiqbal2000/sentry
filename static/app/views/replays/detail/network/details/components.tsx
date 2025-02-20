@@ -1,4 +1,5 @@
-import {Fragment, ReactNode, useState} from 'react';
+import type {ReactNode} from 'react';
+import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
 
 import {KeyValueTable, KeyValueTableRow} from 'sentry/components/keyValueTable';
@@ -8,7 +9,12 @@ import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 
 export const Indent = styled('div')`
-  padding-left: ${space(4)};
+  padding-left: ${space(1)};
+  padding-right: ${space(1)};
+`;
+
+export const InspectorMargin = styled('div')`
+  padding: ${space(1)};
 `;
 
 const NotFoundText = styled('span')`
@@ -20,14 +26,14 @@ const WarningText = styled('span')`
   color: ${p => p.theme.errorText};
 `;
 
-export function Warning({warnings}: {warnings: undefined | string[]}) {
-  if (warnings?.includes('JSON_TRUNCATED') || warnings?.includes('TEXT_TRUNCATED')) {
+export function Warning({warnings}: {warnings: string[]}) {
+  if (warnings.includes('JSON_TRUNCATED') || warnings.includes('TEXT_TRUNCATED')) {
     return (
       <WarningText>{t('Truncated (~~) due to exceeding 150k characters')}</WarningText>
     );
   }
 
-  if (warnings?.includes('INVALID_JSON')) {
+  if (warnings.includes('INVALID_JSON')) {
     return <WarningText>{t('Invalid JSON')}</WarningText>;
   }
 
@@ -58,7 +64,7 @@ export function keyValueTableOrNotFound(data: KeyValueTuple[], notFoundText: str
           key={key}
           keyName={key}
           type={type}
-          value={<span>{value}</span>}
+          value={<ValueContainer>{value}</ValueContainer>}
         />
       ))}
     </StyledKeyValueTable>
@@ -69,12 +75,16 @@ export function keyValueTableOrNotFound(data: KeyValueTuple[], notFoundText: str
   );
 }
 
+const ValueContainer = styled('span')`
+  overflow: auto;
+`;
+
 const SectionTitle = styled('dt')``;
 
 const SectionTitleExtra = styled('span')`
   flex-grow: 1;
   text-align: right;
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
 `;
 
 const SectionData = styled('dd')`
@@ -86,7 +96,7 @@ const ToggleButton = styled('button')`
   border: 0;
   color: ${p => p.theme.headingColor};
   font-size: ${p => p.theme.fontSizeSmall};
-  font-weight: 600;
+  font-weight: ${p => p.theme.fontWeightBold};
   line-height: ${p => p.theme.text.lineHeightBody};
 
   width: 100%;

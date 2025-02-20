@@ -1,9 +1,12 @@
-import {browserHistory} from 'react-router';
 import merge from 'lodash/merge';
-import {GroupStats} from 'sentry-fixture/groupStats';
-import {Organization} from 'sentry-fixture/organization';
-import {Search} from 'sentry-fixture/search';
-import {Tags} from 'sentry-fixture/tags';
+import {GroupFixture} from 'sentry-fixture/group';
+import {GroupStatsFixture} from 'sentry-fixture/groupStats';
+import {MemberFixture} from 'sentry-fixture/member';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {RouterFixture} from 'sentry-fixture/routerFixture';
+import {SearchFixture} from 'sentry-fixture/search';
+import {TagsFixture} from 'sentry-fixture/tags';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {
@@ -17,12 +20,15 @@ import {
 import {textWithMarkupMatcher} from 'sentry-test/utils';
 
 import StreamGroup from 'sentry/components/stream/group';
+import {DEFAULT_QUERY} from 'sentry/constants';
+import PageFiltersStore from 'sentry/stores/pageFiltersStore';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import TagStore from 'sentry/stores/tagStore';
-import {SavedSearchVisibility} from 'sentry/types';
+import {SavedSearchVisibility} from 'sentry/types/group';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
 import localStorageWrapper from 'sentry/utils/localStorage';
 import * as parseLinkHeader from 'sentry/utils/parseLinkHeader';
-import IssueListWithStores, {IssueListOverview} from 'sentry/views/issueList/overview';
+import IssueListOverview from 'sentry/views/issueList/overview';
 
 // Mock <IssueListActions>
 jest.mock('sentry/views/issueList/actions', () => jest.fn(() => null));
@@ -32,14 +38,14 @@ const DEFAULT_LINKS_HEADER =
   '<http://127.0.0.1:8000/api/0/organizations/org-slug/issues/?cursor=1443575731:0:1>; rel="previous"; results="false"; cursor="1443575731:0:1", ' +
   '<http://127.0.0.1:8000/api/0/organizations/org-slug/issues/?cursor=1443575000:0:0>; rel="next"; results="true"; cursor="1443575000:0:0"';
 
-const project = TestStubs.Project({
+const project = ProjectFixture({
   id: '3559',
   name: 'Foo Project',
   slug: 'project-slug',
-  firstEvent: true,
+  firstEvent: new Date().toISOString(),
 });
 
-const {organization, router, routerContext} = initializeOrg({
+const {organization, projects, router} = initializeOrg({
   organization: {
     id: '1337',
     slug: 'org-slug',
@@ -47,40 +53,56 @@ const {organization, router, routerContext} = initializeOrg({
     access: [],
   },
   router: {
-    location: {query: {}, search: ''},
+    location: {query: {query: DEFAULT_QUERY}},
     params: {},
   },
-  project,
+  projects: [project],
 });
 
 const routerProps = {
   params: router.params,
   location: router.location,
+} as RouteComponentProps<Record<PropertyKey, string | undefined>, {searchId?: string}>;
+
+const initialRouterConfig = {
+  routes: [
+    '/organizations/:orgId/issues/',
+    '/organizations/:orgId/issues/searches/:searchId/',
+  ],
+  location: {
+    pathname: '/organizations/org-slug/issues/',
+    query: {},
+  },
 };
 
-describe('IssueList', function () {
-  let props;
+function getSearchInput() {
+  const input = screen.getAllByRole('combobox', {name: 'Add a search term'}).at(-1);
 
-  const tags = Tags();
-  const group = TestStubs.Group({project});
-  const groupStats = GroupStats();
-  const savedSearch = Search({
+  expect(input).toBeInTheDocument();
+
+  return input!;
+}
+
+describe('IssueList', function () {
+  const tags = TagsFixture();
+  const group = GroupFixture({project});
+  const groupStats = GroupStatsFixture();
+  const savedSearch = SearchFixture({
     id: '789',
     query: 'is:unresolved TypeError',
     sort: 'date',
     name: 'Unresolved TypeErrors',
   });
 
-  let fetchTagsRequest: jest.Mock;
   let fetchMembersRequest: jest.Mock;
-  const api = new MockApiClient();
   const parseLinkHeaderSpy = jest.spyOn(parseLinkHeader, 'default');
 
   beforeEach(function () {
     // The tests fail because we have a "component update was not wrapped in act" error.
     // It should be safe to ignore this error, but we should remove the mock once we move to react testing library
-    // eslint-disable-next-line no-console
+
     jest.spyOn(console, 'error').mockImplementation(jest.fn());
+    Object.defineProperty(Element.prototype, 'clientWidth', {value: 1000});
 
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/issues/',
@@ -123,7 +145,7 @@ describe('IssueList', function () {
         },
       ],
     });
-    fetchTagsRequest = MockApiClient.addMockResponse({
+    MockApiClient.addMockResponse({
       url: '/organizations/org-slug/tags/',
       method: 'GET',
       body: tags,
@@ -131,7 +153,7 @@ describe('IssueList', function () {
     fetchMembersRequest = MockApiClient.addMockResponse({
       url: '/organizations/org-slug/users/',
       method: 'GET',
-      body: [TestStubs.Member({projects: [project.slug]})],
+      body: [MemberFixture({projects: [project.slug]})],
     });
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/sent-first-event/',
@@ -142,27 +164,16 @@ describe('IssueList', function () {
       body: [project],
     });
 
-    TagStore.init?.();
-
-    props = {
-      api,
-      savedSearchLoading: false,
-      savedSearches: [savedSearch],
-      useOrgSavedSearches: true,
-      selection: {
-        projects: [parseInt(organization.projects[0].id, 10)],
+    PageFiltersStore.onInitializeUrlState(
+      {
+        projects: [parseInt(projects[0]!.id, 10)],
         environments: [],
-        datetime: {period: '14d'},
+        datetime: {period: '14d', start: null, end: null, utc: null},
       },
-      location: {query: {query: 'is:unresolved'}, search: 'query=is:unresolved'},
-      params: {},
-      organization,
-      tags: tags.reduce((acc, tag) => {
-        acc[tag.key] = tag;
+      new Set()
+    );
 
-        return acc;
-      }),
-    };
+    TagStore.init?.();
   });
 
   afterEach(function () {
@@ -172,19 +183,17 @@ describe('IssueList', function () {
   });
 
   describe('withStores and feature flags', function () {
-    let savedSearchesRequest: jest.Mock;
-    let recentSearchesRequest: jest.Mock;
     let issuesRequest: jest.Mock;
 
     beforeEach(function () {
       jest.mocked(StreamGroup).mockClear();
 
-      recentSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/recent-searches/',
         method: 'GET',
         body: [],
       });
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [savedSearch],
       });
@@ -198,41 +207,41 @@ describe('IssueList', function () {
     });
 
     it('loads group rows with default query (no pinned queries, async and no query in URL)', async function () {
-      render(<IssueListWithStores {...routerProps} />, {
-        context: routerContext,
+      render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig: {
+          location: {
+            pathname: '/organizations/org-slug/issues/',
+            query: {},
+          },
+        },
       });
 
-      // Loading saved searches
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
-      expect(savedSearchesRequest).toHaveBeenCalledTimes(1);
-
-      await userEvent.click(await screen.findByRole('textbox'));
-
-      // auxillary requests being made
-      expect(recentSearchesRequest).toHaveBeenCalledTimes(1);
-      expect(fetchTagsRequest).toHaveBeenCalledTimes(1);
-      expect(fetchMembersRequest).toHaveBeenCalledTimes(1);
+      await screen.findByRole('grid', {name: 'Create a search query'});
+      expect(screen.getByRole('row', {name: 'is:unresolved'})).toBeInTheDocument();
+      expect(screen.getByRole('button', {name: /custom search/i})).toBeInTheDocument();
 
       // primary /issues/ request
-      expect(issuesRequest).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          // Should be called with default query
-          data: expect.stringContaining('is%3Aunresolved'),
-        })
-      );
+      await waitFor(() => {
+        expect(issuesRequest).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            // Should not be called with a "query" param, endpoint will find the default query itself
+            data: expect.not.stringContaining('query'),
+          })
+        );
+      });
 
-      expect(screen.getByRole('textbox')).toHaveValue('is:unresolved ');
-
-      expect(screen.getByRole('button', {name: /custom search/i})).toBeInTheDocument();
+      expect(issuesRequest).toHaveBeenCalledTimes(1);
     });
 
     it('loads with query in URL and pinned queries', async function () {
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [
           savedSearch,
-          Search({
+          SearchFixture({
             id: '123',
             name: 'My Pinned Search',
             isPinned: true,
@@ -241,11 +250,16 @@ describe('IssueList', function () {
         ],
       });
 
-      const location = TestStubs.location({query: {query: 'level:foo'}});
-
-      render(<IssueListWithStores {...merge({}, routerProps, {location})} />, {
-        context: routerContext,
-        router: {location},
+      render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig: {
+          ...initialRouterConfig,
+          location: {
+            ...initialRouterConfig.location,
+            query: {query: 'level:foo'},
+          },
+        },
       });
 
       await waitFor(() => {
@@ -259,114 +273,59 @@ describe('IssueList', function () {
         );
       });
 
-      expect(screen.getByRole('textbox')).toHaveValue('level:foo ');
+      expect(screen.getByRole('row', {name: 'level:foo'})).toBeInTheDocument();
 
       // Tab shows "custom search"
       expect(screen.getByRole('button', {name: 'Custom Search'})).toBeInTheDocument();
     });
 
-    it('loads with a pinned custom query', async function () {
-      savedSearchesRequest = MockApiClient.addMockResponse({
-        url: '/organizations/org-slug/searches/',
-        body: [
-          savedSearch,
-          Search({
-            id: '123',
-            name: 'My Pinned Search',
-            isPinned: true,
-            isGlobal: false,
-            query: 'is:resolved',
-          }),
-        ],
-      });
-
-      render(<IssueListWithStores {...routerProps} />, {
-        context: routerContext,
-      });
-
-      await waitFor(() => {
-        expect(issuesRequest).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({
-            // Should be called with default query
-            data: expect.stringContaining('is%3Aresolved'),
-          })
-        );
-      });
-
-      expect(screen.getByRole('textbox')).toHaveValue('is:resolved ');
-
-      // Organization saved search selector should have default saved search selected
-      expect(screen.getByRole('button', {name: 'My Default Search'})).toBeInTheDocument();
-    });
-
-    it('shows archived tab', async function () {
-      render(
-        <IssueListWithStores
-          {...routerProps}
-          organization={{...organization, features: ['escalating-issues']}}
-        />,
-        {
-          context: routerContext,
-        }
-      );
-
-      await waitFor(() => {
-        expect(issuesRequest).toHaveBeenCalled();
-      });
-
-      expect(screen.getByRole('textbox')).toHaveValue('is:unresolved ');
-
-      // TODO(workflow): remove this test when we remove the feature flag
-      expect(screen.getByRole('tab', {name: 'Archived'})).toBeInTheDocument();
-    });
-
     it('loads with a saved query', async function () {
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [
-          Search({
+          SearchFixture({
             id: '123',
             name: 'Assigned to Me',
             isPinned: false,
             isGlobal: true,
             query: 'assigned:me',
-            sort: 'priority',
+            sort: 'trends',
             type: 0,
           }),
         ],
       });
 
-      const localRouter = {params: {searchId: '123'}};
-
-      render(<IssueListWithStores {...merge({}, routerProps, localRouter)} />, {
-        context: routerContext,
-        router: localRouter,
+      render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig: {
+          ...initialRouterConfig,
+          location: {
+            pathname: '/organizations/org-slug/issues/searches/123/',
+          },
+        },
       });
 
       await waitFor(() => {
         expect(issuesRequest).toHaveBeenCalledWith(
           expect.anything(),
           expect.objectContaining({
-            // Should be called with default query
-            data:
-              expect.stringContaining('assigned%3Ame') &&
-              expect.stringContaining('sort=priority'),
+            data: expect.stringContaining('searchId=123'),
           })
         );
       });
 
-      expect(screen.getByRole('textbox')).toHaveValue('assigned:me ');
+      expect(screen.getByRole('row', {name: 'assigned:me'})).toBeInTheDocument();
 
       // Organization saved search selector should have default saved search selected
       expect(screen.getByRole('button', {name: 'Assigned to Me'})).toBeInTheDocument();
     });
 
     it('loads with a query in URL', async function () {
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [
-          Search({
+          SearchFixture({
             id: '123',
             name: 'Assigned to Me',
             isPinned: false,
@@ -377,10 +336,14 @@ describe('IssueList', function () {
         ],
       });
 
-      const localRouter = {location: {query: {query: 'level:error'}}};
-
-      render(<IssueListWithStores {...merge({}, routerProps, localRouter)} />, {
-        context: routerContext,
+      render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig: merge({}, initialRouterConfig, {
+          location: {
+            query: {query: 'level:error'},
+          },
+        }),
       });
 
       await waitFor(() => {
@@ -393,17 +356,17 @@ describe('IssueList', function () {
         );
       });
 
-      expect(screen.getByRole('textbox')).toHaveValue('level:error ');
+      expect(screen.getByRole('row', {name: 'level:error'})).toBeInTheDocument();
 
       // Organization saved search selector should have default saved search selected
       expect(screen.getByRole('button', {name: 'Custom Search'})).toBeInTheDocument();
     });
 
     it('loads with an empty query in URL', async function () {
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [
-          Search({
+          SearchFixture({
             id: '123',
             name: 'My Pinned Search',
             isPinned: true,
@@ -413,12 +376,17 @@ describe('IssueList', function () {
         ],
       });
 
-      render(
-        <IssueListWithStores
-          {...merge({}, routerProps, {location: {query: {query: undefined}}})}
-        />,
-        {context: routerContext}
-      );
+      render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig: {
+          ...initialRouterConfig,
+          location: {
+            ...initialRouterConfig.location,
+            query: {},
+          },
+        },
+      });
 
       await waitFor(() => {
         expect(issuesRequest).toHaveBeenCalledWith(
@@ -430,41 +398,86 @@ describe('IssueList', function () {
         );
       });
 
-      expect(screen.getByRole('textbox')).toHaveValue('is:resolved ');
+      expect(screen.getByRole('row', {name: 'is:resolved'})).toBeInTheDocument();
 
       // Organization saved search selector should have default saved search selected
       expect(screen.getByRole('button', {name: 'My Default Search'})).toBeInTheDocument();
     });
 
+    it('caches the search results', async function () {
+      issuesRequest = MockApiClient.addMockResponse({
+        url: '/organizations/org-slug/issues/',
+        body: [...new Array(25)].map((_, i) => ({id: i})),
+        headers: {
+          Link: DEFAULT_LINKS_HEADER,
+          'X-Hits': '500',
+          'X-Max-Hits': '1000',
+        },
+      });
+
+      PageFiltersStore.onInitializeUrlState(
+        {
+          projects: [],
+          environments: [],
+          datetime: {period: '14d', start: null, end: null, utc: null},
+        },
+        new Set()
+      );
+
+      const {unmount} = render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig,
+      });
+
+      expect(
+        await screen.findByText(textWithMarkupMatcher('1-25 of 500'))
+      ).toBeInTheDocument();
+      expect(issuesRequest).toHaveBeenCalledTimes(1);
+      unmount();
+
+      // Mount component again, getting from cache
+      render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig,
+      });
+
+      expect(
+        await screen.findByText(textWithMarkupMatcher('1-25 of 500'))
+      ).toBeInTheDocument();
+      expect(issuesRequest).toHaveBeenCalledTimes(1);
+    });
+
     it('1 search', async function () {
       const localSavedSearch = {...savedSearch, projectId: null};
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [localSavedSearch],
       });
 
-      render(<IssueListWithStores {...routerProps} />, {
-        context: routerContext,
+      const {router: testRouter} = render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
-
-      await userEvent.click(screen.getByRole('button', {name: /custom search/i}));
+      await userEvent.click(await screen.findByRole('button', {name: /custom search/i}));
       await userEvent.click(screen.getByRole('button', {name: localSavedSearch.name}));
 
-      expect(browserHistory.push).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          pathname: '/organizations/org-slug/issues/searches/789/',
-        })
-      );
+      await waitFor(() => {
+        expect(testRouter.location.pathname).toBe(
+          '/organizations/org-slug/issues/searches/789/'
+        );
+      });
     });
 
     it('clears a saved search when a custom one is entered', async function () {
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [
           savedSearch,
-          Search({
+          SearchFixture({
             id: '123',
             name: 'Pinned search',
             isPinned: true,
@@ -474,26 +487,28 @@ describe('IssueList', function () {
         ],
       });
 
-      render(<IssueListWithStores {...routerProps} />, {
-        context: routerContext,
+      const {router: testRouter} = render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
+      await screen.findByRole('grid', {name: 'Create a search query'});
+      await userEvent.click(screen.getByRole('button', {name: 'Clear search query'}));
+      await userEvent.click(getSearchInput());
+      await userEvent.keyboard('dogs{Enter}');
 
-      await userEvent.clear(screen.getByRole('textbox'));
-      await userEvent.type(screen.getByRole('textbox'), 'dogs{enter}');
+      await waitFor(() => {
+        expect(testRouter.location.pathname).toBe('/organizations/org-slug/issues/');
+      });
 
-      expect(browserHistory.push).toHaveBeenLastCalledWith(
+      expect(testRouter.location.query).toEqual(
         expect.objectContaining({
-          pathname: '/organizations/org-slug/issues/',
-          query: {
-            environment: [],
-            project: [],
-            referrer: 'issue-list',
-            sort: '',
-            query: 'dogs',
-            statsPeriod: '14d',
-          },
+          project: '3559',
+          referrer: 'issue-list',
+          sort: '',
+          query: 'dogs',
+          statsPeriod: '14d',
         })
       );
     });
@@ -507,35 +522,30 @@ describe('IssueList', function () {
         isPinned: true,
         visibility: SavedSearchVisibility.ORGANIZATION,
       };
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [savedSearch],
       });
 
-      const {rerender} = render(<IssueListWithStores {...routerProps} />, {
-        context: routerContext,
+      const {router: testRouter} = render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
+      await screen.findByRole('grid', {name: 'Create a search query'});
+      await userEvent.click(screen.getByRole('button', {name: 'Clear search query'}));
+      await userEvent.click(getSearchInput());
+      await userEvent.paste('assigned:me level:fatal');
+      await userEvent.keyboard('{Enter}');
 
-      await userEvent.clear(screen.getByRole('textbox'));
-      await userEvent.type(screen.getByRole('textbox'), 'assigned:me level:fatal{enter}');
+      await waitFor(() => {
+        expect(testRouter.location.query.query).toBe('assigned:me level:fatal');
+      });
 
-      expect((browserHistory.push as jest.Mock).mock.calls[0][0]).toEqual(
-        expect.objectContaining({
-          query: expect.objectContaining({
-            query: 'assigned:me level:fatal',
-          }),
-        })
-      );
-
-      await tick();
-
-      const routerWithQuery = {location: {query: {query: 'assigned:me level:fatal'}}};
-
-      rerender(<IssueListWithStores {...merge({}, routerProps, routerWithQuery)} />);
-
-      expect(screen.getByRole('button', {name: 'Custom Search'})).toBeInTheDocument();
+      expect(
+        await screen.findByRole('button', {name: 'Custom Search'})
+      ).toBeInTheDocument();
 
       MockApiClient.clearMockResponses();
       const createPin = MockApiClient.addMockResponse({
@@ -551,20 +561,19 @@ describe('IssueList', function () {
 
       await waitFor(() => {
         expect(createPin).toHaveBeenCalled();
-        expect(browserHistory.replace).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            pathname: '/organizations/org-slug/issues/searches/666/',
-            query: {
-              referrer: 'search-bar',
-            },
-            search: '',
-          })
+      });
+
+      await waitFor(() => {
+        expect(testRouter.location.pathname).toBe(
+          '/organizations/org-slug/issues/searches/666/'
         );
       });
+
+      expect(testRouter.location.query.referrer).toBe('search-bar');
     });
 
     it('unpins a custom query', async function () {
-      const pinnedSearch = Search({
+      const pinnedSearch = SearchFixture({
         id: '666',
         name: 'My Pinned Search',
         query: 'assigned:me level:fatal',
@@ -572,7 +581,7 @@ describe('IssueList', function () {
         isPinned: true,
         visibility: SavedSearchVisibility.ORGANIZATION,
       });
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [pinnedSearch],
       });
@@ -581,18 +590,18 @@ describe('IssueList', function () {
         method: 'DELETE',
       });
 
-      const routerWithSavedSearch = {
+      const routerWithSavedSearch = RouterFixture({
         params: {searchId: pinnedSearch.id},
-      };
-
-      render(<IssueListWithStores {...merge({}, routerProps, routerWithSavedSearch)} />, {
-        context: routerContext,
-        router: routerWithSavedSearch,
       });
 
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
+      render(<IssueListOverview {...merge({}, routerProps, routerWithSavedSearch)} />, {
+        router: routerWithSavedSearch,
+        organization,
+      });
 
-      expect(screen.getByRole('button', {name: 'My Default Search'})).toBeInTheDocument();
+      expect(
+        await screen.findByRole('button', {name: 'My Default Search'})
+      ).toBeInTheDocument();
 
       await userEvent.click(screen.getByLabelText(/Remove Default/i));
 
@@ -601,7 +610,7 @@ describe('IssueList', function () {
       });
 
       await waitFor(() => {
-        expect(browserHistory.replace).toHaveBeenLastCalledWith(
+        expect(routerWithSavedSearch.replace).toHaveBeenLastCalledWith(
           expect.objectContaining({
             pathname: '/organizations/org-slug/issues/',
           })
@@ -610,7 +619,7 @@ describe('IssueList', function () {
     });
 
     it('pins a saved query', async function () {
-      const assignedToMe = Search({
+      const assignedToMe = SearchFixture({
         id: '234',
         name: 'Assigned to Me',
         isPinned: false,
@@ -620,7 +629,7 @@ describe('IssueList', function () {
         type: 0,
       });
 
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [savedSearch, assignedToMe],
       });
@@ -633,65 +642,63 @@ describe('IssueList', function () {
           isPinned: true,
         },
       });
-      const routerWithSavedSearch = {params: {searchId: '789'}};
+      const routerWithSavedSearch = RouterFixture({params: {searchId: '789'}});
 
-      render(<IssueListWithStores {...merge({}, routerProps, routerWithSavedSearch)} />, {
-        context: routerContext,
+      render(<IssueListOverview {...merge({}, routerProps, routerWithSavedSearch)} />, {
         router: routerWithSavedSearch,
+        organization,
       });
 
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
-
-      expect(screen.getByRole('button', {name: savedSearch.name})).toBeInTheDocument();
+      expect(
+        await screen.findByRole('button', {name: savedSearch.name})
+      ).toBeInTheDocument();
 
       await userEvent.click(screen.getByLabelText(/set as default/i));
 
       await waitFor(() => {
         expect(createPin).toHaveBeenCalled();
-        expect(browserHistory.replace).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            pathname: '/organizations/org-slug/issues/searches/789/',
-          })
-        );
       });
+
+      expect(routerWithSavedSearch.replace).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          pathname: '/organizations/org-slug/issues/searches/789/',
+        })
+      );
     });
 
     it('pinning search should keep project selected', async function () {
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [savedSearch],
       });
 
-      const {routerContext: newRouterContext, router: newRouter} = initializeOrg({
-        router: {
+      PageFiltersStore.onInitializeUrlState(
+        {
+          projects: [123],
+          environments: ['prod'],
+          datetime: {
+            period: null,
+            start: null,
+            end: null,
+            utc: null,
+          },
+        },
+        new Set()
+      );
+
+      const {router: testRouter} = render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig: merge({}, initialRouterConfig, {
           location: {
             query: {
-              project: ['123'],
-              environment: ['prod'],
+              project: '123',
+              environment: 'prod',
               query: 'assigned:me level:fatal',
             },
           },
-        },
+        }),
       });
-
-      render(
-        <IssueListWithStores
-          {...newRouter}
-          selection={{
-            projects: [123],
-            environments: ['prod'],
-            datetime: {
-              end: null,
-              period: null,
-              start: null,
-              utc: null,
-            },
-          }}
-        />,
-        {context: newRouterContext}
-      );
-
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
 
       const createPin = MockApiClient.addMockResponse({
         url: '/organizations/org-slug/pinned-searches/',
@@ -706,22 +713,25 @@ describe('IssueList', function () {
         },
       });
 
-      await userEvent.click(screen.getByLabelText(/set as default/i));
+      await userEvent.click(await screen.findByLabelText(/set as default/i));
 
       await waitFor(() => {
         expect(createPin).toHaveBeenCalled();
-        expect(browserHistory.replace).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            pathname: '/organizations/org-slug/issues/searches/666/',
-            query: expect.objectContaining({
-              project: ['123'],
-              environment: ['prod'],
-              query: 'assigned:me level:fatal',
-              referrer: 'search-bar',
-            }),
-          })
+      });
+
+      await waitFor(() => {
+        expect(testRouter.location.pathname).toBe(
+          '/organizations/org-slug/issues/searches/666/'
         );
       });
+
+      expect(testRouter.location.query).toEqual(
+        expect.objectContaining({
+          project: '123',
+          environment: 'prod',
+          query: 'assigned:me level:fatal',
+        })
+      );
     });
 
     it('unpinning search should keep project selected', async function () {
@@ -731,7 +741,7 @@ describe('IssueList', function () {
         isPinned: true,
         query: 'assigned:me level:fatal',
       };
-      savedSearchesRequest = MockApiClient.addMockResponse({
+      MockApiClient.addMockResponse({
         url: '/organizations/org-slug/searches/',
         body: [localSavedSearch],
       });
@@ -740,67 +750,60 @@ describe('IssueList', function () {
         method: 'DELETE',
       });
 
-      const {routerContext: newRouterContext, router: newRouter} = initializeOrg(
-        merge({}, router, {
-          router: {
-            location: {
-              query: {
-                project: ['123'],
-                environment: ['prod'],
-                query: 'assigned:me level:fatal',
-              },
-            },
-            params: {searchId: '666'},
+      PageFiltersStore.onInitializeUrlState(
+        {
+          projects: [123],
+          environments: ['prod'],
+          datetime: {
+            period: null,
+            start: null,
+            end: null,
+            utc: null,
           },
-        })
+        },
+        new Set()
       );
 
-      render(
-        <IssueListWithStores
-          {...newRouter}
-          selection={{
-            projects: [123],
-            environments: ['prod'],
-            datetime: {
-              end: null,
-              period: null,
-              start: null,
-              utc: null,
+      const {router: testRouter} = render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig: {
+          ...initialRouterConfig,
+          location: {
+            pathname: '/organizations/org-slug/issues/searches/666/',
+            query: {
+              project: '123',
+              environment: 'prod',
+              query: 'assigned:me level:fatal',
             },
-          }}
-          savedSearch={localSavedSearch}
-        />,
-        {context: newRouterContext}
-      );
+          },
+        },
+      });
 
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
-
-      await userEvent.click(screen.getByLabelText(/Remove Default/i));
+      await userEvent.click(await screen.findByLabelText(/Remove Default/i));
 
       await waitFor(() => {
         expect(deletePin).toHaveBeenCalled();
-        expect(browserHistory.replace).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            pathname: '/organizations/org-slug/issues/',
-            query: expect.objectContaining({
-              project: ['123'],
-              environment: ['prod'],
-              query: 'assigned:me level:fatal',
-              referrer: 'search-bar',
-            }),
-          })
-        );
       });
+
+      expect(testRouter.location.pathname).toBe('/organizations/org-slug/issues/');
+      expect(testRouter.location.query).toEqual(
+        expect.objectContaining({
+          project: '123',
+          environment: 'prod',
+          query: 'assigned:me level:fatal',
+        })
+      );
     });
 
     it('does not allow pagination to "previous" while on first page and resets cursors when navigating back to initial page', async function () {
-      const {rerender} = render(<IssueListWithStores {...routerProps} />, {
-        context: routerContext,
+      const {router: testRouter} = render(<IssueListOverview {...routerProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
-
-      expect(screen.getByRole('button', {name: 'Previous'})).toBeDisabled();
+      expect(await screen.findByRole('button', {name: 'Previous'})).toBeDisabled();
 
       issuesRequest = MockApiClient.addMockResponse({
         url: '/organizations/org-slug/issues/',
@@ -810,91 +813,58 @@ describe('IssueList', function () {
         },
       });
 
-      await userEvent.click(screen.getByRole('button', {name: 'Next'}));
-
-      let pushArgs = {
-        pathname: '/organizations/org-slug/issues/',
-        query: {
-          cursor: '1443575000:0:0',
-          page: 1,
-          environment: [],
-          project: [],
-          query: 'is:unresolved',
-          statsPeriod: '14d',
-          referrer: 'issue-list',
-        },
-      };
+      await userEvent.click(await screen.findByRole('button', {name: 'Next'}));
 
       await waitFor(() => {
-        expect(browserHistory.push).toHaveBeenLastCalledWith(pushArgs);
+        expect(testRouter.location.query).toEqual({
+          cursor: '1443575000:0:0',
+          page: '1',
+          project: '3559',
+          query: DEFAULT_QUERY,
+          statsPeriod: '14d',
+          referrer: 'issue-list',
+        });
       });
 
-      rerender(<IssueListWithStores {...merge({}, routerProps, {location: pushArgs})} />);
-
-      expect(screen.getByRole('button', {name: 'Previous'})).toBeEnabled();
+      await waitFor(() => {
+        expect(screen.getByRole('button', {name: 'Previous'})).toBeEnabled();
+      });
 
       // Click next again
       await userEvent.click(screen.getByRole('button', {name: 'Next'}));
 
-      pushArgs = {
-        pathname: '/organizations/org-slug/issues/',
-        query: {
+      await waitFor(() => {
+        expect(testRouter.location.query).toEqual({
           cursor: '1443574000:0:0',
-          page: 2,
-          environment: [],
-          project: [],
-          query: 'is:unresolved',
+          page: '2',
+          project: '3559',
+          query: DEFAULT_QUERY,
           statsPeriod: '14d',
           referrer: 'issue-list',
-        },
-      };
-
-      await waitFor(() => {
-        expect(browserHistory.push).toHaveBeenLastCalledWith(pushArgs);
+        });
       });
-
-      rerender(<IssueListWithStores {...merge({}, routerProps, {location: pushArgs})} />);
 
       // Click previous
       await userEvent.click(screen.getByRole('button', {name: 'Previous'}));
 
-      pushArgs = {
-        pathname: '/organizations/org-slug/issues/',
-        query: {
+      await waitFor(() => {
+        expect(testRouter.location.query).toEqual({
           cursor: '1443575000:0:1',
-          page: 1,
-          environment: [],
-          project: [],
-          query: 'is:unresolved',
+          page: '1',
+          project: '3559',
+          query: DEFAULT_QUERY,
           statsPeriod: '14d',
           referrer: 'issue-list',
-        },
-      };
-
-      await waitFor(() => {
-        expect(browserHistory.push).toHaveBeenLastCalledWith(pushArgs);
+        });
       });
-
-      rerender(<IssueListWithStores {...merge({}, routerProps, {location: pushArgs})} />);
 
       // Click previous back to initial page
       await userEvent.click(screen.getByRole('button', {name: 'Previous'}));
 
       await waitFor(() => {
-        // cursor is undefined because "prev" cursor is === initial "next" cursor
-        expect(browserHistory.push).toHaveBeenLastCalledWith({
-          pathname: '/organizations/org-slug/issues/',
-          query: {
-            cursor: undefined,
-            environment: [],
-            page: undefined,
-            project: [],
-            query: 'is:unresolved',
-            statsPeriod: '14d',
-            referrer: 'issue-list',
-          },
-        });
+        expect(testRouter.location.query.cursor).toBeUndefined();
       });
+      expect(testRouter.location.query.page).toBeUndefined();
     });
   });
 
@@ -908,37 +878,40 @@ describe('IssueList', function () {
         },
       });
 
-      render(<IssueListOverview {...props} />, {
-        context: routerContext,
+      const {router: testRouter} = render(<IssueListOverview {...routerProps} />, {
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
-      await userEvent.clear(screen.getByRole('textbox'));
-      await userEvent.type(screen.getByRole('textbox'), 'is:ignored{enter}');
+      await userEvent.click(screen.getByRole('button', {name: 'Clear search query'}));
+      await userEvent.click(getSearchInput());
+      await userEvent.paste('is:ignored');
+      await userEvent.keyboard('{enter}');
 
-      expect(browserHistory.push).toHaveBeenCalledWith({
-        pathname: '/organizations/org-slug/issues/',
-        query: {
-          environment: [],
-          project: [parseInt(project.id, 10)],
+      await waitFor(() => {
+        expect(testRouter.location.query).toEqual({
+          project: project.id.toString(),
           query: 'is:ignored',
           statsPeriod: '14d',
           referrer: 'issue-list',
-        },
+        });
       });
     });
   });
 
-  it('fetches tags and members', async function () {
-    render(<IssueListOverview {...routerProps} {...props} />, {context: routerContext});
+  it('fetches members', async function () {
+    render(<IssueListOverview {...routerProps} />, {
+      disableRouterMocks: true,
+      initialRouterConfig,
+    });
 
     await waitFor(() => {
-      expect(fetchTagsRequest).toHaveBeenCalled();
       expect(fetchMembersRequest).toHaveBeenCalled();
     });
   });
 
   describe('componentDidUpdate fetching groups', function () {
-    let fetchDataMock;
+    let fetchDataMock: jest.Mock;
 
     beforeEach(function () {
       fetchDataMock = MockApiClient.addMockResponse({
@@ -951,96 +924,125 @@ describe('IssueList', function () {
       fetchDataMock.mockReset();
     });
 
-    it('fetches data on selection change', function () {
-      const {rerender} = render(<IssueListOverview {...routerProps} {...props} />, {
-        context: routerContext,
+    it('fetches data on selection change', async function () {
+      const {rerender} = render(<IssueListOverview {...routerProps} />, {
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
-      rerender(
-        <IssueListOverview
-          {...routerProps}
-          {...props}
-          selection={{projects: [99], environments: [], datetime: {period: '24h'}}}
-        />
+      PageFiltersStore.onInitializeUrlState(
+        {
+          projects: [99],
+          environments: [],
+          datetime: {period: '24h', start: null, end: null, utc: null},
+        },
+        new Set()
       );
 
-      expect(fetchDataMock).toHaveBeenCalled();
+      rerender(<IssueListOverview {...routerProps} />);
+
+      await waitFor(() => {
+        expect(fetchDataMock).toHaveBeenCalled();
+      });
     });
 
-    it('fetches data on savedSearch change', function () {
-      const {rerender} = render(<IssueListOverview {...routerProps} {...props} />, {
-        context: routerContext,
+    it('fetches data on savedSearch change', async function () {
+      const {rerender} = render(<IssueListOverview {...routerProps} />, {
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
-      rerender(
-        <IssueListOverview
-          {...routerProps}
-          {...props}
-          savedSearch={{id: '1', query: 'is:resolved'}}
-        />
-      );
+      rerender(<IssueListOverview {...routerProps} />);
 
-      expect(fetchDataMock).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(fetchDataMock).toHaveBeenCalled();
+      });
     });
 
-    it('uses correct statsPeriod when fetching issues list and no datetime given', function () {
-      const {rerender} = render(<IssueListOverview {...routerProps} {...props} />, {
-        context: routerContext,
+    it('uses correct statsPeriod when fetching issues list and no datetime given', async function () {
+      const {rerender} = render(<IssueListOverview {...routerProps} />, {
+        disableRouterMocks: true,
+        initialRouterConfig: merge({}, initialRouterConfig, {
+          location: {
+            query: {
+              query: DEFAULT_QUERY,
+            },
+          },
+        }),
       });
-      const selection = {projects: [99], environments: [], datetime: {}};
-      rerender(<IssueListOverview {...routerProps} {...props} selection={selection} />);
 
-      expect(fetchDataMock).toHaveBeenLastCalledWith(
-        '/organizations/org-slug/issues/',
-        expect.objectContaining({
-          data: 'collapse=stats&expand=owners&expand=inbox&limit=25&project=99&query=is%3Aunresolved&shortIdLookup=1&statsPeriod=14d',
-        })
+      PageFiltersStore.onInitializeUrlState(
+        {
+          projects: [99],
+          environments: [],
+          datetime: {period: '14d', start: null, end: null, utc: null},
+        },
+        new Set()
       );
+
+      rerender(<IssueListOverview {...routerProps} />);
+
+      await waitFor(() => {
+        expect(fetchDataMock).toHaveBeenLastCalledWith(
+          '/organizations/org-slug/issues/',
+          expect.objectContaining({
+            data: 'collapse=stats&collapse=unhandled&expand=owners&expand=inbox&limit=25&project=99&query=is%3Aunresolved%20issue.priority%3A%5Bhigh%2C%20medium%5D&savedSearch=0&shortIdLookup=1&statsPeriod=14d',
+          })
+        );
+      });
     });
   });
 
   describe('componentDidUpdate fetching members', function () {
-    it('fetches memberlist and tags list on project change', function () {
-      const {rerender} = render(<IssueListOverview {...routerProps} {...props} />, {
-        context: routerContext,
+    it('fetches memberlist on project change', async function () {
+      const {rerender} = render(<IssueListOverview {...routerProps} />, {
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
       // Called during componentDidMount
-      expect(fetchMembersRequest).toHaveBeenCalledTimes(1);
-      expect(fetchTagsRequest).toHaveBeenCalledTimes(1);
+      await waitFor(() => {
+        expect(fetchMembersRequest).toHaveBeenCalled();
+      });
 
-      const selection = {
-        projects: [99],
-        environments: [],
-        datetime: {period: '24h'},
-      };
-      rerender(<IssueListOverview {...routerProps} {...props} selection={selection} />);
-      expect(fetchMembersRequest).toHaveBeenCalledTimes(2);
-      expect(fetchTagsRequest).toHaveBeenCalledTimes(2);
+      PageFiltersStore.onInitializeUrlState(
+        {
+          projects: [99],
+          environments: [],
+          datetime: {period: '24h', start: null, end: null, utc: null},
+        },
+        new Set()
+      );
+      rerender(<IssueListOverview {...routerProps} />);
+
+      await waitFor(() => {
+        expect(fetchMembersRequest).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            query: {
+              project: ['99'],
+            },
+          })
+        );
+      });
     });
   });
 
   describe('render states', function () {
-    it('displays the loading icon when saved searches are loading', function () {
-      render(<IssueListOverview {...routerProps} {...props} savedSearchLoading />, {
-        context: routerContext,
-      });
-      expect(screen.getByTestId('loading-indicator')).toBeInTheDocument();
-    });
-
     it('displays an error when issues fail to load', async function () {
       MockApiClient.addMockResponse({
         url: '/organizations/org-slug/issues/',
         status: 500,
         statusCode: 500,
       });
-      render(<IssueListOverview {...routerProps} {...props} />, {
-        context: routerContext,
+      render(<IssueListOverview {...routerProps} />, {
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
       expect(await screen.findByTestId('loading-error')).toBeInTheDocument();
     });
 
-    it('displays congrats robots animation with only is:unresolved query', async function () {
+    it('displays "Get out there and write some broken code" with default query', async function () {
       MockApiClient.addMockResponse({
         url: '/organizations/org-slug/issues/',
         body: [],
@@ -1048,14 +1050,17 @@ describe('IssueList', function () {
           Link: DEFAULT_LINKS_HEADER,
         },
       });
-      render(<IssueListOverview {...routerProps} {...props} />, {context: routerContext});
+      render(<IssueListOverview {...routerProps} />, {
+        disableRouterMocks: true,
+        initialRouterConfig,
+      });
 
       expect(
-        await screen.findByText(/We couldn't find any issues that matched your filters/i)
+        await screen.findByText(/Get out there and write some broken code!/i)
       ).toBeInTheDocument();
     });
 
-    it('displays an empty resultset with a non-default query', async function () {
+    it('displays "no issues match your search" with a non-default query', async function () {
       MockApiClient.addMockResponse({
         url: '/organizations/org-slug/issues/',
         body: [],
@@ -1064,18 +1069,44 @@ describe('IssueList', function () {
         },
       });
 
-      render(<IssueListOverview {...routerProps} {...props} />, {context: routerContext});
+      const {router: testRouter} = render(<IssueListOverview {...routerProps} />, {
+        disableRouterMocks: true,
+        initialRouterConfig: merge({}, initialRouterConfig, {
+          location: {
+            query: {
+              query: DEFAULT_QUERY,
+            },
+          },
+        }),
+      });
 
-      await userEvent.type(screen.getByRole('textbox'), ' level:error{enter}');
+      await screen.findByRole('grid', {name: 'Create a search query'});
+      await userEvent.click(getSearchInput());
+      await userEvent.keyboard('foo{enter}');
 
-      expect(
-        await screen.findByText(/We couldn't find any issues that matched your filters/i)
-      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(testRouter.location.query.query).toBe(
+          'is:unresolved issue.priority:[high, medium] foo'
+        );
+      });
+
+      expect(await screen.findByText(/No issues match your search/i)).toBeInTheDocument();
     });
   });
 
   describe('Error Robot', function () {
-    const createWrapper = async moreProps => {
+    beforeEach(() => {
+      PageFiltersStore.onInitializeUrlState(
+        {
+          projects: [],
+          environments: [],
+          datetime: {period: '14d', start: null, end: null, utc: null},
+        },
+        new Set()
+      );
+    });
+
+    const createWrapper = async (moreProps: any) => {
       MockApiClient.addMockResponse({
         url: '/organizations/org-slug/issues/',
         body: [],
@@ -1084,49 +1115,34 @@ describe('IssueList', function () {
         },
       });
 
-      const defaultProps = {
-        ...props,
-        useOrgSavedSearches: true,
-        selection: {
-          projects: [],
-          environments: [],
-          datetime: {period: '14d'},
-        },
-        ...merge({}, routerProps, {
-          params: {},
-          location: {query: {query: 'is:unresolved'}, search: 'query=is:unresolved'},
-        }),
-        organization: Organization({
-          projects: [],
-        }),
-        ...moreProps,
-      };
-      render(<IssueListOverview {...defaultProps} />, {
-        context: routerContext,
+      render(<IssueListOverview {...routerProps} {...moreProps} />, {
+        organization,
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
-      await waitForElementToBeRemoved(() => screen.getByTestId('loading-indicator'));
+      await waitForElementToBeRemoved(() => screen.queryByTestId('loading-indicator'));
     };
 
     it('displays when no projects selected and all projects user is member of, async does not have first event', async function () {
-      const projects = [
-        TestStubs.Project({
+      const projectsBody = [
+        ProjectFixture({
           id: '1',
           slug: 'foo',
           isMember: true,
-          firstEvent: false,
+          firstEvent: null,
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '2',
           slug: 'bar',
           isMember: true,
-          firstEvent: false,
+          firstEvent: null,
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '3',
           slug: 'baz',
           isMember: true,
-          firstEvent: false,
+          firstEvent: null,
         }),
       ];
       MockApiClient.addMockResponse({
@@ -1138,7 +1154,7 @@ describe('IssueList', function () {
       });
       MockApiClient.addMockResponse({
         url: '/organizations/org-slug/projects/',
-        body: projects,
+        body: projectsBody,
       });
       MockApiClient.addMockResponse({
         url: '/projects/org-slug/foo/issues/',
@@ -1146,33 +1162,31 @@ describe('IssueList', function () {
       });
 
       await createWrapper({
-        organization: Organization({
-          projects,
-        }),
+        organization: OrganizationFixture(),
       });
 
-      expect(screen.getByTestId('awaiting-events')).toBeInTheDocument();
+      expect(await screen.findByTestId('awaiting-events')).toBeInTheDocument();
     });
 
     it('does not display when no projects selected and any projects have a first event', async function () {
-      const projects = [
-        TestStubs.Project({
+      const projectsBody = [
+        ProjectFixture({
           id: '1',
           slug: 'foo',
           isMember: true,
-          firstEvent: false,
+          firstEvent: null,
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '2',
           slug: 'bar',
           isMember: true,
-          firstEvent: true,
+          firstEvent: new Date().toISOString(),
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '3',
           slug: 'baz',
           isMember: true,
-          firstEvent: false,
+          firstEvent: null,
         }),
       ];
       MockApiClient.addMockResponse({
@@ -1184,36 +1198,34 @@ describe('IssueList', function () {
       });
       MockApiClient.addMockResponse({
         url: '/organizations/org-slug/projects/',
-        body: projects,
+        body: projectsBody,
       });
       await createWrapper({
-        organization: Organization({
-          projects,
-        }),
+        organization: OrganizationFixture(),
       });
 
       expect(screen.queryByTestId('awaiting-events')).not.toBeInTheDocument();
     });
 
     it('displays when all selected projects do not have first event', async function () {
-      const projects = [
-        TestStubs.Project({
+      const projectsBody = [
+        ProjectFixture({
           id: '1',
           slug: 'foo',
           isMember: true,
-          firstEvent: false,
+          firstEvent: null,
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '2',
           slug: 'bar',
           isMember: true,
-          firstEvent: false,
+          firstEvent: null,
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '3',
           slug: 'baz',
           isMember: true,
-          firstEvent: false,
+          firstEvent: null,
         }),
       ];
       MockApiClient.addMockResponse({
@@ -1225,7 +1237,7 @@ describe('IssueList', function () {
       });
       MockApiClient.addMockResponse({
         url: '/organizations/org-slug/projects/',
-        body: projects,
+        body: projectsBody,
       });
       MockApiClient.addMockResponse({
         url: '/projects/org-slug/foo/issues/',
@@ -1238,33 +1250,31 @@ describe('IssueList', function () {
           environments: [],
           datetime: {period: '14d'},
         },
-        organization: Organization({
-          projects,
-        }),
+        organization: OrganizationFixture(),
       });
 
       expect(await screen.findByTestId('awaiting-events')).toBeInTheDocument();
     });
 
     it('does not display when any selected projects have first event', async function () {
-      const projects = [
-        TestStubs.Project({
+      const projectsBody = [
+        ProjectFixture({
           id: '1',
           slug: 'foo',
           isMember: true,
-          firstEvent: false,
+          firstEvent: null,
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '2',
           slug: 'bar',
           isMember: true,
-          firstEvent: true,
+          firstEvent: new Date().toISOString(),
         }),
-        TestStubs.Project({
+        ProjectFixture({
           id: '3',
           slug: 'baz',
           isMember: true,
-          firstEvent: true,
+          firstEvent: new Date().toISOString(),
         }),
       ];
       MockApiClient.addMockResponse({
@@ -1276,7 +1286,7 @@ describe('IssueList', function () {
       });
       MockApiClient.addMockResponse({
         url: '/organizations/org-slug/projects/',
-        body: projects,
+        body: projectsBody,
       });
 
       await createWrapper({
@@ -1285,16 +1295,14 @@ describe('IssueList', function () {
           environments: [],
           datetime: {period: '14d'},
         },
-        organization: Organization({
-          projects,
-        }),
+        organization: OrganizationFixture(),
       });
 
       expect(screen.queryByTestId('awaiting-events')).not.toBeInTheDocument();
     });
   });
 
-  it('displays a count that represents the current page', function () {
+  it('displays a count that represents the current page', async function () {
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/issues/',
       body: [...new Array(25)].map((_, i) => ({id: i})),
@@ -1317,22 +1325,23 @@ describe('IssueList', function () {
         href: '',
       },
     });
-    props = {
-      ...props,
-      location: {
-        query: {
-          cursor: 'some cursor',
-          page: 1,
-        },
-      },
-    };
 
-    const {routerContext: newRouterContext} = initializeOrg();
-    const {rerender} = render(<IssueListOverview {...props} />, {
-      context: newRouterContext,
+    const {rerender} = render(<IssueListOverview {...routerProps} />, {
+      organization,
+      disableRouterMocks: true,
+      initialRouterConfig: merge({}, initialRouterConfig, {
+        location: {
+          query: {
+            cursor: 'some cursor',
+            page: 1,
+          },
+        },
+      }),
     });
 
-    expect(screen.getByText(textWithMarkupMatcher('1-25 of 500'))).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(textWithMarkupMatcher('1-25 of 500'))).toBeInTheDocument();
+    });
 
     parseLinkHeaderSpy.mockReturnValue({
       next: {
@@ -1346,47 +1355,54 @@ describe('IssueList', function () {
         href: '',
       },
     });
-    rerender(<IssueListOverview {...props} />);
+    rerender(<IssueListOverview {...routerProps} />);
 
-    expect(screen.getByText(textWithMarkupMatcher('26-50 of 500'))).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(textWithMarkupMatcher('26-50 of 500'))).toBeInTheDocument();
+    });
   });
 
-  describe('project low priority queue alert', function () {
-    const {routerContext: newRouterContext} = initializeOrg();
-
+  describe('project low trends queue alert', function () {
     beforeEach(function () {
       act(() => ProjectsStore.reset());
     });
 
-    it('does not render event processing alert', function () {
+    it('does not render event processing alert', async function () {
       act(() => ProjectsStore.loadInitialData([project]));
 
-      render(<IssueListOverview {...props} />, {
-        context: newRouterContext,
+      render(<IssueListOverview {...routerProps} />, {
+        disableRouterMocks: true,
+        initialRouterConfig,
       });
 
-      expect(screen.queryByText(/event processing/i)).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText(/event processing/i)).not.toBeInTheDocument();
+      });
     });
 
     describe('renders alert', function () {
-      it('for one project', function () {
+      it('for one project', async function () {
         act(() =>
           ProjectsStore.loadInitialData([
             {...project, eventProcessing: {symbolicationDegraded: true}},
           ])
         );
 
-        render(<IssueListOverview {...props} />, {
-          context: routerContext,
+        render(<IssueListOverview {...routerProps} />, {
+          organization,
+          disableRouterMocks: true,
+          initialRouterConfig,
         });
 
-        expect(
-          screen.getByText(/Event Processing for this project is currently degraded/i)
-        ).toBeInTheDocument();
+        await waitFor(() => {
+          expect(
+            screen.getByText(/Event Processing for this project is currently degraded/i)
+          ).toBeInTheDocument();
+        });
       });
 
-      it('for multiple projects', function () {
-        const projectBar = TestStubs.Project({
+      it('for multiple projects', async function () {
+        const projectBar = ProjectFixture({
           id: '3560',
           name: 'Bar Project',
           slug: 'project-slug-bar',
@@ -1407,26 +1423,30 @@ describe('IssueList', function () {
           ])
         );
 
-        render(
-          <IssueListOverview
-            {...props}
-            selection={{
-              ...props.selection,
-              projects: [Number(project.id), Number(projectBar.id)],
-            }}
-          />,
+        PageFiltersStore.onInitializeUrlState(
           {
-            context: newRouterContext,
-          }
+            projects: [Number(project.id), Number(projectBar.id)],
+            environments: [],
+            datetime: {period: '14d', start: null, end: null, utc: null},
+          },
+          new Set()
         );
 
-        expect(
-          screen.getByText(
-            textWithMarkupMatcher(
-              'Event Processing for the project-slug, project-slug-bar projects is currently degraded.'
+        render(<IssueListOverview {...routerProps} />, {
+          organization,
+          disableRouterMocks: true,
+          initialRouterConfig,
+        });
+
+        await waitFor(() => {
+          expect(
+            screen.getByText(
+              textWithMarkupMatcher(
+                'Event Processing for the project-slug, project-slug-bar projects is currently degraded.'
+              )
             )
-          )
-        ).toBeInTheDocument();
+          ).toBeInTheDocument();
+        });
       });
     });
   });

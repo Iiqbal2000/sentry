@@ -1,23 +1,23 @@
 import {Fragment, useCallback, useContext, useEffect} from 'react';
 import styled from '@emotion/styled';
-import {motion, MotionProps} from 'framer-motion';
+import type {MotionProps} from 'framer-motion';
+import {motion} from 'framer-motion';
 
 import OnboardingInstall from 'sentry-images/spot/onboarding-install.svg';
-import OnboardingSetup from 'sentry-images/spot/onboarding-setup.svg';
 
-import {openInviteMembersModal} from 'sentry/actionCreators/modal';
 import {Button} from 'sentry/components/button';
 import Link from 'sentry/components/links/link';
 import {OnboardingContext} from 'sentry/components/onboarding/onboardingContext';
-import {t, tct} from 'sentry/locale';
+import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import testableTransition from 'sentry/utils/testableTransition';
 import useOrganization from 'sentry/utils/useOrganization';
 import FallingError from 'sentry/views/onboarding/components/fallingError';
 import WelcomeBackground from 'sentry/views/onboarding/components/welcomeBackground';
+import {useOnboardingSidebar} from 'sentry/views/onboarding/useOnboardingSidebar';
 
-import {StepProps} from './types';
+import type {StepProps} from './types';
 
 const fadeAway: MotionProps = {
   variants: {
@@ -51,6 +51,7 @@ function InnerAction({title, subText, cta, src}: TextWrapperProps) {
 function TargetedOnboardingWelcome(props: StepProps) {
   const organization = useOrganization();
   const onboardingContext = useContext(OnboardingContext);
+  const {activateSidebar} = useOnboardingSidebar();
 
   const source = 'targeted_onboarding';
 
@@ -80,7 +81,9 @@ function TargetedOnboardingWelcome(props: StepProps) {
       organization,
       source,
     });
-  }, [organization, source]);
+
+    activateSidebar();
+  }, [organization, source, activateSidebar]);
 
   return (
     <FallingError>
@@ -111,26 +114,6 @@ function TargetedOnboardingWelcome(props: StepProps) {
                     <PositionedFallingError>{fallingError}</PositionedFallingError>
                   )}
                 </Fragment>
-              }
-            />
-          </ActionItem>
-          <ActionItem {...fadeAway}>
-            <InnerAction
-              title={t('Set up my team')}
-              subText={tct(
-                'Invite [friends] coworkers. You shouldn’t have to fix what you didn’t break',
-                {friends: <Strike>{t('friends')}</Strike>}
-              )}
-              src={OnboardingSetup}
-              cta={
-                <ButtonWithFill
-                  onClick={() => {
-                    openInviteMembersModal({source});
-                  }}
-                  priority="primary"
-                >
-                  {t('Invite Team')}
-                </ButtonWithFill>
               }
             />
           </ActionItem>
@@ -206,18 +189,14 @@ const TextWrapper = styled('div')`
   }
 `;
 
-const Strike = styled('span')`
-  text-decoration: line-through;
-`;
-
 const ActionTitle = styled('h5')`
-  font-weight: 900;
+  font-weight: ${p => p.theme.fontWeightBold};
   margin: 0 0 ${space(0.5)};
   color: ${p => p.theme.gray400};
 `;
 
 const SubText = styled('span')`
-  font-weight: 400;
+  font-weight: ${p => p.theme.fontWeightNormal};
   color: ${p => p.theme.gray400};
 `;
 

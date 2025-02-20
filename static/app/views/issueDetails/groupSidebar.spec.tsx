@@ -1,14 +1,25 @@
-import {Tags} from 'sentry-fixture/tags';
+import {EventFixture} from 'sentry-fixture/event';
+import {GroupFixture} from 'sentry-fixture/group';
+import {TagsFixture} from 'sentry-fixture/tags';
+import {TeamFixture} from 'sentry-fixture/team';
+import {UserFixture} from 'sentry-fixture/user';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
-import {render, screen, waitFor, within} from 'sentry-test/reactTestingLibrary';
+import {
+  render,
+  screen,
+  userEvent,
+  waitFor,
+  within,
+} from 'sentry-test/reactTestingLibrary';
 
 import MemberListStore from 'sentry/stores/memberListStore';
+import type {TeamParticipant, UserParticipant} from 'sentry/types/group';
 
 import GroupSidebar from './groupSidebar';
 
 describe('GroupSidebar', function () {
-  let group = TestStubs.Group({tags: Tags()});
+  let group = GroupFixture();
   const {organization, project} = initializeOrg();
   const environment = 'production';
   let tagsMock: jest.Mock;
@@ -53,7 +64,7 @@ describe('GroupSidebar', function () {
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: `/prompts-activity/`,
+      url: `/organizations/${organization.slug}/prompts-activity/`,
       body: {},
     });
     MockApiClient.addMockResponse({
@@ -63,7 +74,7 @@ describe('GroupSidebar', function () {
     });
     tagsMock = MockApiClient.addMockResponse({
       url: `/organizations/${organization.slug}/issues/1/tags/`,
-      body: Tags(),
+      body: TagsFixture(),
     });
     MockApiClient.addMockResponse({
       url: `/organizations/${organization.slug}/users/`,
@@ -72,6 +83,14 @@ describe('GroupSidebar', function () {
     MockApiClient.addMockResponse({
       url: `/organizations/${organization.slug}/issues/${group.id}/first-last-release/`,
       method: 'GET',
+    });
+    MockApiClient.addMockResponse({
+      url: `/issues/${group.id}/autofix/setup/`,
+      body: {
+        genAIConsent: {ok: true},
+        integration: {ok: true},
+        githubWriteIntegration: {ok: true},
+      },
     });
   });
 
@@ -86,7 +105,7 @@ describe('GroupSidebar', function () {
           group={group}
           project={project}
           organization={organization}
-          event={TestStubs.Event()}
+          event={EventFixture()}
           environments={[environment]}
         />
       );
@@ -103,7 +122,7 @@ describe('GroupSidebar', function () {
           group={group}
           project={project}
           organization={organization}
-          event={TestStubs.Event()}
+          event={EventFixture()}
           environments={[environment]}
         />
       );
@@ -123,7 +142,7 @@ describe('GroupSidebar', function () {
           group={group}
           project={project}
           organization={organization}
-          event={TestStubs.Event()}
+          event={EventFixture()}
           environments={[environment]}
         />
       );
@@ -134,7 +153,7 @@ describe('GroupSidebar', function () {
           group={group}
           project={project}
           organization={organization}
-          event={TestStubs.Event()}
+          event={EventFixture()}
           environments={[stagingEnv]}
         />
       );
@@ -153,7 +172,7 @@ describe('GroupSidebar', function () {
 
   describe('renders without tags', function () {
     beforeEach(function () {
-      group = TestStubs.Group();
+      group = GroupFixture();
 
       MockApiClient.addMockResponse({
         url: '/organization/org-slug/issues/1/',
@@ -171,7 +190,7 @@ describe('GroupSidebar', function () {
           group={group}
           project={project}
           organization={organization}
-          event={TestStubs.Event()}
+          event={EventFixture()}
           environments={[environment]}
         />
       );
@@ -181,40 +200,61 @@ describe('GroupSidebar', function () {
     });
   });
 
-  it('renders participants and viewers', async () => {
-    const users = [
-      TestStubs.User({
-        id: '2',
-        name: 'John Smith',
-        email: 'johnsmith@example.com',
-      }),
-      TestStubs.User({
-        id: '3',
-        name: 'Sohn Jmith',
-        email: 'sohnjmith@example.com',
-      }),
+  it('expands participants and viewers', async () => {
+    const org = {
+      ...organization,
+    };
+    const teams: TeamParticipant[] = [{...TeamFixture(), type: 'team'}];
+    const users: UserParticipant[] = [
+      {
+        ...UserFixture({
+          id: '2',
+          name: 'John Smith',
+          email: 'johnsmith@example.com',
+        }),
+        type: 'user',
+      },
+      {
+        ...UserFixture({
+          id: '3',
+          name: 'Sohn Jmith',
+          email: 'sohnjmith@example.com',
+        }),
+        type: 'user',
+      },
     ];
     render(
       <GroupSidebar
         group={{
           ...group,
-          participants: users,
+          participants: [...teams, ...users],
           seenBy: users,
         }}
         project={project}
-        organization={organization}
-        event={TestStubs.Event()}
+        organization={org}
+        event={EventFixture()}
         environments={[]}
-      />
+      />,
+      {
+        organization: org,
+      }
     );
 
-    expect(await screen.findByText('Participants (2)')).toBeInTheDocument();
-    expect(screen.getByText('Viewers (2)')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', {name: 'Participants (1 Team, 2 Individuals)'})
+    ).toBeInTheDocument();
+    expect(screen.queryByText('#team-slug')).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getAllByRole('button', {name: 'Expand Participants'})[0]!
+    );
+
+    await waitFor(() => expect(screen.getByText('#team-slug')).toBeVisible());
   });
 
   describe('displays mobile tags when issue platform is mobile', function () {
     beforeEach(function () {
-      group = TestStubs.Group();
+      group = GroupFixture();
 
       MockApiClient.addMockResponse({
         url: '/issues/1/',
@@ -227,11 +267,8 @@ describe('GroupSidebar', function () {
         <GroupSidebar
           group={group}
           project={{...project, platform: 'react-native'}}
-          organization={{
-            ...organization,
-            features: [...organization.features, 'issue-details-tag-improvements'],
-          }}
-          event={TestStubs.Event()}
+          organization={organization}
+          event={EventFixture()}
           environments={[environment]}
         />
       );
@@ -246,11 +283,8 @@ describe('GroupSidebar', function () {
         <GroupSidebar
           group={group}
           project={project}
-          organization={{
-            ...organization,
-            features: [...organization.features, 'issue-details-tag-improvements'],
-          }}
-          event={TestStubs.Event()}
+          organization={organization}
+          event={EventFixture()}
           environments={[environment]}
         />
       );

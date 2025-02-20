@@ -17,12 +17,10 @@ import {OnboardingContext} from 'sentry/components/onboarding/onboardingContext'
 import {t} from 'sentry/locale';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import {space} from 'sentry/styles/space';
-import {
-  OnboardingProjectStatus,
-  OnboardingSelectedSDK,
-  Organization,
-  Project,
-} from 'sentry/types';
+import type {OnboardingSelectedSDK} from 'sentry/types/onboarding';
+import {OnboardingProjectStatus} from 'sentry/types/onboarding';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import testableTransition from 'sentry/utils/testableTransition';
 import useApi from 'sentry/utils/useApi';
@@ -46,10 +44,6 @@ export function CreateProjectsFooter({
   genSkipOnboardingLink,
   clearPlatform,
 }: Props) {
-  const frameworkSelectionEnabled = !!organization?.features.includes(
-    'onboarding-sdk-selection'
-  );
-
   const api = useApi();
   const {teams} = useTeams();
   const onboardingContext = useContext(OnboardingContext);
@@ -93,7 +87,7 @@ export function CreateProjectsFooter({
         const response = (await createProject({
           api,
           orgSlug: organization.slug,
-          team: teams[0].slug,
+          team: teams[0]!.slug,
           platform: createProjectForPlatform.key,
           name: createProjectForPlatform.key,
           options: {
@@ -107,7 +101,8 @@ export function CreateProjectsFooter({
         // Note: in the onboarding flow the projects are created based on the platform slug
         const newProjects = Object.keys(onboardingContext.data.projects).reduce(
           (acc, key) => {
-            if (onboardingContext.data.projects[key].slug !== response.slug) {
+            if (onboardingContext.data.projects[key]!.slug !== response.slug) {
+              // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
               acc[key] = onboardingContext.data.projects[key];
             }
             return acc;
@@ -132,7 +127,7 @@ export function CreateProjectsFooter({
         });
 
         clearIndicators();
-        setTimeout(() => onComplete(createProjectForPlatform!));
+        setTimeout(() => onComplete(createProjectForPlatform));
       } catch (err) {
         addErrorMessage(t('Failed to load SDK configuration'));
         Sentry.captureException(err);
@@ -192,7 +187,7 @@ export function CreateProjectsFooter({
   return (
     <GenericFooter>
       {genSkipOnboardingLink()}
-      <SelectionWrapper>
+      <SelectionWrapper transition={testableTransition({duration: 1.8})}>
         {selectedPlatform ? (
           <Fragment>
             <div>
@@ -210,12 +205,10 @@ export function CreateProjectsFooter({
           </Fragment>
         ) : null}
       </SelectionWrapper>
-      <ButtonWrapper>
+      <ButtonWrapper transition={testableTransition({duration: 1.3})}>
         <Button
           priority="primary"
-          onClick={() =>
-            frameworkSelectionEnabled ? handleProjectCreation() : createPlatformProject()
-          }
+          onClick={handleProjectCreation}
           disabled={!selectedPlatform}
           data-test-id="platform-select-next"
         >
@@ -237,12 +230,6 @@ const SelectionWrapper = styled(motion.div)`
   }
 `;
 
-SelectionWrapper.defaultProps = {
-  transition: testableTransition({
-    duration: 1.8,
-  }),
-};
-
 const ButtonWrapper = styled(motion.div)`
   display: flex;
   height: 100%;
@@ -250,12 +237,6 @@ const ButtonWrapper = styled(motion.div)`
   margin-right: ${space(4)};
   margin-left: ${space(4)};
 `;
-
-ButtonWrapper.defaultProps = {
-  transition: testableTransition({
-    duration: 1.3,
-  }),
-};
 
 const SelectedPlatformIcon = styled(PlatformIcon)`
   margin-right: ${space(1)};

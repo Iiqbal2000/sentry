@@ -1,70 +1,55 @@
-import {Theme} from '@emotion/react';
-import cronstrue from 'cronstrue';
-import {Location} from 'history';
-
+import type {TickStyle} from 'sentry/components/checkInTimeline/types';
 import {t, tn} from 'sentry/locale';
-import {Organization} from 'sentry/types';
-import {shouldUse24Hours} from 'sentry/utils/dates';
-import {CheckInStatus, MonitorConfig, ScheduleType} from 'sentry/views/monitors/types';
+import type {SelectValue} from 'sentry/types/core';
+import type {Organization} from 'sentry/types/organization';
 
-export function makeMonitorListQueryKey(organization: Organization, location: Location) {
-  const {query, project, environment, cursor} = location.query;
+import {CheckInStatus} from './types';
+
+export function makeMonitorListQueryKey(
+  organization: Organization,
+  params: Record<string, any>
+) {
+  const {query, project, environment, owner, cursor, sort, asc} = params;
 
   return [
     `/organizations/${organization.slug}/monitors/`,
-    {query: {cursor, query, project, environment, includeNew: true, per_page: 20}},
+    {
+      query: {
+        cursor,
+        query,
+        project,
+        environment,
+        owner,
+        includeNew: true,
+        per_page: 20,
+        sort,
+        asc,
+      },
+    },
   ] as const;
 }
 
-export function crontabAsText(crontabInput: string | null): string | null {
-  if (!crontabInput) {
-    return null;
-  }
-  let parsedSchedule: string;
-  try {
-    parsedSchedule = cronstrue.toString(crontabInput, {
-      verbose: false,
-      use24HourTimeFormat: shouldUse24Hours(),
-    });
-  } catch (_e) {
-    return null;
-  }
-
-  return parsedSchedule;
+export function makeMonitorDetailsQueryKey(
+  organization: Organization,
+  projectId: string,
+  monitorSlug: string,
+  query?: Record<string, any>
+) {
+  return [
+    `/projects/${organization.slug}/${projectId}/monitors/${monitorSlug}/`,
+    {query},
+  ] as const;
 }
 
-export function scheduleAsText(config: MonitorConfig) {
-  // Crontab format uses cronstrue
-  if (config.schedule_type === ScheduleType.CRONTAB) {
-    const parsedSchedule = crontabAsText(config.schedule);
-    return parsedSchedule ?? t('Unknown schedule');
-  }
-
-  // Interval format is simpler
-  const [value, timeUnit] = config.schedule;
-
-  if (timeUnit === 'minute') {
-    return tn('Every minute', 'Every %s minutes', value);
-  }
-
-  if (timeUnit === 'hour') {
-    return tn('Every hour', 'Every %s hours', value);
-  }
-
-  if (timeUnit === 'day') {
-    return tn('Every day', 'Every %s days', value);
-  }
-
-  if (timeUnit === 'week') {
-    return tn('Every week', 'Every %s weeks', value);
-  }
-
-  if (timeUnit === 'month') {
-    return tn('Every month', 'Every %s months', value);
-  }
-
-  return t('Unknown schedule');
-}
+// Orders the status in terms of ascending precedence for showing to the user
+export const checkInStatusPrecedent: CheckInStatus[] = [
+  CheckInStatus.UNKNOWN,
+  CheckInStatus.ERROR,
+  CheckInStatus.TIMEOUT,
+  CheckInStatus.MISSED,
+  CheckInStatus.OK,
+  CheckInStatus.IN_PROGRESS,
+];
 
 export const statusToText: Record<CheckInStatus, string> = {
   [CheckInStatus.OK]: t('Okay'),
@@ -72,15 +57,43 @@ export const statusToText: Record<CheckInStatus, string> = {
   [CheckInStatus.IN_PROGRESS]: t('In Progress'),
   [CheckInStatus.MISSED]: t('Missed'),
   [CheckInStatus.TIMEOUT]: t('Timed Out'),
+  [CheckInStatus.UNKNOWN]: t('Unknown'),
 };
 
-export function getColorsFromStatus(status: CheckInStatus, theme: Theme) {
-  const statusToColor: Record<CheckInStatus, {labelColor: string; tickColor: string}> = {
-    [CheckInStatus.ERROR]: {tickColor: theme.red300, labelColor: theme.red400},
-    [CheckInStatus.TIMEOUT]: {tickColor: theme.red300, labelColor: theme.red400},
-    [CheckInStatus.OK]: {tickColor: theme.green300, labelColor: theme.green400},
-    [CheckInStatus.MISSED]: {tickColor: theme.yellow300, labelColor: theme.yellow400},
-    [CheckInStatus.IN_PROGRESS]: {tickColor: theme.disabled, labelColor: theme.disabled},
-  };
-  return statusToColor[status];
-}
+export const tickStyle: Record<CheckInStatus, TickStyle> = {
+  [CheckInStatus.ERROR]: {
+    labelColor: 'red400',
+    tickColor: 'red300',
+  },
+  [CheckInStatus.TIMEOUT]: {
+    labelColor: 'red400',
+    tickColor: 'red300',
+    hatchTick: 'red200',
+  },
+  [CheckInStatus.OK]: {
+    labelColor: 'green400',
+    tickColor: 'green300',
+  },
+  [CheckInStatus.MISSED]: {
+    labelColor: 'yellow400',
+    tickColor: 'yellow300',
+  },
+  [CheckInStatus.IN_PROGRESS]: {
+    labelColor: 'disabled',
+    tickColor: 'disabled',
+  },
+  [CheckInStatus.UNKNOWN]: {
+    labelColor: 'gray400',
+    tickColor: 'gray300',
+    hatchTick: 'gray200',
+  },
+};
+
+export const getScheduleIntervals = (n: number): Array<SelectValue<string>> => [
+  {value: 'minute', label: tn('minute', 'minutes', n)},
+  {value: 'hour', label: tn('hour', 'hours', n)},
+  {value: 'day', label: tn('day', 'days', n)},
+  {value: 'week', label: tn('week', 'weeks', n)},
+  {value: 'month', label: tn('month', 'months', n)},
+  {value: 'year', label: tn('year', 'years', n)},
+];

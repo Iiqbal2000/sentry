@@ -1,5 +1,5 @@
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 import {canUseMetricsData} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
 
 const AGGREGATE_ALIAS_VALUE_EXTRACT_PATTERN = /(\d+)$/;
@@ -9,10 +9,10 @@ const FUNCTION_FIELD_VALUE_EXTRACT_PATTERN = /(\d+)\)$/;
  * Convert a discover response into a barchart compatible series
  */
 export function transformData(
-  data: Record<string, number>[],
-  useAggregateAlias: boolean = true
+  data: Array<Record<string, number>>,
+  useAggregateAlias = true
 ) {
-  const extractedData = Object.keys(data[0])
+  const extractedData = Object.keys(data[0]!)
     .map((key: string) => {
       const nameMatch = (
         useAggregateAlias
@@ -26,15 +26,15 @@ export function transformData(
       if (nameValue > 100) {
         nameValue /= 10;
       }
-      return [nameValue, data[0][key]];
+      return [nameValue, data[0]![key]!];
     })
-    .filter(i => i[0] > 0);
+    .filter(i => i[0]! > 0);
 
   extractedData.sort((a, b) => {
-    if (a[0] > b[0]) {
+    if (a[0]! > b[0]!) {
       return 1;
     }
-    if (a[0] < b[0]) {
+    if (a[0]! < b[0]!) {
       return -1;
     }
     return 0;
@@ -43,7 +43,7 @@ export function transformData(
   return [
     {
       seriesName: t('Duration'),
-      data: extractedData.map(i => ({value: i[1], name: `${i[0].toLocaleString()}%`})),
+      data: extractedData.map(i => ({value: i[1]!, name: `${i[0]!.toLocaleString()}%`})),
     },
   ];
 }

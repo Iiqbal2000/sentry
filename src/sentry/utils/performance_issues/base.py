@@ -6,24 +6,10 @@ import re
 from abc import ABC, abstractmethod
 from datetime import timedelta
 from enum import Enum
-from typing import Any, ClassVar, Dict, List, Optional, Union, cast
+from typing import Any, ClassVar
 from urllib.parse import parse_qs, urlparse
 
 from sentry import options
-from sentry.issues.grouptype import (
-    PerformanceConsecutiveDBQueriesGroupType,
-    PerformanceConsecutiveHTTPQueriesGroupType,
-    PerformanceDBMainThreadGroupType,
-    PerformanceFileIOMainThreadGroupType,
-    PerformanceHTTPOverheadGroupType,
-    PerformanceLargeHTTPPayloadGroupType,
-    PerformanceMNPlusOneDBQueriesGroupType,
-    PerformanceNPlusOneAPICallsGroupType,
-    PerformanceNPlusOneGroupType,
-    PerformanceRenderBlockingAssetSpanGroupType,
-    PerformanceSlowDBQueryGroupType,
-    PerformanceUncompressedAssetsGroupType,
-)
 from sentry.models.organization import Organization
 from sentry.models.project import Project
 
@@ -44,23 +30,6 @@ class DetectorType(Enum):
     UNCOMPRESSED_ASSETS = "uncompressed_assets"
     DB_MAIN_THREAD = "db_main_thread"
     HTTP_OVERHEAD = "http_overhead"
-
-
-DETECTOR_TYPE_TO_GROUP_TYPE = {
-    DetectorType.SLOW_DB_QUERY: PerformanceSlowDBQueryGroupType,
-    DetectorType.RENDER_BLOCKING_ASSET_SPAN: PerformanceRenderBlockingAssetSpanGroupType,
-    DetectorType.N_PLUS_ONE_DB_QUERIES: PerformanceNPlusOneGroupType,
-    DetectorType.N_PLUS_ONE_DB_QUERIES_EXTENDED: PerformanceNPlusOneGroupType,
-    DetectorType.N_PLUS_ONE_API_CALLS: PerformanceNPlusOneAPICallsGroupType,
-    DetectorType.CONSECUTIVE_DB_OP: PerformanceConsecutiveDBQueriesGroupType,
-    DetectorType.FILE_IO_MAIN_THREAD: PerformanceFileIOMainThreadGroupType,
-    DetectorType.M_N_PLUS_ONE_DB: PerformanceMNPlusOneDBQueriesGroupType,
-    DetectorType.UNCOMPRESSED_ASSETS: PerformanceUncompressedAssetsGroupType,
-    DetectorType.CONSECUTIVE_HTTP_OP: PerformanceConsecutiveHTTPQueriesGroupType,
-    DetectorType.DB_MAIN_THREAD: PerformanceDBMainThreadGroupType,
-    DetectorType.LARGE_HTTP_PAYLOAD: PerformanceLargeHTTPPayloadGroupType,
-    DetectorType.HTTP_OVERHEAD: PerformanceHTTPOverheadGroupType,
-}
 
 
 # Detector and the corresponding system option must be added to this list to have issues created.
@@ -89,14 +58,9 @@ class PerformanceDetector(ABC):
     type: ClassVar[DetectorType]
     stored_problems: PerformanceProblemsMap
 
-    def __init__(self, settings: Dict[DetectorType, Any], event: dict[str, Any]) -> None:
+    def __init__(self, settings: dict[DetectorType, Any], event: dict[str, Any]) -> None:
         self.settings = settings[self.settings_key]
         self._event = event
-        self.init()
-
-    @abstractmethod
-    def init(self):
-        raise NotImplementedError
 
     def find_span_prefix(self, settings, span_op: str):
         allowed_span_ops = settings.get("allowed_span_ops", [])
@@ -158,7 +122,11 @@ class PerformanceDetector(ABC):
         return False  # Creation is off by default. Ideally, it should auto-generate the project option name, and check its value
 
     @classmethod
-    def is_event_eligible(cls, event, project: Optional[Project] = None) -> bool:
+    def is_detector_enabled(cls) -> bool:
+        return True
+
+    @classmethod
+    def is_event_eligible(cls, event, project: Project | None = None) -> bool:
         return True
 
 
@@ -223,7 +191,7 @@ def get_url_from_span(span: Span) -> str:
     return ""
 
 
-def fingerprint_spans(spans: List[Span], unique_only: bool = False):
+def fingerprint_spans(spans: list[Span], unique_only: bool = False):
     span_hashes = []
     for span in spans:
         hash = str(span.get("hash", "") or "")
@@ -249,7 +217,7 @@ def fingerprint_span(span: Span):
     return fingerprint
 
 
-def total_span_time(span_list: List[Dict[str, Any]]) -> float:
+def total_span_time(span_list: list[dict[str, Any]]) -> float:
     """Return the total non-overlapping span time in milliseconds for all the spans in the list"""
     # Sort the spans so that when iterating the next span in the list is either within the current, or afterwards
     sorted_span_list = sorted(span_list, key=lambda span: span["start_timestamp"])
@@ -271,8 +239,6 @@ def total_span_time(span_list: List[Dict[str, Any]]) -> float:
     total_duration += current_max - current_min
     return total_duration * 1000
 
-
-PARAMETERIZED_SQL_QUERY_REGEX = re.compile(r"\?|\$1|%s")
 
 PARAMETERIZED_URL_REGEX = re.compile(
     r"""(?x)
@@ -377,19 +343,19 @@ def fingerprint_http_spans(spans: list[Span]) -> str:
 
 
 def get_span_evidence_value(
-    span: Union[Dict[str, Union[str, float]], None] = None, include_op: bool = True
+    span: dict[str, str | float] | None = None, include_op: bool = True
 ) -> str:
     """Get the 'span evidence' data for a given span. This is displayed in issue alert emails."""
     value = "no value"
     if not span:
         return value
-    if not span.get("op") and span.get("description"):
-        value = cast(str, span["description"])
-    if span.get("op") and not span.get("description"):
-        value = cast(str, span["op"])
-    if span.get("op") and span.get("description"):
-        op = cast(str, span["op"])
-        desc = cast(str, span["description"])
+    op = span.get("op")
+    desc = span.get("description")
+    if not op and desc and isinstance(desc, str):
+        value = desc
+    elif not desc and op and isinstance(op, str):
+        value = op
+    elif op and isinstance(op, str) and desc and isinstance(desc, str):
         value = f"{op} - {desc}"
         if not include_op:
             value = desc

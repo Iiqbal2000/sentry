@@ -1,18 +1,41 @@
-import {render, screen} from 'sentry-test/reactTestingLibrary';
+import {ProjectFixture} from 'sentry-fixture/project';
 
-import {StepTitle} from 'sentry/components/onboarding/gettingStartedDoc/step';
+import {renderWithOnboardingLayout} from 'sentry-test/onboarding/renderWithOnboardingLayout';
+import {screen} from 'sentry-test/reactTestingLibrary';
+import {textWithMarkupMatcher} from 'sentry-test/utils';
 
-import {GettingStartedWithUnity, steps} from './unity';
+import docs from './unity';
 
-describe('GettingStartedWithUnity', function () {
-  it('renders doc correctly', function () {
-    render(<GettingStartedWithUnity dsn="test-dsn" projectSlug="test-project" />);
+function renderMockRequests() {
+  MockApiClient.addMockResponse({
+    url: '/projects/org-slug/project-slug/',
+    body: [ProjectFixture()],
+  });
+}
 
-    // Steps
-    for (const step of steps()) {
-      expect(
-        screen.getByRole('heading', {name: step.title ?? StepTitle[step.type]})
-      ).toBeInTheDocument();
-    }
+describe('unity onboarding docs', function () {
+  it('renders docs correctly', async function () {
+    renderMockRequests();
+
+    renderWithOnboardingLayout(docs, {
+      releaseRegistry: {
+        'sentry.dotnet.unity': {
+          version: '1.99.9',
+        },
+      },
+    });
+
+    // Renders main headings
+    expect(screen.getByRole('heading', {name: 'Install'})).toBeInTheDocument();
+    expect(screen.getByRole('heading', {name: 'Configure SDK'})).toBeInTheDocument();
+    expect(screen.getByRole('heading', {name: 'Verify'})).toBeInTheDocument();
+    expect(screen.getByRole('heading', {name: 'Troubleshooting'})).toBeInTheDocument();
+
+    // Renders SDK version from registry
+    expect(
+      await screen.findByText(
+        textWithMarkupMatcher(/https:\/\/github.com\/getsentry\/unity\.git#1\.99\.9/)
+      )
+    ).toBeInTheDocument();
   });
 });

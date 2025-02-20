@@ -1,7 +1,7 @@
 import os
 from datetime import timedelta
 from io import BytesIO
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from django.core.files.base import ContentFile
@@ -12,10 +12,8 @@ from sentry.models.files.file import File
 from sentry.models.files.fileblob import FileBlob
 from sentry.models.files.fileblobindex import FileBlobIndex
 from sentry.testutils.cases import TestCase
-from sentry.testutils.silo import region_silo_test
 
 
-@region_silo_test(stable=True)
 class FileBlobTest(TestCase):
     def test_from_file(self):
         fileobj = ContentFile(b"foo bar")
@@ -44,23 +42,37 @@ class FileBlobTest(TestCase):
         path2 = FileBlob.generate_unique_path()
         assert path != path2
 
-    @patch.object(FileBlob, "DELETE_FILE_TASK")
-    def test_delete_handles_database_error(self, mock_delete_file_region):
+    @patch.object(FileBlob, "_delete_file_task")
+    def test_delete_handles_database_error(self, mock_task_factory):
         fileobj = ContentFile(b"foo bar")
         baz_file = File.objects.create(name="baz-v1.js", type="default", size=7)
         baz_file.putfile(fileobj)
         blob = baz_file.blobs.all()[0]
 
+        mock_delete_file_region = Mock()
+        mock_task_factory.return_value = mock_delete_file_region
+
         with patch("sentry.models.file.super") as mock_super:
             mock_super.side_effect = DatabaseError("server closed connection")
             with self.tasks(), pytest.raises(DatabaseError):
                 blob.delete()
-        # Even those postgres failed we should stil queue
+        # Even though postgres failed we should still queue
         # a task to delete the filestore object.
         assert mock_delete_file_region.apply_async.call_count == 1
 
         # blob is still around.
         assert FileBlob.objects.get(id=blob.id)
+
+    def test_dedupe_works_with_cache(self):
+        contents = ContentFile(b"foo bar")
+
+        FileBlob.from_file(contents)
+        contents.seek(0)
+
+        file_1 = File.objects.create(name="foo")
+        file_1.putfile(contents)
+
+        assert FileBlob.objects.count() == 1
 
 
 class FileTest(TestCase):

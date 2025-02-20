@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, patch
 
+from django.http import HttpResponse
 from django.test import RequestFactory, override_settings
 
 from sentry.middleware.integrations.classifications import (
@@ -9,7 +10,7 @@ from sentry.middleware.integrations.classifications import (
 from sentry.middleware.integrations.integration_control import IntegrationControlMiddleware
 from sentry.middleware.integrations.parsers.plugin import PluginRequestParser
 from sentry.middleware.integrations.parsers.slack import SlackRequestParser
-from sentry.silo import SiloMode
+from sentry.silo.base import SiloMode
 from sentry.testutils.cases import TestCase
 
 
@@ -85,7 +86,7 @@ class IntegrationClassificationTest(BaseClassificationTestCase):
     )
     def test_invalid_provider(self, mock_identify_provider):
         request = self.factory.post(f"{self.prefix}🔥🔥🔥/webhook/")
-        assert mock_identify_provider(request) is None
+        assert mock_identify_provider(request) == "🔥🔥🔥"
         self.validate_mock_ran_with_noop(request, mock_identify_provider)
 
     @override_settings(SILO_MODE=SiloMode.CONTROL)
@@ -115,7 +116,7 @@ class IntegrationClassificationTest(BaseClassificationTestCase):
     @override_settings(SILO_MODE=SiloMode.CONTROL)
     @patch.object(SlackRequestParser, "get_response")
     def test_returns_parser_get_response(self, mock_parser_get_response):
-        result = {"ok": True}
+        result = HttpResponse(status=204)
         mock_parser_get_response.return_value = result
         response = self.integration_cls.get_response(
             self.factory.post(f"{self.prefix}{SlackRequestParser.provider}/webhook/")

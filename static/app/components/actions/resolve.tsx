@@ -1,27 +1,27 @@
+import {Fragment} from 'react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import {openModal} from 'sentry/actionCreators/modal';
 import {Button, LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
+import {Chevron} from 'sentry/components/chevron';
 import {openConfirmModal} from 'sentry/components/confirm';
 import CustomCommitsResolutionModal from 'sentry/components/customCommitsResolutionModal';
 import CustomResolutionModal from 'sentry/components/customResolutionModal';
-import {DropdownMenu, MenuItemProps} from 'sentry/components/dropdownMenu';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import {Tooltip} from 'sentry/components/tooltip';
-import {IconChevron, IconReleases} from 'sentry/icons';
+import {IconReleases} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {
-  GroupStatus,
-  GroupStatusResolution,
-  GroupSubstatus,
-  Project,
-  ResolvedStatusDetails,
-} from 'sentry/types';
+import type {GroupStatusResolution, ResolvedStatusDetails} from 'sentry/types/group';
+import {GroupStatus, GroupSubstatus} from 'sentry/types/group';
+import type {Project} from 'sentry/types/project';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import {formatVersion, isSemverRelease} from 'sentry/utils/formatters';
 import useOrganization from 'sentry/utils/useOrganization';
+import {formatVersion} from 'sentry/utils/versions/formatVersion';
+import {isSemverRelease} from 'sentry/utils/versions/isSemverRelease';
 
 function SetupReleasesPrompt() {
   return (
@@ -55,6 +55,7 @@ export interface ResolveActionsProps {
   confirmLabel?: string;
   confirmMessage?: React.ReactNode;
   disableDropdown?: boolean;
+  disableResolveInRelease?: boolean;
   disabled?: boolean;
   isAutoResolved?: boolean;
   isResolved?: boolean;
@@ -79,6 +80,7 @@ function ResolveActions({
   shouldConfirm,
   disabled,
   disableDropdown,
+  disableResolveInRelease,
   priority,
   projectFetchError,
   multipleProjectsSelected,
@@ -120,6 +122,23 @@ function ResolveActions({
     trackAnalytics('resolve_issue', {
       organization,
       release: 'current',
+    });
+  }
+
+  function handleUpcomingReleaseResolution() {
+    if (hasRelease) {
+      onUpdate({
+        status: GroupStatus.RESOLVED,
+        statusDetails: {
+          inUpcomingRelease: true,
+        },
+        substatus: null,
+      });
+    }
+
+    trackAnalytics('resolve_issue', {
+      organization,
+      release: 'upcoming',
     });
   }
 
@@ -187,24 +206,46 @@ function ResolveActions({
       });
     };
 
+    const hasUpcomingRelease = organization.features.includes(
+      'resolve-in-upcoming-release'
+    );
+
     const isSemver = latestRelease ? isSemverRelease(latestRelease.version) : false;
     const items: MenuItemProps[] = [
       {
+        key: 'upcoming-release',
+        label: t('The upcoming release'),
+        details: actionTitle
+          ? actionTitle
+          : t('The next release that is not yet released'),
+        onAction: () => onActionOrConfirm(handleUpcomingReleaseResolution),
+        hidden: !hasUpcomingRelease,
+      },
+      {
         key: 'next-release',
         label: t('The next release'),
-        details: actionTitle,
+        details: actionTitle ? actionTitle : t('The next release after the current one'),
         onAction: () => onActionOrConfirm(handleNextReleaseResolution),
       },
       {
         key: 'current-release',
         label: t('The current release'),
-        details: actionTitle
-          ? actionTitle
-          : latestRelease
-          ? `${formatVersion(latestRelease.version)} (${
-              isSemver ? t('semver') : t('non-semver')
-            })`
-          : null,
+        details: (
+          <CurrentReleaseWrapper>
+            {actionTitle ? (
+              actionTitle
+            ) : latestRelease ? (
+              <Fragment>
+                <div>
+                  <MaxReleaseWidthWrapper>
+                    {formatVersion(latestRelease.version)}
+                  </MaxReleaseWidthWrapper>
+                </div>{' '}
+                ({isSemver ? t('semver') : t('non-semver')})
+              </Fragment>
+            ) : null}
+          </CurrentReleaseWrapper>
+        ),
         onAction: () => onActionOrConfirm(handleCurrentReleaseResolution),
       },
       {
@@ -225,22 +266,35 @@ function ResolveActions({
       <StyledDropdownMenu
         itemsHidden={shouldDisplayCta}
         items={items}
-        trigger={triggerProps => (
+        trigger={(triggerProps, isOpen) => (
           <DropdownTrigger
             {...triggerProps}
             size={size}
             priority={priority}
             aria-label={t('More resolve options')}
-            icon={<IconChevron direction="down" size="xs" />}
+            icon={
+              <Chevron
+                light
+                color="subText"
+                weight="medium"
+                direction={isOpen ? 'up' : 'down'}
+              />
+            }
             disabled={isDisabled}
           />
         )}
         disabledKeys={
           multipleProjectsSelected
-            ? ['next-release', 'current-release', 'another-release', 'a-commit']
+            ? [
+                'next-release',
+                'current-release',
+                'another-release',
+                'a-commit',
+                'upcoming-release',
+              ]
             : disabled || !hasRelease
-            ? ['next-release', 'current-release', 'another-release']
-            : []
+              ? ['next-release', 'current-release', 'another-release', 'upcoming-release']
+              : []
         }
         menuTitle={shouldDisplayCta ? <SetupReleasesPrompt /> : t('Resolved In')}
         isDisabled={isDisabled}
@@ -303,7 +357,7 @@ function ResolveActions({
         >
           {t('Resolve')}
         </ResolveButton>
-        {renderDropdownMenu()}
+        {!disableResolveInRelease && renderDropdownMenu()}
       </ButtonBar>
     </Tooltip>
   );
@@ -313,7 +367,6 @@ export default ResolveActions;
 
 const ResolveButton = styled(Button)<{priority?: 'primary'}>`
   box-shadow: none;
-  border-radius: ${p => p.theme.borderRadiusLeft};
   ${p =>
     p.priority === 'primary' &&
     css`
@@ -331,7 +384,7 @@ const ResolveButton = styled(Button)<{priority?: 'primary'}>`
 
 const DropdownTrigger = styled(Button)`
   box-shadow: none;
-  border-radius: ${p => p.theme.borderRadiusRight};
+  border-radius: 0 ${p => p.theme.borderRadius} ${p => p.theme.borderRadius} 0;
   border-left: none;
 `;
 
@@ -358,10 +411,21 @@ const SetupReleases = styled('div')`
   color: ${p => p.theme.gray400};
   width: 250px;
   white-space: normal;
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
 `;
 
 const SetupReleasesHeader = styled('h6')`
   font-size: ${p => p.theme.fontSizeMedium};
   margin-bottom: ${space(1)};
+`;
+
+const CurrentReleaseWrapper = styled('div')`
+  display: flex;
+  align-items: center;
+  gap: ${space(0.25)};
+`;
+
+const MaxReleaseWidthWrapper = styled('div')`
+  ${p => p.theme.overflowEllipsis};
+  max-width: 250px;
 `;

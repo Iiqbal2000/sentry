@@ -38,7 +38,9 @@
       </div>
     {% endif %}
     <div>
-      <h5 style="margin-bottom: 12px;">Alert Rule Details</h5>
+      <h5 style="margin-bottom: 12px;">
+        Alert Rule Details
+      </h5>
       <table class="alert-details">
         <tr>
           <td width="25%">Project</td>
@@ -47,11 +49,11 @@
         <tr>
           <td width="25%">Environment</td>
           <td>{{ environment }}</td>
-        </tr>
+          </tr>
         <tr>
           <td width="25%">Threshold</td>
           <td>
-            {{ threshold_direction_string }} {{ threshold }}{% if 'percentage' in aggregate %}%{% endif %}
+            {{ threshold_prefix_string }} {{ threshold }}{% if 'percentage' in aggregate %}%{% endif %}
           </td>
         </tr>
         <tr>

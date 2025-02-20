@@ -1,25 +1,21 @@
-import logging
-from functools import wraps
-
 from click import echo
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.db import connections, router, transaction
 from django.db.models.signals import post_save
-from django.db.utils import OperationalError, ProgrammingError
-from packaging.version import parse as parse_version
 
-from sentry import options
+from sentry.hybridcloud.models.outbox import outbox_context
 from sentry.loader.dynamic_sdk_options import get_default_loader_data
 from sentry.models.organization import Organization
 from sentry.models.organizationmember import OrganizationMember
 from sentry.models.project import Project
 from sentry.models.projectkey import ProjectKey
 from sentry.models.team import Team
-from sentry.services.hybrid_cloud.user.service import user_service
-from sentry.services.hybrid_cloud.util import region_silo_function
+from sentry.services.organization import organization_provisioning_service
 from sentry.signals import post_upgrade, project_created
-from sentry.silo import SiloMode
+from sentry.silo.base import SiloMode, region_silo_function
+from sentry.users.services.user.service import user_service
+from sentry.utils.db import handle_db_failure
 from sentry.utils.env import in_test_environment
 from sentry.utils.settings import is_self_hosted
 
@@ -31,21 +27,8 @@ SELECT setval('sentry_project_id_seq', (
 DEFAULT_SENTRY_PROJECT_ID = 1
 
 
-def handle_db_failure(func, using=None):
-    @wraps(func)
-    def wrapped(*args, **kwargs):
-        try:
-            with transaction.atomic(using or router.db_for_write(Organization)):
-                return func(*args, **kwargs)
-        except (ProgrammingError, OperationalError):
-            logging.exception("Failed processing signal %s", func.__name__)
-            return
-
-    return wrapped
-
-
 def create_default_projects(**kwds):
-    if not in_test_environment() and not is_self_hosted():
+    if not (in_test_environment() or is_self_hosted() or settings.DEBUG):
         # No op in production SaaS environments.
         return
 
@@ -72,16 +55,20 @@ def create_default_project(id, name, slug, verbosity=2, **kwargs):
 
     user = user_service.get_first_superuser()
 
-    org, _ = Organization.objects.get_or_create(slug="sentry", defaults={"name": "Sentry"})
+    conn_name = router.db_for_write(Organization)
+    with transaction.atomic(conn_name):
+        with outbox_context(flush=False):
+            org, _ = Organization.objects.get_or_create(slug="sentry", defaults={"name": "Sentry"})
 
-    if user:
-        OrganizationMember.objects.get_or_create(user_id=user.id, organization=org, role="owner")
+        if user:
+            OrganizationMember.objects.get_or_create(
+                user_id=user.id, organization=org, role="owner"
+            )
 
-    team, _ = Team.objects.get_or_create(
-        organization=org, slug="sentry", defaults={"name": "Sentry"}
-    )
+        team, _ = Team.objects.get_or_create(
+            organization=org, slug="sentry", defaults={"name": "Sentry"}
+        )
 
-    with transaction.atomic(router.db_for_write(Project)):
         project = Project.objects.create(
             id=id, public=False, name=name, slug=slug, organization=team.organization, **kwargs
         )
@@ -95,9 +82,17 @@ def create_default_project(id, name, slug, verbosity=2, **kwargs):
         )
 
         # HACK: Manually update the ID after insert due to Postgres sequence issues.
-        connection = connections[project._state.db]
+        connection = connections[conn_name]
         cursor = connection.cursor()
         cursor.execute(PROJECT_SEQUENCE_FIX)
+
+    # We need to provision an organization slug in control silo, so we do
+    # this by "changing" the slug, then re-replicating the org data.
+    organization_provisioning_service.change_organization_slug(
+        organization_id=org.id, slug="sentry"
+    )
+
+    org.handle_async_replication(org.id)
 
     project.update_option("sentry:origins", ["*"])
 
@@ -105,25 +100,6 @@ def create_default_project(id, name, slug, verbosity=2, **kwargs):
         echo(f"Created internal Sentry project (slug={project.slug}, id={project.id})")
 
     return project
-
-
-def set_sentry_version(latest=None, **kwargs):
-    import sentry
-
-    current = sentry.VERSION
-
-    version = options.get("sentry:latest_version")
-
-    for ver in (current, version):
-        if parse_version(ver) >= parse_version(latest):
-            latest = ver
-
-    if latest == version:
-        return
-
-    options.set(
-        "sentry:latest_version", (latest or current), channel=options.UpdateChannel.APPLICATION
-    )
 
 
 def create_keys_for_project(instance, created, app=None, **kwargs):
@@ -156,20 +132,20 @@ def freeze_option_epoch_for_project(instance, created, app=None, **kwargs):
 # Anything that relies on default objects that may not exist with default
 # fields should be wrapped in handle_db_failure
 post_upgrade.connect(
-    handle_db_failure(create_default_projects),
+    handle_db_failure(create_default_projects, model=Organization, wrap_in_transaction=False),
     dispatch_uid="create_default_project",
     weak=False,
     sender=SiloMode.MONOLITH,
 )
 
 post_save.connect(
-    handle_db_failure(freeze_option_epoch_for_project),
+    handle_db_failure(freeze_option_epoch_for_project, model=Organization),
     sender=Project,
     dispatch_uid="freeze_option_epoch_for_project",
     weak=False,
 )
 post_save.connect(
-    handle_db_failure(create_keys_for_project),
+    handle_db_failure(create_keys_for_project, model=Organization),
     sender=Project,
     dispatch_uid="create_keys_for_project",
     weak=False,

@@ -1,4 +1,12 @@
-import {DataScrubbingRelayPiiConfig} from 'sentry-fixture/dataScrubbingRelayPiiConfig';
+import {DataScrubbingRelayPiiConfigFixture} from 'sentry-fixture/dataScrubbingRelayPiiConfig';
+import {EventFixture} from 'sentry-fixture/event';
+import {EventEntryExceptionGroupFixture} from 'sentry-fixture/eventEntryExceptionGroup';
+import {EventStacktraceFrameFixture} from 'sentry-fixture/eventStacktraceFrame';
+import {GitHubIntegrationFixture} from 'sentry-fixture/githubIntegration';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {RepositoryFixture} from 'sentry-fixture/repository';
+import {RepositoryProjectPathConfigFixture} from 'sentry-fixture/repositoryProjectPathConfig';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary';
@@ -6,27 +14,46 @@ import {textWithMarkupMatcher} from 'sentry-test/utils';
 
 import {Content} from 'sentry/components/events/interfaces/crashContent/exception/content';
 import ProjectsStore from 'sentry/stores/projectsStore';
-import {EntryType} from 'sentry/types';
+import {EntryType} from 'sentry/types/event';
 import {StackType, StackView} from 'sentry/types/stacktrace';
 
 describe('Exception Content', function () {
+  const organization = OrganizationFixture();
+  const project = ProjectFixture();
+  const integration = GitHubIntegrationFixture();
+  const repo = RepositoryFixture({integrationId: integration.id});
+  const config = RepositoryProjectPathConfigFixture({project, repo, integration});
+
+  beforeEach(function () {
+    MockApiClient.clearMockResponses();
+    MockApiClient.addMockResponse({
+      url: `/organizations/${organization.slug}/prompts-activity/`,
+    });
+    MockApiClient.addMockResponse({
+      url: `/projects/${organization.slug}/${project.slug}/stacktrace-link/`,
+      body: {config, sourceUrl: 'https://something.io', integrations: [integration]},
+    });
+    ProjectsStore.loadInitialData([project]);
+  });
+
   it('display redacted values from exception entry', async function () {
-    const project = TestStubs.Project({
-      id: '0',
-      relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfig()),
+    const projectDetails = ProjectFixture({
+      ...project,
+      relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+    });
+    MockApiClient.addMockResponse({
+      url: `/projects/org-slug/${project.slug}/`,
+      body: projectDetails,
     });
 
-    const {organization, router, routerContext} = initializeOrg({
+    const {organization: org, router} = initializeOrg({
       router: {
-        location: {query: {project: '0'}},
+        location: {query: {project: project.id}},
       },
       projects: [project],
     });
 
-    ProjectsStore.loadInitialData([project]);
-
-    const event = {
-      ...TestStubs.Event(),
+    const event = EventFixture({
       _meta: {
         entries: {
           0: {
@@ -77,7 +104,6 @@ describe('Exception Content', function () {
                       symbol: null,
                       module: '<unknown module>',
                       lineNo: null,
-                      errors: null,
                       package: null,
                       absPath:
                         'https://sentry.io/hiventy/kraken-prod/issues/438681831/?referrer=slack#',
@@ -101,27 +127,25 @@ describe('Exception Content', function () {
           },
         },
       ],
-    };
+    });
 
     render(
       <Content
         type={StackType.ORIGINAL}
         groupingCurrentLevel={0}
-        hasHierarchicalGrouping
         newestFirst
-        platform="python"
         stackView={StackView.APP}
         event={event}
-        values={event.entries[0].data.values}
-        meta={event._meta.entries[0].data.values}
+        values={event.entries[0]!.data.values}
+        meta={event._meta!.entries[0].data.values}
         projectSlug={project.slug}
       />,
-      {organization, router, context: routerContext}
+      {organization: org, router}
     );
 
     expect(screen.getAllByText(/redacted/)).toHaveLength(2);
 
-    await userEvent.hover(screen.getAllByText(/redacted/)[0]);
+    await userEvent.hover(screen.getAllByText(/redacted/)[0]!);
 
     expect(
       await screen.findByText(
@@ -146,18 +170,79 @@ describe('Exception Content', function () {
     );
   });
 
+  it('respects platform overrides in stacktrace frames', function () {
+    const event = EventFixture({
+      projectID: project.id,
+      platform: 'python',
+      entries: [
+        {
+          type: EntryType.EXCEPTION,
+          data: {
+            values: [
+              {
+                stacktrace: {
+                  frames: [EventStacktraceFrameFixture({platform: null})],
+                },
+              },
+              {
+                stacktrace: {
+                  frames: [EventStacktraceFrameFixture({platform: 'cocoa'})],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    render(
+      <Content
+        type={StackType.ORIGINAL}
+        stackView={StackView.APP}
+        event={event}
+        values={event.entries[0]!.data.values}
+        projectSlug={project.slug}
+      />
+    );
+
+    // Cocoa override should render a native stack trace component
+    expect(screen.getByTestId('native-stack-trace-content')).toBeInTheDocument();
+
+    // Other stacktrace should render the normal stack trace (python)
+    expect(screen.getByTestId('stack-trace-content')).toBeInTheDocument();
+  });
+
   describe('exception groups', function () {
-    const event = TestStubs.Event({entries: [TestStubs.EventEntryExceptionGroup()]});
-    const project = TestStubs.Project();
+    const event = EventFixture({
+      entries: [EventEntryExceptionGroupFixture()],
+      projectID: project.id,
+    });
+
+    beforeEach(() => {
+      MockApiClient.clearMockResponses();
+
+      const promptResponse = {
+        dismissed_ts: undefined,
+        snoozed_ts: undefined,
+      };
+      MockApiClient.addMockResponse({
+        url: `/organizations/${organization.slug}/prompts-activity/`,
+        body: promptResponse,
+      });
+      MockApiClient.addMockResponse({
+        url: `/projects/${organization.slug}/${project.slug}/stacktrace-link/`,
+        body: {config, sourceUrl: 'https://something.io', integrations: [integration]},
+      });
+      ProjectsStore.loadInitialData([project]);
+    });
 
     const defaultProps = {
       type: StackType.ORIGINAL,
-      hasHierarchicalGrouping: false,
       newestFirst: true,
       platform: 'python' as const,
       stackView: StackView.APP,
       event,
-      values: event.entries[0].data.values,
+      values: event.entries[0]!.data.values,
       projectSlug: project.slug,
     };
 
@@ -167,9 +252,9 @@ describe('Exception Content', function () {
       const exceptions = screen.getAllByTestId('exception-value');
 
       // First exception should be the parent ExceptionGroup
-      expect(within(exceptions[0]).getByText('ExceptionGroup 1')).toBeInTheDocument();
+      expect(within(exceptions[0]!).getByText('ExceptionGroup 1')).toBeInTheDocument();
       expect(
-        within(exceptions[0]).getByRole('heading', {name: 'ExceptionGroup 1'})
+        within(exceptions[0]!).getByRole('heading', {name: 'ExceptionGroup 1'})
       ).toBeInTheDocument();
     });
 
@@ -178,7 +263,7 @@ describe('Exception Content', function () {
 
       const exceptions = screen.getAllByTestId('exception-value');
 
-      const exceptionGroupWithNoContext = exceptions[2];
+      const exceptionGroupWithNoContext = exceptions[2]!;
       expect(
         within(exceptionGroupWithNoContext).getByText('Related Exceptions')
       ).toBeInTheDocument();
@@ -188,7 +273,7 @@ describe('Exception Content', function () {
       render(<Content {...defaultProps} />);
 
       // There are 4 values, but 1 should be hidden
-      expect(screen.getAllByTestId('exception-value').length).toBe(3);
+      expect(screen.getAllByTestId('exception-value')).toHaveLength(3);
       expect(screen.queryByRole('heading', {name: 'ValueError'})).not.toBeInTheDocument();
 
       await userEvent.click(
@@ -196,7 +281,7 @@ describe('Exception Content', function () {
       );
 
       // After expanding, ValueError should be visible
-      expect(screen.getAllByTestId('exception-value').length).toBe(4);
+      expect(screen.getAllByTestId('exception-value')).toHaveLength(4);
       expect(screen.getByRole('heading', {name: 'ValueError'})).toBeInTheDocument();
 
       await userEvent.click(
@@ -204,7 +289,7 @@ describe('Exception Content', function () {
       );
 
       // After collapsing, ValueError should be gone again
-      expect(screen.getAllByTestId('exception-value').length).toBe(3);
+      expect(screen.getAllByTestId('exception-value')).toHaveLength(3);
       expect(screen.queryByRole('heading', {name: 'ValueError'})).not.toBeInTheDocument();
     });
 

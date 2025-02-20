@@ -3,7 +3,6 @@ from sentry.models.group import Group, GroupStatus
 from sentry.models.grouphistory import GroupHistory, GroupHistoryStatus
 from sentry.models.groupinbox import GroupInbox, GroupInboxReason, add_group_to_inbox
 from sentry.testutils.cases import TestCase
-from sentry.testutils.helpers import with_feature
 from sentry.types.group import GroupSubStatus
 
 
@@ -22,12 +21,10 @@ class MarkReviewedTest(TestCase):
             group_list=self.group_list,
             project_lookup=self.project_lookup,
             acting_user=self.user,
-            http_referrer="",
             sender=self,
         )
         assert not GroupInbox.objects.filter(group=self.group).exists()
 
-    @with_feature("organizations:escalating-issues")
     def test_mark_escalating_reviewed(self) -> None:
         self.group.update(status=GroupStatus.UNRESOLVED, substatus=GroupSubStatus.ESCALATING)
         update_inbox(
@@ -35,7 +32,6 @@ class MarkReviewedTest(TestCase):
             group_list=self.group_list,
             project_lookup=self.project_lookup,
             acting_user=self.user,
-            http_referrer="",
             sender=self,
         )
         assert not GroupInbox.objects.filter(group=self.group).exists()
@@ -55,7 +51,6 @@ class MarkReviewedTest(TestCase):
             group_list=[],
             project_lookup=self.project_lookup,
             acting_user=self.user,
-            http_referrer="",
             sender=self,
         )
         assert GroupInbox.objects.filter(group=self.group).exists()
@@ -67,7 +62,6 @@ class MarkReviewedTest(TestCase):
             group_list=self.group_list + [new_group],
             project_lookup=self.project_lookup,
             acting_user=self.user,
-            http_referrer="",
             sender=self,
         )
 

@@ -11,7 +11,9 @@ import {Tooltip} from 'sentry/components/tooltip';
 import {IconSubtract} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, OrgAuthToken, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type {OrgAuthToken} from 'sentry/types/user';
 import getDynamicText from 'sentry/utils/getDynamicText';
 import {tokenPreview} from 'sentry/views/settings/organizationAuthTokens';
 
@@ -106,7 +108,8 @@ export function OrganizationAuthTokensAuthTokenRow({
               getDynamicText({
                 value: token.tokenLastCharacters,
                 fixed: 'ABCD',
-              })
+              }),
+              'sntrys_'
             )}
           </TokenPreview>
         )}
@@ -141,16 +144,15 @@ export function OrganizationAuthTokensAuthTokenRow({
 
       <Actions>
         <Tooltip
-          title={t(
-            'You must be an organization owner, manager or admin to revoke a token.'
-          )}
+          title={t('You must be an organization owner or manager to revoke a token.')}
           disabled={!!revokeToken}
         >
           <Confirm
             disabled={!revokeToken || isRevoking}
             onConfirm={revokeToken ? () => revokeToken(token) : undefined}
             message={t(
-              'Are you sure you want to revoke this token? The token will not be usable anymore, and this cannot be undone.'
+              'Are you sure you want to revoke %s token? It will not be usable anymore, and this cannot be undone.',
+              tokenPreview(token.tokenLastCharacters || '', 'sntrys_')
             )}
           >
             <Button

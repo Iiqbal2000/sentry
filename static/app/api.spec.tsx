@@ -1,5 +1,6 @@
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
+import type {Client, ResponseMeta} from 'sentry/api';
 import {isSimilarOrigin, Request, resolveHostname} from 'sentry/api';
 import {PROJECT_MOVED} from 'sentry/constants/apiErrorCodes';
 
@@ -9,7 +10,7 @@ import OrganizationStore from './stores/organizationStore';
 jest.unmock('sentry/api');
 
 describe('api', function () {
-  let api;
+  let api: Client;
 
   beforeEach(function () {
     api = new MockApiClient();
@@ -41,7 +42,9 @@ describe('api', function () {
 
   it('does not call success callback if 302 was returned because of a project slug change', function () {
     const successCb = jest.fn();
-    api.activeRequests = {id: {alive: true}};
+    api.activeRequests = {
+      id: {alive: true, requestPromise: new Promise(() => null), cancel: jest.fn()},
+    };
     api.wrapCallback(
       'id',
       successCb
@@ -60,9 +63,9 @@ describe('api', function () {
   });
 
   it('handles error callback', function () {
-    jest.spyOn(api, 'wrapCallback').mockImplementation((_id, func) => func);
+    jest.spyOn(api, 'wrapCallback').mockImplementation((_id: string, func: any) => func);
     const errorCb = jest.fn();
-    const args = ['test', true, 1];
+    const args = ['test', true, 1] as unknown as [ResponseMeta, string, string];
     api.handleRequestError(
       {
         id: 'test',
@@ -83,27 +86,30 @@ describe('api', function () {
           path: 'test',
           requestOptions: {},
         },
-        {},
-        {}
+        {} as ResponseMeta,
+        '',
+        'test'
       )
     ).not.toThrow();
   });
 });
 
 describe('resolveHostname', function () {
-  let devUi, orgstate, configstate;
+  let devUi: boolean | undefined;
+  let location: Location;
+  let configstate: ReturnType<typeof ConfigStore.getState>;
 
   const controlPath = '/api/0/broadcasts/';
   const regionPath = '/api/0/organizations/slug/issues/';
 
   beforeEach(function () {
-    orgstate = OrganizationStore.get();
     configstate = ConfigStore.getState();
+    location = window.location;
     devUi = window.__SENTRY_DEV_UI;
 
-    OrganizationStore.onUpdate(Organization({features: ['frontend-domainsplit']}));
     ConfigStore.loadInitialData({
       ...configstate,
+      features: new Set(['system:multi-region']),
       links: {
         organizationUrl: 'https://acme.sentry.io',
         sentryUrl: 'https://sentry.io',
@@ -113,17 +119,43 @@ describe('resolveHostname', function () {
   });
 
   afterEach(() => {
+    window.location = location;
     window.__SENTRY_DEV_UI = devUi;
-    OrganizationStore.onUpdate(orgstate.organization);
     ConfigStore.loadInitialData(configstate);
   });
 
   it('does nothing without feature', function () {
-    // Org does not have the required feature.
-    OrganizationStore.onUpdate(Organization());
+    ConfigStore.loadInitialData({
+      ...configstate,
+      // Remove the feature flag
+      features: new Set(),
+    });
 
     let result = resolveHostname(controlPath);
     expect(result).toBe(controlPath);
+
+    // Explicit domains still work.
+    result = resolveHostname(controlPath, 'https://sentry.io');
+    expect(result).toBe(`https://sentry.io${controlPath}`);
+
+    result = resolveHostname(regionPath, 'https://de.sentry.io');
+    expect(result).toBe(`https://de.sentry.io${regionPath}`);
+  });
+
+  it('does not override region in _admin', function () {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      enumerable: true,
+      value: new URL('https://sentry.io/_admin/'),
+    });
+
+    // Adds domain to control paths
+    let result = resolveHostname(controlPath);
+    expect(result).toBe('https://sentry.io/api/0/broadcasts/');
+
+    // Doesn't add domain to region paths
+    result = resolveHostname(regionPath);
+    expect(result).toBe(regionPath);
 
     // Explicit domains still work.
     result = resolveHostname(controlPath, 'https://sentry.io');
@@ -173,7 +205,7 @@ describe('resolveHostname', function () {
   it('removes sentryUrl from dev-ui mode requests when feature is off', function () {
     window.__SENTRY_DEV_UI = true;
     // Org does not have the required feature.
-    OrganizationStore.onUpdate(Organization());
+    OrganizationStore.onUpdate(OrganizationFixture());
 
     let result = resolveHostname(controlPath);
     expect(result).toBe(controlPath);

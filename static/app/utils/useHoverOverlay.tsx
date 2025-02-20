@@ -7,12 +7,55 @@ import {
   useRef,
   useState,
 } from 'react';
-import {PopperProps, usePopper} from 'react-popper';
+import type {PopperProps} from 'react-popper';
+import {usePopper} from 'react-popper';
 import {useTheme} from '@emotion/react';
-import styled from '@emotion/styled';
 
 import domId from 'sentry/utils/domId';
-import {ColorOrAlias} from 'sentry/utils/theme';
+import type {ColorOrAlias} from 'sentry/utils/theme';
+
+function makeDefaultPopperModifiers(arrowElement: HTMLElement | null, offset: number) {
+  return [
+    {
+      name: 'hide',
+      enabled: false,
+    },
+    {
+      name: 'computeStyles',
+      options: {
+        // Using the `transform` attribute causes our borders to get blurry
+        // in chrome. See [0]. This just causes it to use `top` / `left`
+        // positions, which should be fine.
+        //
+        // [0]: https://stackoverflow.com/questions/29543142/css3-transformation-blurry-borders
+        gpuAcceleration: false,
+      },
+    },
+    {
+      name: 'arrow',
+      options: {
+        element: arrowElement,
+        // Set padding to avoid the arrow reaching the side of the tooltip
+        // and overflowing out of the rounded border
+        padding: 4,
+      },
+    },
+    {
+      name: 'offset',
+      options: {
+        offset: [0, offset],
+      },
+    },
+    {
+      name: 'preventOverflow',
+      enabled: true,
+      options: {
+        padding: 12,
+        altAxis: true,
+      },
+    },
+  ];
+}
 
 /**
  * How long to wait before opening the overlay
@@ -56,9 +99,22 @@ interface UseHoverOverlayProps {
    */
   offset?: number;
   /**
+   * Callback whenever the hovercard is blurred
+   * See also `onHover`
+   */
+  onBlur?: () => void;
+
+  /**
+   * Callback whenever the hovercard is hovered
+   * See also `onBlur`
+   */
+  onHover?: () => void;
+
+  /**
    * Position for the overlay.
    */
   position?: PopperProps<any>['placement'];
+
   /**
    * Only display the overlay only if the content overflows
    */
@@ -73,13 +129,34 @@ interface UseHoverOverlayProps {
    */
   skipWrapper?: boolean;
   /**
+   * style for when a wrapper is used. Does nothing using skipWrapper.
+   */
+  style?: React.CSSProperties;
+
+  /**
    * Color of the dotted underline, if available. See also: showUnderline.
    */
   underlineColor?: ColorOrAlias;
 }
 
 function isOverflown(el: Element): boolean {
-  return el.scrollWidth > el.clientWidth || Array.from(el.children).some(isOverflown);
+  // Safari seems to calculate scrollWidth incorrectly, causing isOverflown to always return true in some cases.
+  // Adding a 2 pixel tolerance seems to account for this discrepancy.
+  const tolerance =
+    navigator.userAgent.includes('Safari') && !navigator.userAgent.includes('Chrome')
+      ? 2
+      : 0;
+  return (
+    el.scrollWidth - el.clientWidth > tolerance ||
+    Array.from(el.children).some(isOverflown)
+  );
+}
+
+function maybeClearRefTimeout(ref: React.MutableRefObject<number | undefined>) {
+  if (typeof ref.current === 'number') {
+    window.clearTimeout(ref.current);
+    ref.current = undefined;
+  }
 }
 
 /**
@@ -89,6 +166,7 @@ function useHoverOverlay(
   overlayType: string,
   {
     className,
+    style,
     delay,
     displayTimeout,
     isHoverable,
@@ -100,59 +178,30 @@ function useHoverOverlay(
     offset = 8,
     position = 'top',
     containerDisplayMode = 'inline-block',
+    onHover,
+    onBlur,
   }: UseHoverOverlayProps
 ) {
-  const [isVisible, setVisible] = useState(false);
-  const describeById = useMemo(() => domId(`${overlayType}-`), [overlayType]);
   const theme = useTheme();
+  const describeById = useMemo(() => domId(`${overlayType}-`), [overlayType]);
 
+  const [isVisible, setIsVisible] = useState(forceVisible ?? false);
   const isOpen = forceVisible ?? isVisible;
+
+  useEffect(() => {
+    if (isOpen) {
+      onHover?.();
+    } else {
+      onBlur?.();
+    }
+  }, [isOpen, onBlur, onHover]);
 
   const [triggerElement, setTriggerElement] = useState<HTMLElement | null>(null);
   const [overlayElement, setOverlayElement] = useState<HTMLElement | null>(null);
   const [arrowElement, setArrowElement] = useState<HTMLElement | null>(null);
 
   const modifiers = useMemo(
-    () => [
-      {
-        name: 'hide',
-        enabled: false,
-      },
-      {
-        name: 'computeStyles',
-        options: {
-          // Using the `transform` attribute causes our borders to get blurry
-          // in chrome. See [0]. This just causes it to use `top` / `left`
-          // positions, which should be fine.
-          //
-          // [0]: https://stackoverflow.com/questions/29543142/css3-transformation-blurry-borders
-          gpuAcceleration: false,
-        },
-      },
-      {
-        name: 'arrow',
-        options: {
-          element: arrowElement,
-          // Set padding to avoid the arrow reaching the side of the tooltip
-          // and overflowing out of the rounded border
-          padding: 4,
-        },
-      },
-      {
-        name: 'offset',
-        options: {
-          offset: [0, offset],
-        },
-      },
-      {
-        name: 'preventOverflow',
-        enabled: true,
-        options: {
-          padding: 12,
-          altAxis: true,
-        },
-      },
-    ],
+    () => makeDefaultPopperModifiers(arrowElement, offset),
     [arrowElement, offset]
   );
 
@@ -166,10 +215,11 @@ function useHoverOverlay(
   const delayHideTimeoutRef = useRef<number | undefined>(undefined);
 
   // When the component is unmounted, make sure to stop the timeouts
+  // No need to reset value of refs to undefined since they will be garbage collected anyways
   useEffect(() => {
     return () => {
-      window.clearTimeout(delayOpenTimeoutRef.current);
-      window.clearTimeout(delayHideTimeoutRef.current);
+      maybeClearRefTimeout(delayHideTimeoutRef);
+      maybeClearRefTimeout(delayOpenTimeoutRef);
     };
   }, []);
 
@@ -179,33 +229,32 @@ function useHoverOverlay(
       return;
     }
 
-    window.clearTimeout(delayHideTimeoutRef.current);
-    window.clearTimeout(delayOpenTimeoutRef.current);
+    maybeClearRefTimeout(delayHideTimeoutRef);
+    maybeClearRefTimeout(delayOpenTimeoutRef);
 
     if (delay === 0) {
-      setVisible(true);
+      setIsVisible(true);
       return;
     }
 
     delayOpenTimeoutRef.current = window.setTimeout(
-      () => setVisible(true),
+      () => setIsVisible(true),
       delay ?? OPEN_DELAY
     );
   }, [delay, showOnlyOnOverflow, triggerElement]);
 
   const handleMouseLeave = useCallback(() => {
-    window.clearTimeout(delayOpenTimeoutRef.current);
-    window.clearTimeout(delayHideTimeoutRef.current);
+    maybeClearRefTimeout(delayHideTimeoutRef);
+    maybeClearRefTimeout(delayOpenTimeoutRef);
 
     if (!isHoverable && !displayTimeout) {
-      setVisible(false);
+      setIsVisible(false);
       return;
     }
 
-    delayHideTimeoutRef.current = window.setTimeout(
-      () => setVisible(false),
-      displayTimeout ?? CLOSE_DELAY
-    );
+    delayHideTimeoutRef.current = window.setTimeout(() => {
+      setIsVisible(false);
+    }, displayTimeout ?? CLOSE_DELAY);
   }, [isHoverable, displayTimeout]);
 
   /**
@@ -230,28 +279,44 @@ function useHoverOverlay(
       // a basic element (type=string) or a class/function component
       // (type=function or object). Because we can't rely on the child element
       // implementing forwardRefs we wrap it with a span tag for the ref
-
       if (
         isValidElement(triggerChildren) &&
         (skipWrapper || typeof triggerChildren.type === 'string')
       ) {
-        const triggerStyle = {
-          ...triggerChildren.props.style,
-          ...(showUnderline && theme.tooltipUnderline(underlineColor)),
-        };
+        if (showUnderline) {
+          const triggerStyle = {
+            ...triggerChildren.props.style,
+            ...theme.tooltipUnderline(underlineColor),
+          };
+
+          return cloneElement<any>(
+            triggerChildren,
+            Object.assign(props, {style: triggerStyle})
+          );
+        }
 
         // Basic DOM nodes can be cloned and have more props applied.
-        return cloneElement<any>(triggerChildren, {...props, style: triggerStyle});
+        return cloneElement<any>(
+          triggerChildren,
+          Object.assign(props, {
+            style: triggerChildren.props.style,
+          })
+        );
       }
 
-      const ourContainerProps = {
-        ...props,
-        containerDisplayMode,
-        style: showUnderline ? theme.tooltipUnderline(underlineColor) : undefined,
+      const containerProps = Object.assign(props, {
+        style: {
+          ...(showUnderline ? theme.tooltipUnderline(underlineColor) : {}),
+          ...(containerDisplayMode ? {display: containerDisplayMode} : {}),
+          maxWidth: '100%',
+          ...style,
+        },
         className,
-      };
+      });
 
-      return <Container {...ourContainerProps}>{triggerChildren}</Container>;
+      // Using an inline-block solves the container being smaller
+      // than the elements it is wrapping
+      return <span {...containerProps}>{triggerChildren}</span>;
     },
     [
       className,
@@ -261,33 +326,42 @@ function useHoverOverlay(
       showUnderline,
       skipWrapper,
       describeById,
+      style,
       theme,
       underlineColor,
     ]
   );
 
   const reset = useCallback(() => {
-    if (isVisible) {
-      setVisible(false);
-    }
+    setIsVisible(false);
+    maybeClearRefTimeout(delayHideTimeoutRef);
+    maybeClearRefTimeout(delayOpenTimeoutRef);
+  }, []);
 
-    window.clearTimeout(delayOpenTimeoutRef.current);
-    window.clearTimeout(delayHideTimeoutRef.current);
-  }, [isVisible, setVisible, delayOpenTimeoutRef, delayHideTimeoutRef]);
+  const overlayProps = useMemo(() => {
+    return {
+      id: describeById,
+      ref: setOverlayElement,
+      style: styles.popper,
+      onMouseEnter: isHoverable ? handleMouseEnter : undefined,
+      onMouseLeave: isHoverable ? handleMouseLeave : undefined,
+    };
+  }, [
+    describeById,
+    setOverlayElement,
+    styles.popper,
+    isHoverable,
+    handleMouseEnter,
+    handleMouseLeave,
+  ]);
 
-  const overlayProps = {
-    id: describeById,
-    ref: setOverlayElement,
-    style: styles.popper,
-    onMouseEnter: isHoverable ? handleMouseEnter : undefined,
-    onMouseLeave: isHoverable ? handleMouseLeave : undefined,
-  };
-
-  const arrowProps = {
-    ref: setArrowElement,
-    style: styles.arrow,
-    placement: state?.placement,
-  };
+  const arrowProps = useMemo(() => {
+    return {
+      ref: setArrowElement,
+      style: styles.arrow,
+      placement: state?.placement,
+    };
+  }, [setArrowElement, styles.arrow, state?.placement]);
 
   return {
     wrapTrigger,
@@ -301,11 +375,5 @@ function useHoverOverlay(
   };
 }
 
-// Using an inline-block solves the container being smaller
-// than the elements it is wrapping
-const Container = styled('span')<{containerDisplayMode: React.CSSProperties['display']}>`
-  ${p => p.containerDisplayMode && `display: ${p.containerDisplayMode}`};
-  max-width: 100%;
-`;
-
-export {useHoverOverlay, UseHoverOverlayProps};
+export type {UseHoverOverlayProps};
+export {useHoverOverlay};

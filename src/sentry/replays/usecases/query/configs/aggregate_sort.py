@@ -3,6 +3,7 @@
 Very similar to our filtering configurations except in this module we do not need the field
 abstraction.  We can pass any valid Snuba expression and the query will be sorted by it.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -36,8 +37,7 @@ sort_config = {
     "browser.name": any_if("browser_name"),
     "browser.version": any_if("browser_version"),
     "count_dead_clicks": _click_count_sum_if_after("click_is_dead"),
-    "count_errors": Function("sum", parameters=[Column("count_errors")]),
-    "new_count_errors": Function("sum", parameters=[Column("count_error_events")]),
+    "count_errors": Function("sum", parameters=[Column("count_error_events")]),
     "count_warnings": Function("sum", parameters=[Column("count_warning_events")]),
     "count_infos": Function("sum", parameters=[Column("count_info_events")]),
     "count_rage_clicks": _click_count_sum_if_after("click_is_rage"),

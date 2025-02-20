@@ -1,30 +1,34 @@
 import {Component} from 'react';
-import {RouteComponentProps} from 'react-router';
-import flattenDepth from 'lodash/flattenDepth';
 
 import HookStore from 'sentry/stores/hookStore';
-import {Organization, Project} from 'sentry/types';
-import {createFuzzySearch, Fuse} from 'sentry/utils/fuzzySearch';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type {Fuse} from 'sentry/utils/fuzzySearch';
+import {createFuzzySearch} from 'sentry/utils/fuzzySearch';
 import replaceRouterParams from 'sentry/utils/replaceRouterParams';
 import withLatestContext from 'sentry/utils/withLatestContext';
 import accountSettingsNavigation from 'sentry/views/settings/account/navigationConfiguration';
-import organizationSettingsNavigation from 'sentry/views/settings/organization/navigationConfiguration';
+import {getOrganizationNavigationConfiguration} from 'sentry/views/settings/organization/navigationConfiguration';
 import projectSettingsNavigation from 'sentry/views/settings/project/navigationConfiguration';
-import {NavigationItem} from 'sentry/views/settings/types';
+import type {NavigationItem, NavigationSection} from 'sentry/views/settings/types';
 
-import {ChildProps, ResultItem} from './types';
+import type {ChildProps, ResultItem} from './types';
 import {strGetFn} from './utils';
 
-type Config =
-  | typeof accountSettingsNavigation
-  | typeof organizationSettingsNavigation
-  | typeof projectSettingsNavigation;
+type ConfigParams = {
+  debugFilesNeedsReview?: boolean;
+  organization?: Organization;
+  project?: Project;
+};
+
+type Config = ((params: ConfigParams) => NavigationSection[]) | NavigationSection[];
 
 // XXX(epurkhiser): We use the context in mapFunc to handle both producing the
 // NavigationSection list AND filtering out items in the sections that should
 // not be shown using the `show` attribute of the NavigationItem
-type Context = Parameters<Extract<Config, Function>>[0] &
-  Parameters<Extract<NavigationItem['show'], Function>>[0];
+type Context = Parameters<Extract<Config, (args: never) => unknown>>[0] &
+  Parameters<Extract<NavigationItem['show'], (args: never) => unknown>>[0];
 
 /**
  * navigation configuration can currently be either:
@@ -52,7 +56,7 @@ type DefaultProps = {
   searchOptions: Fuse.IFuseOptions<NavigationItem>;
 };
 
-type Props = RouteComponentProps<{}, {}> &
+type Props = RouteComponentProps &
   DefaultProps & {
     /**
      * Render function that renders the route matches
@@ -117,15 +121,12 @@ class RouteSource extends Component<Props, State> {
       features: new Set(project?.features ?? []),
     } as Context;
 
-    const searchMap = flattenDepth<NavigationItem>(
-      [
-        mapFunc(accountSettingsNavigation, context),
-        mapFunc(projectSettingsNavigation, context),
-        mapFunc(organizationSettingsNavigation, context),
-        mapFunc(this.getHookConfigs(), context),
-      ],
-      2
-    );
+    const searchMap: NavigationItem[] = [
+      mapFunc(accountSettingsNavigation, context),
+      mapFunc(projectSettingsNavigation, context),
+      mapFunc(getOrganizationNavigationConfiguration, context),
+      mapFunc(this.getHookConfigs(), context),
+    ].flat(2);
 
     const options = {
       ...this.props.searchOptions,

@@ -3,24 +3,23 @@ import styled from '@emotion/styled';
 import omit from 'lodash/omit';
 import pick from 'lodash/pick';
 
-import GuideAnchor from 'sentry/components/assistant/guideAnchor';
 import {Button} from 'sentry/components/button';
-import {
-  CompactSelect,
-  SelectOption,
-  SelectSection,
-} from 'sentry/components/compactSelect';
+import type {SelectOption, SelectSection} from 'sentry/components/compactSelect';
+import {CompactSelect} from 'sentry/components/compactSelect';
 import ErrorBoundary from 'sentry/components/errorBoundary';
-import {EventDataSection} from 'sentry/components/events/eventDataSection';
-import {BreadcrumbWithMeta} from 'sentry/components/events/interfaces/breadcrumbs/types';
+import type {EnhancedCrumb} from 'sentry/components/events/breadcrumbs/utils';
+import type {BreadcrumbWithMeta} from 'sentry/components/events/interfaces/breadcrumbs/types';
 import {IconSort} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import {BreadcrumbLevelType, RawCrumb} from 'sentry/types/breadcrumbs';
-import {EntryType, Event} from 'sentry/types/event';
+import type {BreadcrumbLevelType, RawCrumb} from 'sentry/types/breadcrumbs';
+import type {Event} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
 import {useLocalStorageState} from 'sentry/utils/useLocalStorageState';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
 
 import SearchBarAction from '../searchBarAction';
 
@@ -33,30 +32,70 @@ type SelectOptionWithLevels = SelectOption<string> & {levels?: BreadcrumbLevelTy
 
 type Props = {
   data: {
-    values: Array<RawCrumb>;
+    values: RawCrumb[];
   };
   event: Event;
   organization: Organization;
+  hideTitle?: boolean;
 };
 
-enum BreadcrumbSort {
+export enum BreadcrumbSort {
   NEWEST = 'newest',
   OLDEST = 'oldest',
 }
 
-const EVENT_BREADCRUMB_SORT_LOCALSTORAGE_KEY = 'event-breadcrumb-sort';
+export const BREADCRUMB_SORT_LOCALSTORAGE_KEY = 'event-breadcrumb-sort';
 
-const sortOptions = [
+export const BREADCRUMB_SORT_OPTIONS = [
   {label: t('Newest'), value: BreadcrumbSort.NEWEST},
   {label: t('Oldest'), value: BreadcrumbSort.OLDEST},
 ];
 
-function BreadcrumbsContainer({data, event, organization}: Props) {
+type BreadcrumbListType = BreadcrumbWithMeta | EnhancedCrumb;
+
+export function applyBreadcrumbSearch<T extends BreadcrumbListType>(
+  breadcrumbs: T[],
+  newSearchTerm: string
+): T[] {
+  if (!newSearchTerm.trim()) {
+    return breadcrumbs;
+  }
+
+  // Slightly hacky, but it works
+  // the string is being `stringify`d here in order to match exactly the same `stringify`d string of the loop
+  const searchFor = JSON.stringify(newSearchTerm)
+    // it replaces double backslash generate by JSON.stringify with single backslash
+    .replace(/((^")|("$))/g, '')
+    .toLocaleLowerCase();
+
+  return breadcrumbs.filter(({breadcrumb}) =>
+    Object.keys(
+      pick(breadcrumb, ['type', 'category', 'message', 'level', 'timestamp', 'data'])
+    ).some(key => {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      const info = breadcrumb[key];
+
+      if (!defined(info) || !String(info).trim()) {
+        return false;
+      }
+
+      return JSON.stringify(info)
+        .replace(/((^")|("$))/g, '')
+        .toLocaleLowerCase()
+        .trim()
+        .includes(searchFor);
+    })
+  );
+}
+
+function BreadcrumbsContainer({data, event, organization, hideTitle = false}: Props) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterSelections, setFilterSelections] = useState<SelectOption<string>[]>([]);
+  const [filterSelections, setFilterSelections] = useState<Array<SelectOption<string>>>(
+    []
+  );
   const [displayRelativeTime, setDisplayRelativeTime] = useState(false);
   const [sort, setSort] = useLocalStorageState<BreadcrumbSort>(
-    EVENT_BREADCRUMB_SORT_LOCALSTORAGE_KEY,
+    BREADCRUMB_SORT_LOCALSTORAGE_KEY,
     BreadcrumbSort.NEWEST
   );
 
@@ -85,7 +124,7 @@ function BreadcrumbsContainer({data, event, organization}: Props) {
     const typeOptions = getFilterTypes(initialBreadcrumbs);
     const levels = getFilterLevels(typeOptions);
 
-    const options: SelectSection<string>[] = [];
+    const options: Array<SelectSection<string>> = [];
 
     if (typeOptions.length) {
       options.push({
@@ -112,24 +151,24 @@ function BreadcrumbsContainer({data, event, organization}: Props) {
     for (const index in crumbs) {
       const breadcrumb = crumbs[index];
       const foundFilterType = filterTypes.findIndex(
-        f => f.value === `type-${breadcrumb.type}`
+        f => f.value === `type-${breadcrumb!.type}`
       );
 
       if (foundFilterType === -1) {
         filterTypes.push({
-          value: `type-${breadcrumb.type}`,
-          leadingItems: <Type type={breadcrumb.type} color={breadcrumb.color} />,
-          label: breadcrumb.description,
-          levels: breadcrumb?.level ? [breadcrumb.level] : [],
+          value: `type-${breadcrumb!.type}`,
+          leadingItems: <Type type={breadcrumb!.type} color={breadcrumb!.color} />,
+          label: breadcrumb!.description,
+          levels: breadcrumb!.level ? [breadcrumb!.level] : [],
         });
         continue;
       }
 
       if (
         breadcrumb?.level &&
-        !filterTypes[foundFilterType].levels?.includes(breadcrumb.level)
+        !filterTypes[foundFilterType]!.levels?.includes(breadcrumb.level)
       ) {
-        filterTypes[foundFilterType].levels?.push(breadcrumb.level);
+        filterTypes[foundFilterType]!.levels?.push(breadcrumb.level);
       }
     }
 
@@ -137,11 +176,12 @@ function BreadcrumbsContainer({data, event, organization}: Props) {
   }
 
   function getFilterLevels(types: SelectOptionWithLevels[]) {
-    const filterLevels: SelectOption<string>[] = [];
+    const filterLevels: Array<SelectOption<string>> = [];
 
     for (const indexType in types) {
-      for (const indexLevel in types[indexType].levels) {
-        const level = types[indexType].levels?.[indexLevel];
+      for (const indexLevel in types[indexType]!.levels) {
+        // @ts-expect-error TS(7015): Element implicitly has an 'any' type because index... Remove this comment to see the full error message
+        const level = types[indexType]!.levels?.[indexLevel];
 
         if (filterLevels.some(f => f.value === `level-${level}`)) {
           continue;
@@ -162,40 +202,9 @@ function BreadcrumbsContainer({data, event, organization}: Props) {
     return filterLevels;
   }
 
-  function applySearchTerm(breadcrumbs: BreadcrumbWithMeta[], newSearchTerm: string) {
-    if (!newSearchTerm.trim()) {
-      return breadcrumbs;
-    }
-
-    // Slightly hacky, but it works
-    // the string is being `stringify`d here in order to match exactly the same `stringify`d string of the loop
-    const searchFor = JSON.stringify(newSearchTerm)
-      // it replaces double backslash generate by JSON.stringify with single backslash
-      .replace(/((^")|("$))/g, '')
-      .toLocaleLowerCase();
-
-    return breadcrumbs.filter(({breadcrumb}) =>
-      Object.keys(
-        pick(breadcrumb, ['type', 'category', 'message', 'level', 'timestamp', 'data'])
-      ).some(key => {
-        const info = breadcrumb[key];
-
-        if (!defined(info) || !String(info).trim()) {
-          return false;
-        }
-
-        return JSON.stringify(info)
-          .replace(/((^")|("$))/g, '')
-          .toLocaleLowerCase()
-          .trim()
-          .includes(searchFor);
-      })
-    );
-  }
-
   function applySelectedFilters(
     breadcrumbs: BreadcrumbWithMeta[],
-    selectedFilterOptions: SelectOption<string>[]
+    selectedFilterOptions: Array<SelectOption<string>>
   ) {
     const checkedTypeOptions = new Set(
       selectedFilterOptions
@@ -237,7 +246,7 @@ function BreadcrumbsContainer({data, event, organization}: Props) {
       breadcrumb,
       meta: event._meta?.entries?.[entryIndex]?.data?.values?.[index],
     }));
-    const filteredBreadcrumbs = applySearchTerm(
+    const filteredBreadcrumbs = applyBreadcrumbSearch(
       applySelectedFilters(breadcrumbsWithMeta, filterSelections),
       searchTerm
     );
@@ -303,44 +312,47 @@ function BreadcrumbsContainer({data, event, organization}: Props) {
           setSort(selectedOption.value);
         }}
         value={sort}
-        options={sortOptions}
+        options={BREADCRUMB_SORT_OPTIONS}
       />
     </SearchAndSortWrapper>
   );
 
   return (
-    <EventDataSection
-      type={EntryType.BREADCRUMBS}
-      title={t('Breadcrumbs')}
+    <InterimSection
+      showPermalink={!hideTitle}
+      type={SectionKey.BREADCRUMBS}
+      title={hideTitle ? '' : t('Breadcrumbs')}
       actions={actions}
     >
       <ErrorBoundary>
-        <GuideAnchor target="breadcrumbs" position="bottom">
-          <Breadcrumbs
-            emptyMessage={getEmptyMessage()}
-            breadcrumbs={displayedBreadcrumbs}
-            event={event}
-            organization={organization}
-            onSwitchTimeFormat={() => setDisplayRelativeTime(old => !old)}
-            displayRelativeTime={displayRelativeTime}
-            searchTerm={searchTerm}
-            relativeTime={relativeTime}
-          />
-        </GuideAnchor>
+        <Breadcrumbs
+          emptyMessage={getEmptyMessage()}
+          breadcrumbs={displayedBreadcrumbs}
+          event={event}
+          organization={organization}
+          onSwitchTimeFormat={() => setDisplayRelativeTime(old => !old)}
+          displayRelativeTime={displayRelativeTime}
+          searchTerm={searchTerm}
+          relativeTime={relativeTime}
+        />
       </ErrorBoundary>
-    </EventDataSection>
+    </InterimSection>
   );
 }
 
 export {BreadcrumbsContainer as Breadcrumbs};
 
-const SearchAndSortWrapper = styled('div')`
+export const SearchAndSortWrapper = styled('div')`
   display: grid;
   grid-template-columns: 1fr auto;
   gap: ${space(1)};
 
   @media (max-width: ${p => p.theme.breakpoints.small}) {
     grid-template-columns: 1fr;
+  }
+
+  @container breadcrumbs (width < 640px) {
+    display: none;
   }
 `;
 

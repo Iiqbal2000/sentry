@@ -1,10 +1,12 @@
 import {forwardRef} from 'react';
-import {PopperProps} from 'react-popper';
-import {SerializedStyles} from '@emotion/react';
+import type {PopperProps} from 'react-popper';
+import type {SerializedStyles} from '@emotion/react';
 import styled from '@emotion/styled';
-import {HTMLMotionProps, motion, MotionProps, MotionStyle} from 'framer-motion';
+import type {HTMLMotionProps, MotionProps, MotionStyle} from 'framer-motion';
+import {motion, useIsPresent} from 'framer-motion';
 
-import {OverlayArrow, OverlayArrowProps} from 'sentry/components/overlayArrow';
+import type {OverlayArrowProps} from 'sentry/components/overlayArrow';
+import {OverlayArrow} from 'sentry/components/overlayArrow';
 import {NODE_ENV} from 'sentry/constants';
 import {defined} from 'sentry/utils';
 import PanelProvider from 'sentry/utils/panelProvider';
@@ -122,7 +124,7 @@ const Overlay = styled(
           : {style};
 
       return (
-        <motion.div {...props} {...animationProps} ref={ref}>
+        <motion.div {...props} {...animationProps} data-overlay ref={ref}>
           {defined(arrowProps) && <OverlayArrow {...arrowProps} />}
           <PanelProvider>{children}</PanelProvider>
         </motion.div>
@@ -131,7 +133,7 @@ const Overlay = styled(
   )
 )`
   position: relative;
-  border-radius: ${p => p.theme.panelBorderRadius};
+  border-radius: ${p => p.theme.borderRadius};
   background: ${p => p.theme.backgroundElevated};
   box-shadow:
     0 0 0 1px ${p => p.theme.translucentBorder},
@@ -184,15 +186,16 @@ const PositionWrapper = forwardRef<HTMLDivElement, PositionWrapperProps>(
       ...props
     },
     ref
-  ) => (
-    <motion.div
-      {...props}
-      ref={ref}
-      style={{...style, zIndex}}
-      initial={{pointerEvents: 'auto'}}
-      exit={{pointerEvents: 'none'}}
-    />
-  )
+  ) => {
+    const isPresent = useIsPresent();
+    return (
+      <motion.div
+        {...props}
+        ref={ref}
+        style={{...style, zIndex, pointerEvents: isPresent ? 'auto' : 'none'}}
+      />
+    );
+  }
 );
 
 export {Overlay, PositionWrapper};

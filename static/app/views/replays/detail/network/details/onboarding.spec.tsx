@@ -1,3 +1,6 @@
+import {ReplayRequestFrameFixture} from 'sentry-fixture/replay/replaySpanFrameData';
+import {ReplayRecordFixture} from 'sentry-fixture/replayRecord';
+
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 import {textWithMarkupMatcher} from 'sentry-test/utils';
 
@@ -9,8 +12,8 @@ jest.mock('sentry/utils/useProjectSdkNeedsUpdate');
 
 import {Setup} from 'sentry/views/replays/detail/network/details/onboarding';
 
-const [MOCK_ITEM] = hydrateSpans(TestStubs.ReplayRecord(), [
-  TestStubs.Replay.RequestFrame({
+const [MOCK_ITEM] = hydrateSpans(ReplayRecordFixture(), [
+  ReplayRequestFrameFixture({
     op: 'resource.fetch',
     startTimestamp: new Date(),
     endTimestamp: new Date(),
@@ -25,9 +28,9 @@ describe('Setup', () => {
 
   describe('Setup is not complete', () => {
     it('should render the full snippet when no setup is done yet', () => {
-      const {container} = render(
+      render(
         <Setup
-          item={MOCK_ITEM}
+          item={MOCK_ITEM!}
           projectId="0"
           showSnippet={Output.SETUP}
           visibleTab="details"
@@ -38,9 +41,23 @@ describe('Setup', () => {
         screen.getByText('Capture Request and Response Headers and Bodies')
       ).toBeInTheDocument();
 
-      expect(container.querySelector('code')).toHaveTextContent(
-        `networkRequestHeaders: ['X-Custom-Header'],`
+      const expectedSnippet = [
+        `Sentry.init({`,
+        `  integrations: [`,
+        `    Sentry.replayIntegration({`,
+        `      networkDetailAllowUrls: ['/api/0/issues/1234'],`,
+        `      networkRequestHeaders: ['X-Custom-Header'],`,
+        `      networkResponseHeaders: ['X-Custom-Header'],`,
+        `    }),`,
+        `  ],`,
+        `})`,
+      ].join('\n');
+      const snippetElem = screen.getByText(
+        `networkRequestHeaders: ['X-Custom-Header'],`,
+        {exact: false}
       );
+      // Using toHaveTextContent would be nice here, but it loses the newlines.
+      expect(snippetElem.innerHTML).toBe(expectedSnippet);
     });
   });
 
@@ -48,7 +65,7 @@ describe('Setup', () => {
     it('should render a note on the Details tab to allow this url', () => {
       render(
         <Setup
-          item={MOCK_ITEM}
+          item={MOCK_ITEM!}
           projectId="0"
           showSnippet={Output.URL_SKIPPED}
           visibleTab="details"
@@ -71,7 +88,7 @@ describe('Setup', () => {
     it('should render a note on the Requst & Response tabs to allow this url and enable capturing bodies', () => {
       render(
         <Setup
-          item={MOCK_ITEM}
+          item={MOCK_ITEM!}
           projectId="0"
           showSnippet={Output.URL_SKIPPED}
           visibleTab="request"
@@ -94,7 +111,7 @@ describe('Setup', () => {
     it('should render a note on the Requst & Response tabs to enable capturing bodies', () => {
       render(
         <Setup
-          item={MOCK_ITEM}
+          item={MOCK_ITEM!}
           projectId="0"
           showSnippet={Output.BODY_SKIPPED}
           visibleTab="request"
@@ -117,7 +134,7 @@ describe('Setup', () => {
     it('should render a short message reminding you to configure custom headers', () => {
       render(
         <Setup
-          item={MOCK_ITEM}
+          item={MOCK_ITEM!}
           projectId="0"
           showSnippet={Output.DATA}
           visibleTab="details"

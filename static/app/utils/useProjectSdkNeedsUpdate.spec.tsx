@@ -1,14 +1,15 @@
-import {ReactNode} from 'react';
-import {Organization} from 'sentry-fixture/organization';
+import type {ReactNode} from 'react';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {makeTestQueryClient} from 'sentry-test/queryClient';
-import {reactHooks} from 'sentry-test/reactTestingLibrary';
+import {renderHook, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import {QueryClientProvider} from 'sentry/utils/queryClient';
 import useProjectSdkNeedsUpdate from 'sentry/utils/useProjectSdkNeedsUpdate';
 
-const MOCK_ORG = Organization();
-const MOCK_PROJECT = TestStubs.Project();
+const MOCK_ORG = OrganizationFixture();
+const MOCK_PROJECT = ProjectFixture();
 
 function wrapper({children}: {children?: ReactNode}) {
   return (
@@ -42,7 +43,7 @@ describe('useProjectSdkNeedsUpdate', () => {
       },
     ]);
 
-    const {result, waitFor} = reactHooks.renderHook(useProjectSdkNeedsUpdate, {
+    const {result} = renderHook(useProjectSdkNeedsUpdate, {
       wrapper,
       initialProps: {
         minVersion: '1.0.0',
@@ -53,9 +54,11 @@ describe('useProjectSdkNeedsUpdate', () => {
 
     await waitFor(() => {
       expect(result.current.isError).toBeFalsy();
-      expect(result.current.isFetching).toBeFalsy();
-      expect(result.current.needsUpdate).toBeFalsy();
     });
+    await waitFor(() => {
+      expect(result.current.isFetching).toBeFalsy();
+    });
+    expect(result.current.needsUpdate).toBeFalsy();
   });
 
   it('should be updated it the sdk version is too low', async () => {
@@ -66,7 +69,7 @@ describe('useProjectSdkNeedsUpdate', () => {
       },
     ]);
 
-    const {result, waitFor} = reactHooks.renderHook(useProjectSdkNeedsUpdate, {
+    const {result} = renderHook(useProjectSdkNeedsUpdate, {
       wrapper,
       initialProps: {
         minVersion: '8.0.0',
@@ -76,9 +79,11 @@ describe('useProjectSdkNeedsUpdate', () => {
     });
     await waitFor(() => {
       expect(result.current.isError).toBeFalsy();
-      expect(result.current.isFetching).toBeFalsy();
-      expect(result.current.needsUpdate).toBeTruthy();
     });
+    await waitFor(() => {
+      expect(result.current.isFetching).toBeFalsy();
+    });
+    expect(result.current.needsUpdate).toBeTruthy();
   });
 
   it('should return needsUpdate if multiple projects', async () => {
@@ -93,7 +98,7 @@ describe('useProjectSdkNeedsUpdate', () => {
       },
     ]);
 
-    const {result, waitFor} = reactHooks.renderHook(useProjectSdkNeedsUpdate, {
+    const {result} = renderHook(useProjectSdkNeedsUpdate, {
       wrapper,
       initialProps: {
         minVersion: '8.0.0',
@@ -104,9 +109,11 @@ describe('useProjectSdkNeedsUpdate', () => {
 
     await waitFor(() => {
       expect(result.current.isError).toBeFalsy();
-      expect(result.current.isFetching).toBeFalsy();
-      expect(result.current.needsUpdate).toBeTruthy();
     });
+    await waitFor(() => {
+      expect(result.current.isFetching).toBeFalsy();
+    });
+    expect(result.current.needsUpdate).toBeTruthy();
   });
 
   it('should not return needsUpdate if some projects meet minSdk', async () => {
@@ -121,7 +128,7 @@ describe('useProjectSdkNeedsUpdate', () => {
       },
     ]);
 
-    const {result, waitFor} = reactHooks.renderHook(useProjectSdkNeedsUpdate, {
+    const {result} = renderHook(useProjectSdkNeedsUpdate, {
       wrapper,
       initialProps: {
         minVersion: '8.0.0',
@@ -132,8 +139,10 @@ describe('useProjectSdkNeedsUpdate', () => {
 
     await waitFor(() => {
       expect(result.current.isError).toBeFalsy();
-      expect(result.current.isFetching).toBeFalsy();
-      expect(result.current.needsUpdate).toBeFalsy();
     });
+    await waitFor(() => {
+      expect(result.current.isFetching).toBeFalsy();
+    });
+    expect(result.current.needsUpdate).toBeFalsy();
   });
 });

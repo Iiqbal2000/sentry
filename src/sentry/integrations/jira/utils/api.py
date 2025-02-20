@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from rest_framework import status
 from rest_framework.response import Response
 
-from sentry.integrations.utils import sync_group_assignee_inbound
-from sentry.services.hybrid_cloud.integration import integration_service
-from sentry.services.hybrid_cloud.integration.model import RpcIntegration
+from sentry.integrations.services.integration import integration_service
+from sentry.integrations.services.integration.model import RpcIntegration
+from sentry.integrations.utils.sync import sync_group_assignee_inbound
 from sentry.shared_integrations.exceptions import ApiError
 
-from ...mixins import IssueSyncMixin
+from ...mixins.issues import IssueSyncIntegration
+from ...project_management.metrics import (
+    ProjectManagementActionType,
+    ProjectManagementEvent,
+    ProjectManagementHaltReason,
+)
 from ..client import JiraCloudClient
 
 logger = logging.getLogger(__name__)
@@ -48,17 +54,19 @@ def handle_assignee_change(
     data: Mapping[str, Any],
     use_email_scope: bool = False,
 ) -> None:
+    issue_key = data["issue"]["key"]
+
+    log_context = {"issue_key": issue_key, "integration_id": integration.id}
     assignee_changed = any(
         item for item in data["changelog"]["items"] if item["field"] == "assignee"
     )
     if not assignee_changed:
+        logger.info("jira.assignee-not-in-changelog", extra=log_context)
         return
 
-    fields = data["issue"]["fields"]
-
     # If there is no assignee, assume it was unassigned.
+    fields = data["issue"]["fields"]
     assignee = fields.get("assignee")
-    issue_key = data["issue"]["key"]
 
     if assignee is None:
         sync_group_assignee_inbound(integration, None, issue_key, assign=False)
@@ -66,38 +74,51 @@ def handle_assignee_change(
 
     email = get_assignee_email(integration, assignee, use_email_scope)
     if not email:
-        logger.info(
-            "missing-assignee-email",
-            extra={"issue_key": issue_key, "integration_id": integration.id},
-        )
+        logger.info("jira.missing-assignee-email", extra=log_context)
         return
 
     sync_group_assignee_inbound(integration, email, issue_key, assign=True)
 
 
-def handle_status_change(integration, data):
-    status_changed = any(item for item in data["changelog"]["items"] if item["field"] == "status")
-    if not status_changed:
-        return
-
-    issue_key = data["issue"]["key"]
-
-    try:
-        changelog = next(item for item in data["changelog"]["items"] if item["field"] == "status")
-    except StopIteration:
-        logger.info(
-            "missing-changelog-status",
-            extra={"issue_key": issue_key, "integration_id": integration.id},
+# TODO(Gabe): Consolidate this with VSTS's implementation, create DTO for status
+# changes.
+def handle_status_change(integration: RpcIntegration, data: Mapping[str, Any]) -> None:
+    with ProjectManagementEvent(
+        action_type=ProjectManagementActionType.INBOUND_STATUS_SYNC, integration=integration
+    ).capture() as lifecycle:
+        issue_key = data["issue"]["key"]
+        status_changed = any(
+            item for item in data["changelog"]["items"] if item["field"] == "status"
         )
-        return
+        log_context = {"issue_key": issue_key, "integration_id": integration.id}
 
-    _, org_integrations = integration_service.get_organization_contexts(
-        integration_id=integration.id
-    )
-    for oi in org_integrations:
-        install = integration.get_installation(organization_id=oi.organization_id)
-        if isinstance(install, IssueSyncMixin):
-            install.sync_status_inbound(issue_key, {"changelog": changelog, "issue": data["issue"]})
+        if not status_changed:
+            logger.info("jira.handle_status_change.unchanged", extra=log_context)
+            return
+
+        try:
+            changelog = next(
+                item for item in data["changelog"]["items"] if item["field"] == "status"
+            )
+        except StopIteration:
+            lifecycle.record_halt(
+                ProjectManagementHaltReason.SYNC_INBOUND_MISSING_CHANGELOG_STATUS, extra=log_context
+            )
+            logger.info("jira.missing-changelog-status", extra=log_context)
+            return
+
+        result = integration_service.organization_contexts(integration_id=integration.id)
+        for oi in result.organization_integrations:
+            install = integration.get_installation(organization_id=oi.organization_id)
+            if isinstance(install, IssueSyncIntegration):
+                install.sync_status_inbound(
+                    issue_key, {"changelog": changelog, "issue": data["issue"]}
+                )
+            else:
+                lifecycle.record_halt(
+                    ProjectManagementHaltReason.SYNC_NON_SYNC_INTEGRATION_PROVIDED,
+                    extra=log_context,
+                )
 
 
 def handle_jira_api_error(error: ApiError, message: str = "") -> Mapping[str, str] | None:

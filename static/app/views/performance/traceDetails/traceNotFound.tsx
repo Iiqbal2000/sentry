@@ -1,7 +1,7 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import {Alert} from 'sentry/components/alert';
+import {Alert} from 'sentry/components/core/alert';
 import Link from 'sentry/components/links/link';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
@@ -13,10 +13,10 @@ import {
 } from 'sentry/components/performance/waterfall/rowDetails';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
-import {TraceMeta} from 'sentry/utils/performance/quickTrace/types';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {TraceMeta} from 'sentry/utils/performance/quickTrace/types';
 
 interface TraceNotFoundProps {
   location: any;
@@ -59,39 +59,43 @@ function TraceNotFound({
 
           if (error) {
             return (
-              <Alert type="error" showIcon>
-                <ErrorLabel>
-                  {tct(
-                    'The trace cannot be shown when all events are errors. An error occurred when attempting to fetch these error events: [error]',
-                    {error: error.message}
-                  )}
-                </ErrorLabel>
-              </Alert>
+              <Alert.Container>
+                <Alert type="error" showIcon>
+                  <ErrorLabel>
+                    {tct(
+                      'The trace cannot be shown when all events are errors. An error occurred when attempting to fetch these error events: [error]',
+                      {error: error.message}
+                    )}
+                  </ErrorLabel>
+                </Alert>
+              </Alert.Container>
             );
           }
 
           return (
-            <Alert type="error" showIcon>
-              <ErrorLabel>
-                {t('The trace cannot be shown when all events are errors.')}
-              </ErrorLabel>
+            <Alert.Container>
+              <Alert type="error" showIcon>
+                <ErrorLabel>
+                  {t('The trace cannot be shown when all events are errors.')}
+                </ErrorLabel>
 
-              <ErrorMessageContent data-test-id="trace-view-errors">
-                {tableData?.data.map(data => (
-                  <Fragment key={data.id}>
-                    <ErrorDot level={data.level as any} />
-                    <ErrorLevel>{data.level}</ErrorLevel>
-                    <ErrorTitle>
-                      <Link
-                        to={`/organizations/${organization.slug}/issues/${data['issue.id']}/events/${data.id}?referrer=performance-trace-not-found`}
-                      >
-                        {data.title}
-                      </Link>
-                    </ErrorTitle>
-                  </Fragment>
-                ))}
-              </ErrorMessageContent>
-            </Alert>
+                <ErrorMessageContent data-test-id="trace-view-errors">
+                  {tableData?.data.map(data => (
+                    <Fragment key={data.id}>
+                      <ErrorDot level={data.level as any} />
+                      <ErrorLevel>{data.level}</ErrorLevel>
+                      <ErrorTitle>
+                        <Link
+                          to={`/organizations/${organization.slug}/issues/${data['issue.id']}/events/${data.id}?referrer=performance-trace-not-found`}
+                        >
+                          {data.title}
+                        </Link>
+                      </ErrorTitle>
+                    </Fragment>
+                  ))}
+                </ErrorMessageContent>
+              </Alert>
+            </Alert.Container>
           );
         }}
       </DiscoverQuery>

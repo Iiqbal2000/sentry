@@ -1,5 +1,4 @@
 import {Component} from 'react';
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
@@ -9,9 +8,10 @@ import NarrowLayout from 'sentry/components/narrowLayout';
 import {IconMegaphone} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
 import {trackAnalytics} from 'sentry/utils/analytics';
 
-type Props = RouteComponentProps<{orgId: string}, {}>;
+type Props = RouteComponentProps<{orgId: string}>;
 
 type State = {
   submitSuccess: boolean | null;
@@ -35,7 +35,7 @@ class OrganizationJoinRequest extends Component<Props, State> {
     addErrorMessage(t('Request to join failed'));
   }
 
-  handleCancel = e => {
+  handleCancel = (e: any) => {
     e.preventDefault();
     const {params} = this.props;
 

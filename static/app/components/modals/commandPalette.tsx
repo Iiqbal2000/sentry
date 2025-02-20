@@ -2,7 +2,7 @@ import {useEffect} from 'react';
 import {ClassNames, css, useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
 import Input from 'sentry/components/input';
 import {Search} from 'sentry/components/search';
 import {t} from 'sentry/locale';
@@ -70,7 +70,7 @@ const InputWrapper = styled('div')`
 const StyledInput = styled(Input)`
   width: 100%;
   padding: ${space(1)};
-  border-radius: ${p => p.theme.modalBorderRadius};
+  border-radius: ${p => p.theme.borderRadius};
 
   outline: none;
   border: none;

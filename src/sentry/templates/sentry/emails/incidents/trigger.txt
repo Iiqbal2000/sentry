@@ -10,10 +10,9 @@ controls are enabled. For more details about this alert alert, view on Sentry:
 Alert: {{ link }}
 Status: {{ status }}
 Project: {{ project_slug }}
-
 Metric: {{ aggregate }}
 Environment: {{ environment }}
-Threshold: {{ threshold_direction_string }} {{ threshold }}
+Threshold: {{ threshold_prefix_string }} {{ threshold }}
 Time Interval: {{ time_window }}
 Query: {{ query }}
 

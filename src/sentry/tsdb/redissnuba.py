@@ -1,6 +1,8 @@
 import inspect
 import time
 
+import sentry_sdk
+
 from sentry.tsdb.base import BaseTSDB, TSDBModel
 from sentry.tsdb.dummy import DummyTSDB
 from sentry.tsdb.redis import RedisTSDB
@@ -28,11 +30,7 @@ method_specifications = {
     "get_sums": (READ, single_model_argument),
     "get_distinct_counts_series": (READ, single_model_argument),
     "get_distinct_counts_totals": (READ, single_model_argument),
-    "get_distinct_counts_union": (READ, single_model_argument),
-    "get_most_frequent": (READ, single_model_argument),
-    "get_most_frequent_series": (READ, single_model_argument),
     "get_frequency_series": (READ, single_model_argument),
-    "get_frequency_totals": (READ, single_model_argument),
     "incr": (WRITE, single_model_argument),
     "incr_multi": (WRITE, lambda callargs: {item[0] for item in callargs["items"]}),
     "merge": (WRITE, single_model_argument),
@@ -80,6 +78,10 @@ def make_method(key):
     def method(self, *a, **kw):
         callargs = inspect.getcallargs(getattr(BaseTSDB, key), self, *a, **kw)
         backend = selector_func(key, callargs, self.switchover_timestamp)
+
+        sentry_sdk.set_tag("tsdb.backend", backend)
+        sentry_sdk.set_tag("tsdb.method", key)
+
         return getattr(self.backends[backend], key)(*a, **kw)
 
     return method

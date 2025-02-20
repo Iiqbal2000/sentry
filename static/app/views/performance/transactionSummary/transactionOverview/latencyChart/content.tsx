@@ -1,5 +1,6 @@
 import {useState} from 'react';
-import {Location} from 'history';
+import {useTheme} from '@emotion/react';
+import type {Location} from 'history';
 
 import {BarChart} from 'sentry/components/charts/barChart';
 import BarChartZoom from 'sentry/components/charts/barChartZoom';
@@ -7,20 +8,19 @@ import ErrorPanel from 'sentry/components/charts/errorPanel';
 import LoadingPanel from 'sentry/components/charts/loadingPanel';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {OrganizationSummary} from 'sentry/types';
+import type {OrganizationSummary} from 'sentry/types/organization';
+import toArray from 'sentry/utils/array/toArray';
 import EventView from 'sentry/utils/discover/eventView';
-import {formatPercentage} from 'sentry/utils/formatters';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
 import Histogram from 'sentry/utils/performance/histogram';
 import HistogramQuery from 'sentry/utils/performance/histogram/histogramQuery';
-import {HistogramData} from 'sentry/utils/performance/histogram/types';
+import type {HistogramData} from 'sentry/utils/performance/histogram/types';
 import {
   computeBuckets,
   formatHistogramData,
 } from 'sentry/utils/performance/histogram/utils';
-import theme from 'sentry/utils/theme';
-import toArray from 'sentry/utils/toArray';
 
-import {ViewProps} from '../../../types';
+import type {ViewProps} from '../../../types';
 import {filterToColor, filterToField, SpanOperationBreakdownFilter} from '../../filter';
 
 import {decodeHistogramZoom, ZOOM_END, ZOOM_START} from './utils';
@@ -56,6 +56,7 @@ function Content({
   queryExtras,
   totalCount,
 }: Props) {
+  const theme = useTheme();
   const [zoomError, setZoomError] = useState(false);
 
   function handleMouseOver() {
@@ -85,13 +86,13 @@ function Content({
 
     const colors =
       currentFilter === SpanOperationBreakdownFilter.NONE
-        ? [...theme.charts.getColorPalette(1)]
+        ? theme.charts.getColorPalette(1)
         : [filterToColor(currentFilter)];
 
     // Use a custom tooltip formatter as we need to replace
     // the tooltip content entirely when zooming is no longer available.
     const tooltip = {
-      formatter(series) {
+      formatter(series: any) {
         const seriesData = toArray(series);
         let contents: string[] = [];
         if (!zoomError) {
@@ -144,7 +145,7 @@ function Content({
             yAxis={{
               type: 'value',
               axisLabel: {
-                formatter: value => formatPercentage(value, 0),
+                formatter: (value: any) => formatPercentage(value, 0),
               },
             }}
             series={[series]}

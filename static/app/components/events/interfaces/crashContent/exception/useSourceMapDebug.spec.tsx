@@ -1,13 +1,14 @@
 import cloneDeep from 'lodash/cloneDeep';
+import {EventStacktraceExceptionFixture} from 'sentry-fixture/eventStacktraceException';
 
-import {EntryException, Event} from 'sentry/types';
+import type {EntryException, Event} from 'sentry/types/event';
 
 import {getUniqueFilesFromException} from './useSourceMapDebug';
 
 function modifyEventFrames(event: Event, modify: any): Event {
   const modifiedEvent = cloneDeep(event);
-  modifiedEvent.entries[0].data.values[0].stacktrace.frames =
-    event.entries[0].data.values[0].stacktrace.frames.map(frame => ({
+  modifiedEvent.entries[0]!.data.values[0].stacktrace.frames =
+    event.entries[0]!.data.values[0].stacktrace.frames.map((frame: any) => ({
       ...frame,
       ...modify,
     }));
@@ -18,11 +19,11 @@ describe('getUniqueFilesFromException', () => {
   const props = {eventId: '0', orgSlug: '0', projectSlug: '0'};
 
   it('returns an array of frame filenames with required props', function () {
-    const event = TestStubs.EventStacktraceException({
+    const event = EventStacktraceExceptionFixture({
       platform: 'javascript',
     });
     const result = getUniqueFilesFromException(
-      (event.entries as EntryException[])[0].data.values!,
+      (event.entries as EntryException[])[0]!.data.values!,
       props
     );
 
@@ -41,13 +42,13 @@ describe('getUniqueFilesFromException', () => {
 
   it('does NOT use frames if all filenames are anonymous', function () {
     const event = modifyEventFrames(
-      TestStubs.EventStacktraceException({
+      EventStacktraceExceptionFixture({
         platform: 'javascript',
       }),
       {filename: '<anonymous>'}
     );
     const result = getUniqueFilesFromException(
-      (event.entries as EntryException[])[0].data.values!,
+      (event.entries as EntryException[])[0]!.data.values!,
       props
     );
 
@@ -56,13 +57,13 @@ describe('getUniqueFilesFromException', () => {
 
   it('uses frames that are relative to home directory', function () {
     const event = modifyEventFrames(
-      TestStubs.EventStacktraceException({
+      EventStacktraceExceptionFixture({
         platform: 'javascript',
       }),
       {absPath: '~/myfile.js', filename: '~/myfile.js'}
     );
     const result = getUniqueFilesFromException(
-      (event.entries as EntryException[])[0].data.values!,
+      (event.entries as EntryException[])[0]!.data.values!,
       props
     );
 

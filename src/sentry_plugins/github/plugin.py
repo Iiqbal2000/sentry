@@ -7,20 +7,19 @@ from rest_framework.response import Response
 
 from sentry import options
 from sentry.exceptions import PluginError
-from sentry.integrations import FeatureDescription, IntegrationFeatures
+from sentry.integrations.base import FeatureDescription, IntegrationFeatures
+from sentry.integrations.services.integration.model import RpcIntegration
+from sentry.integrations.services.integration.service import integration_service
 from sentry.locks import locks
-from sentry.models.integrations.integration import Integration
 from sentry.models.options.organization_option import OrganizationOption
 from sentry.models.organization import Organization
 from sentry.models.repository import Repository
 from sentry.plugins.bases.issue2 import IssueGroupActionEndpoint, IssuePlugin2
 from sentry.plugins.providers import RepositoryProvider
-from sentry.services.hybrid_cloud.integration.model import RpcIntegration
-from sentry.services.hybrid_cloud.integration.service import integration_service
-from sentry.services.hybrid_cloud.user import RpcUser
-from sentry.services.hybrid_cloud.usersocialauth.service import usersocialauth_service
 from sentry.shared_integrations.constants import ERR_INTERNAL, ERR_UNAUTHORIZED
 from sentry.shared_integrations.exceptions import ApiError
+from sentry.users.services.user import RpcUser
+from sentry.users.services.usersocialauth.service import usersocialauth_service
 from sentry.utils.http import absolute_uri
 from sentry_plugins.base import CorePluginMixin
 
@@ -102,7 +101,7 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
     def get_url_module(self):
         return "sentry_plugins.github.urls"
 
-    def is_configured(self, request: Request, project, **kwargs):
+    def is_configured(self, project) -> bool:
         return bool(self.get_option("repo", project))
 
     def get_new_issue_fields(self, request: Request, group, event, **kwargs):
@@ -143,7 +142,7 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
             {
                 "name": "comment",
                 "label": "Comment",
-                "default": "Sentry issue: [{issue_id}]({url})".format(
+                "default": "Sentry Issue: [{issue_id}]({url})".format(
                     url=absolute_uri(group.get_absolute_url(params={"referrer": "github_plugin"})),
                     issue_id=group.qualified_short_id,
                 ),
@@ -164,7 +163,7 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
 
         return (("", "Unassigned"),) + users
 
-    def create_issue(self, request: Request, group, form_data, **kwargs):
+    def create_issue(self, request: Request, group, form_data):
         # TODO: support multiple identities via a selection input in the form?
         with self.get_client(request.user) as client:
             try:
@@ -196,10 +195,10 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
 
         return {"title": issue["title"]}
 
-    def get_issue_label(self, group, issue_id, **kwargs):
+    def get_issue_label(self, group, issue_id: str) -> str:
         return f"GH-{issue_id}"
 
-    def get_issue_url(self, group, issue_id, **kwargs):
+    def get_issue_url(self, group, issue_id: str) -> str:
         # XXX: get_option may need tweaked in Sentry so that it can be pre-fetched in bulk
         repo = self.get_option("repo", group.project)
 
@@ -225,7 +224,7 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
 
         return Response({field: issues})
 
-    def get_configure_plugin_fields(self, request: Request, project, **kwargs):
+    def get_configure_plugin_fields(self, project, **kwargs):
         return [
             {
                 "name": "repo",
@@ -423,53 +422,11 @@ class GitHubRepositoryProvider(GitHubMixin, RepositoryProvider):
                 else:
                     return self._format_commits(repo, res["commits"])
 
-        def get_pr_commits(self, repo, number, actor=None):
-            # (not currently used by sentry)
-            if actor is None:
-                raise NotImplementedError("Cannot fetch commits anonymously")
-
-            # use config name because that is kept in sync via webhooks
-            name = repo.config["name"]
-            try:
-                with self.get_client(actor) as client:
-                    res = client.get_pr_commits(name, number)
-            except Exception as e:
-                self.raise_error(e)
-            else:
-                return self._format_commits(repo, res)
-
 
 class GitHubAppsRepositoryProvider(GitHubRepositoryProvider):
     name = "GitHub Apps"
     auth_provider = "github_apps"
     logger = logging.getLogger("sentry.plugins.github_apps")
-
-    def get_install_url(self):
-        return options.get("github.apps-install-url")
-
-    def get_available_auths(self, user, organization, integrations, social_auths, **kwargs):
-        allowed_gh_installations = set(self.get_installations(user))
-
-        linked_integrations = {i.id for i in integrations}
-
-        _integrations = list(Integration.objects.filter(external_id__in=allowed_gh_installations))
-
-        # add in integrations that might have been set up for org
-        # by users w diff permissions
-        _integrations.extend(
-            [i for i in integrations if i.external_id not in allowed_gh_installations]
-        )
-
-        return [
-            {
-                "defaultAuthId": None,
-                "user": None,
-                "externalId": i.external_id,
-                "integrationId": str(i.id),
-                "linked": i.id in linked_integrations,
-            }
-            for i in _integrations
-        ]
 
     def link_auth(self, user, organization, data):
         integration_id = data["integration_id"]

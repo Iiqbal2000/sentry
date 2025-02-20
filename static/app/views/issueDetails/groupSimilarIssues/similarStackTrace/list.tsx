@@ -1,5 +1,6 @@
 import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
+import type {Location} from 'history';
 
 import {Button} from 'sentry/components/button';
 import EmptyStateWarning from 'sentry/components/emptyStateWarning';
@@ -10,18 +11,22 @@ import SimilarSpectrum from 'sentry/components/similarSpectrum';
 import {t} from 'sentry/locale';
 import type {SimilarItem} from 'sentry/stores/groupingStore';
 import {space} from 'sentry/styles/space';
-import type {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import useOrganization from 'sentry/utils/useOrganization';
 
 import Item from './item';
 import Toolbar from './toolbar';
 
 type DefaultProps = {
-  filteredItems: Array<SimilarItem>;
+  filteredItems: SimilarItem[];
 };
 
 type Props = {
   groupId: string;
-  items: Array<SimilarItem>;
+  hasSimilarityEmbeddingsFeature: boolean;
+  items: SimilarItem[];
+  location: Location;
   onMerge: () => void;
   orgId: Organization['id'];
   pageLinks: string | null;
@@ -48,12 +53,21 @@ function List({
   filteredItems = [],
   pageLinks,
   onMerge,
+  location,
+  hasSimilarityEmbeddingsFeature,
 }: Props) {
   const [showAllItems, setShowAllItems] = useState(false);
 
   const hasHiddenItems = !!filteredItems.length;
   const hasResults = items.length > 0 || hasHiddenItems;
   const itemsWithFiltered = items.concat(showAllItems ? filteredItems : []);
+  const organization = useOrganization();
+  const itemsWouldGroup = hasSimilarityEmbeddingsFeature
+    ? itemsWithFiltered.map(item => ({
+        id: item.issue.id,
+        shouldBeGrouped: item.aggregate?.shouldBeGrouped,
+      }))
+    : undefined;
 
   if (!hasResults) {
     return <Empty />;
@@ -62,11 +76,28 @@ function List({
   return (
     <Fragment>
       <Header>
-        <SimilarSpectrum />
+        {!hasSimilarityEmbeddingsFeature && (
+          <SimilarSpectrum
+            highSpectrumLabel={t('Similar')}
+            lowSpectrumLabel={t('Not Similar')}
+          />
+        )}
+        {hasSimilarityEmbeddingsFeature && (
+          <SimilarSpectrum
+            highSpectrumLabel={t('Most Similar')}
+            lowSpectrumLabel={t('Less Similar')}
+          />
+        )}
       </Header>
-
       <Panel>
-        <Toolbar onMerge={onMerge} />
+        <Toolbar
+          onMerge={onMerge}
+          groupId={groupId}
+          project={project}
+          organization={organization}
+          itemsWouldGroup={itemsWouldGroup}
+          hasSimilarityEmbeddingsFeature={hasSimilarityEmbeddingsFeature}
+        />
 
         <PanelBody>
           {itemsWithFiltered.map(item => (
@@ -75,11 +106,13 @@ function List({
               orgId={orgId}
               groupId={groupId}
               project={project}
+              location={location}
+              hasSimilarityEmbeddingsFeature={hasSimilarityEmbeddingsFeature}
               {...item}
             />
           ))}
 
-          {hasHiddenItems && !showAllItems && (
+          {hasHiddenItems && !showAllItems && !hasSimilarityEmbeddingsFeature && (
             <Footer>
               <Button onClick={() => setShowAllItems(true)}>
                 {t('Show %s issues below threshold', filteredItems.length)}

@@ -1,10 +1,11 @@
 ---
-created: '2023-02-01T08:22:06.277778Z'
+created: '2024-12-17T22:47:10.249449+00:00'
 creator: sentry
 source: tests/sentry/grouping/test_variants.py
 ---
 app:
   hash: "029f3b967068b1539f96957b7c0451d7"
+  contributing component: exception
   component:
     app*
       exception*
@@ -14,7 +15,7 @@ app:
           "iOS_Swift.SampleError"
           0
         value (ignored because ns-error info takes precedence)
-          "Code=<int> Description=The operation couldn\u2019t be completed. (iOS_Swift.SampleError error <int>.)"
+          "Code=<int> Description=The operation couldn’t be completed. (iOS_Swift.SampleError error <int>.)"
       threads (exception of app takes precedence)
         stacktrace*
           frame (non app frame)
@@ -26,7 +27,7 @@ app:
           frame (non app frame)
             function*
               "UIApplicationMain"
-          frame (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame (non app frame)
             function*
               "-[UIApplication _run]"
           frame (non app frame)
@@ -74,7 +75,7 @@ app:
           frame (non app frame)
             function*
               "-[UIControl sendAction:to:forEvent:]"
-          frame (non app frame)
+          frame (marked out of app by stack trace rule (family:native function:__*[[]Sentry* -app -group))
             function*
               "__44-[SentryBreadcrumbTracker swizzleSendAction]_block_invoke_2"
           frame (non app frame)
@@ -89,6 +90,7 @@ app:
 --------------------------------------------------------------------------
 system:
   hash: null
+  contributing component: null
   component:
     system (exception of app takes precedence)
       threads (exception of app takes precedence)
@@ -102,7 +104,7 @@ system:
           frame (ignored by stack trace rule (category:threadbase -group v-group))
             function*
               "UIApplicationMain"
-          frame* (marked as prefix frame by stack trace rule (category:ui +sentinel +prefix))
+          frame*
             function*
               "-[UIApplication _run]"
           frame (ignored by stack trace rule (category:internals -group))
@@ -150,7 +152,7 @@ system:
           frame (ignored by stack trace rule (category:internals -group))
             function*
               "-[UIControl sendAction:to:forEvent:]"
-          frame (ignored by stack trace rule (category:internals -group))
+          frame (ignored by stack trace rule (family:native function:__*[[]Sentry* -app -group))
             function*
               "__44-[SentryBreadcrumbTracker swizzleSendAction]_block_invoke_2"
           frame (ignored by stack trace rule (category:internals -group))

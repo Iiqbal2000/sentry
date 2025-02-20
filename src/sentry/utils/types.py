@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import typing
+from typing import TypeGuard
 
-from typing_extensions import TypeGuard
 from yaml.parser import ParserError
 from yaml.scanner import ScannerError
 
@@ -145,7 +145,7 @@ class SequenceType(Type[list]):
     expected_types = (list,)
     compatible_types = (str, tuple, list)
 
-    def _default(self) -> typing.List[typing.Any]:
+    def _default(self) -> list[typing.Any]:
         # make sure we create a fresh list each time
         return []
 
@@ -181,7 +181,35 @@ _type_mapping: dict[type[object], Type] = {
 }
 
 
-def type_from_value(value: typing.Any) -> typing.Callable[[typing.Any], typing.Any]:
+# @typing.overload
+# def type_from_value(value: bool) -> BoolType:
+
+
+@typing.overload
+def type_from_value(value: int) -> IntType: ...
+
+
+@typing.overload
+def type_from_value(value: float) -> FloatType: ...
+
+
+@typing.overload
+def type_from_value(value: bytes) -> StringType: ...
+
+
+@typing.overload
+def type_from_value(value: str) -> StringType: ...
+
+
+@typing.overload
+def type_from_value(value: dict) -> DictType: ...
+
+
+@typing.overload
+def type_from_value(value: list) -> SequenceType: ...
+
+
+def type_from_value(value):
     """Fetch Type based on a primitive value"""
     return _type_mapping[type(value)]
 

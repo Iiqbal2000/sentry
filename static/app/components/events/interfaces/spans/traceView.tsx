@@ -1,20 +1,22 @@
-import {createRef, memo, useEffect, useState} from 'react';
+import {memo, useEffect, useRef, useState} from 'react';
+import {useTheme} from '@emotion/react';
 import {Observer} from 'mobx-react';
 
 import EmptyStateWarning from 'sentry/components/emptyStateWarning';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
-import {TracePerformanceIssue} from 'sentry/utils/performance/quickTrace/types';
+import type {Organization} from 'sentry/types/organization';
+import type {TracePerformanceIssue} from 'sentry/utils/performance/quickTrace/types';
 
 import * as CursorGuideHandler from './cursorGuideHandler';
 import * as DividerHandlerManager from './dividerHandlerManager';
-import DragManager, {DragManagerChildrenProps} from './dragManager';
+import type {DragManagerChildrenProps} from './dragManager';
+import DragManager from './dragManager';
 import TraceViewHeader from './header';
 import * as ScrollbarManager from './scrollbarManager';
 import * as SpanContext from './spanContext';
 import SpanTree from './spanTree';
 import {getTraceContext} from './utils';
-import WaterfallModel from './waterfallModel';
+import type WaterfallModel from './waterfallModel';
 
 type Props = {
   organization: Organization;
@@ -25,10 +27,11 @@ type Props = {
 };
 
 function TraceView(props: Props) {
-  const traceViewRef = createRef<HTMLDivElement>();
-  const traceViewHeaderRef = createRef<HTMLDivElement>();
-  const virtualScrollBarContainerRef = createRef<HTMLDivElement>();
-  const minimapInteractiveRef = createRef<HTMLDivElement>();
+  const traceViewRef = useRef<HTMLDivElement>(null);
+  const traceViewHeaderRef = useRef<HTMLDivElement>(null);
+  const virtualScrollBarContainerRef = useRef<HTMLDivElement>(null);
+  const minimapInteractiveRef = useRef<HTMLDivElement>(null);
+  const theme = useTheme();
 
   const [isMounted, setIsMounted] = useState(false);
 
@@ -49,6 +52,7 @@ function TraceView(props: Props) {
 
         return (
           <TraceViewHeader
+            theme={theme}
             traceViewHeaderRef={traceViewHeaderRef}
             organization={props.organization}
             minimapInteractiveRef={minimapInteractiveRef}
@@ -66,6 +70,7 @@ function TraceView(props: Props) {
               viewStart: 0,
               viewEnd: 1,
             })}
+            isEmbedded={!!props.isEmbedded}
           />
         );
       }}
@@ -81,10 +86,17 @@ function TraceView(props: Props) {
       </EmptyStateWarning>
     );
   }
-  if (!waterfallModel.affectedSpanIds && performanceIssues) {
-    waterfallModel.affectedSpanIds = performanceIssues
-      .map(issue => issue.suspect_spans)
-      .flat();
+  if (
+    (!waterfallModel.affectedSpanIds || !waterfallModel.affectedSpanIds.length) &&
+    performanceIssues
+  ) {
+    const suspectSpans = performanceIssues.flatMap(issue => issue.suspect_spans);
+    if (suspectSpans.length) {
+      waterfallModel.affectedSpanIds = performanceIssues.flatMap(issue => [
+        ...issue.suspect_spans,
+        ...issue.span,
+      ]);
+    }
   }
 
   return (
@@ -133,6 +145,7 @@ function TraceView(props: Props) {
                                       operationNameFilters={
                                         waterfallModel.operationNameFilters
                                       }
+                                      isEmbedded={!!isEmbedded}
                                     />
                                   )}
                                 </Observer>

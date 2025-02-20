@@ -2,10 +2,10 @@ import re
 
 import pytest
 
+from sentry.hybridcloud.models.outbox import RegionOutbox, outbox_context
+from sentry.hybridcloud.outbox.category import OutboxCategory, OutboxScope
 from sentry.models.organization import Organization, OrganizationStatus
-from sentry.models.outbox import OutboxCategory, OutboxScope, RegionOutbox, outbox_context
-from sentry.services.hybrid_cloud.organization_actions.impl import (
-    create_organization_with_outbox_message,
+from sentry.organizations.services.organization_actions.impl import (
     generate_deterministic_organization_slug,
     mark_organization_as_pending_deletion_with_outbox_message,
     unmark_organization_as_pending_deletion_with_outbox_message,
@@ -13,7 +13,6 @@ from sentry.services.hybrid_cloud.organization_actions.impl import (
     upsert_organization_by_org_id_with_outbox_message,
 )
 from sentry.testutils.cases import TestCase
-from sentry.testutils.silo import region_silo_test
 
 
 def assert_outbox_update_message_exists(org: Organization, expected_count: int):
@@ -29,28 +28,6 @@ def assert_outbox_update_message_exists(org: Organization, expected_count: int):
         assert org_update_outbox.category == OutboxCategory.ORGANIZATION_UPDATE
 
 
-@region_silo_test(stable=True)
-class OrganizationUpdateTest(TestCase):
-    def setUp(self):
-        self.org: Organization = self.create_organization(slug="sluggy", name="barfoo")
-
-    def test_create_organization_with_outbox_message(self):
-        with outbox_context(flush=False):
-            org: Organization = create_organization_with_outbox_message(
-                create_options={
-                    "slug": "santry",
-                    "name": "santry",
-                    "status": OrganizationStatus.ACTIVE,
-                }
-            )
-
-        assert org.id
-        assert org.slug == "santry"
-        assert org.name == "santry"
-        assert_outbox_update_message_exists(org=org, expected_count=1)
-
-
-@region_silo_test(stable=True)
 class OrganizationUpdateWithOutboxTest(TestCase):
     def setUp(self):
         self.org: Organization = self.create_organization(slug="sluggy", name="barfoo")
@@ -71,7 +48,6 @@ class OrganizationUpdateWithOutboxTest(TestCase):
             update_organization_with_outbox_message(org_id=1234, update_data={"name": "foobar"})
 
 
-@region_silo_test(stable=True)
 class OrganizationUpsertWithOutboxTest(TestCase):
     def setUp(self):
         self.org: Organization = self.create_organization(slug="sluggy", name="barfoo")
@@ -134,7 +110,6 @@ class OrganizationUpsertWithOutboxTest(TestCase):
         assert_outbox_update_message_exists(org=db_created_org, expected_count=1)
 
 
-@region_silo_test(stable=True)
 class OrganizationMarkOrganizationAsPendingDeletionWithOutboxMessageTest(TestCase):
     def setUp(self):
         self.org: Organization = self.create_organization(
@@ -178,7 +153,6 @@ class OrganizationMarkOrganizationAsPendingDeletionWithOutboxMessageTest(TestCas
         assert_outbox_update_message_exists(self.org, 0)
 
 
-@region_silo_test(stable=True)
 class UnmarkOrganizationForDeletionWithOutboxMessageTest(TestCase):
     def setUp(self):
         self.org: Organization = self.create_organization(

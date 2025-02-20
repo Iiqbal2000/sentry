@@ -1,14 +1,15 @@
-import {mat3, vec2, vec3} from 'gl-matrix';
+import type {mat3, vec2} from 'gl-matrix';
+import {vec3} from 'gl-matrix';
 
-import {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
-import {FlamegraphChart} from 'sentry/utils/profiling/flamegraphChart';
+import type {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
+import type {FlamegraphChart} from 'sentry/utils/profiling/flamegraphChart';
 import {
   getContext,
   lowerBound,
   resizeCanvasToDisplaySize,
   upperBound,
 } from 'sentry/utils/profiling/gl/utils';
-import {Rect} from 'sentry/utils/profiling/speedscope';
+import type {Rect} from 'sentry/utils/profiling/speedscope';
 
 function findYIntervals(
   configView: Rect,
@@ -50,10 +51,10 @@ function binaryFindNearest(
   if (!serie.points.length) {
     return null;
   }
-  if (target < serie.points[0].x) {
+  if (target < serie.points[0]!.x) {
     return null;
   }
-  if (target > serie.points[serie.points.length - 1].x) {
+  if (target > serie.points[serie.points.length - 1]!.x) {
     return null;
   }
 
@@ -62,7 +63,7 @@ function binaryFindNearest(
 
   while (left <= right) {
     const mid = Math.floor(left + (right - left) / 2);
-    const point = serie.points[mid];
+    const point = serie.points[mid]!;
 
     if (Math.abs(point.x - target) < tolerance) {
       return mid;
@@ -108,20 +109,16 @@ export class FlamegraphChartRenderer {
     tolerance: number
   ): FlamegraphChart['series'] {
     const matches: FlamegraphChart['series'] = [];
-    for (let i = 0; i < this.chart.series.length; i++) {
-      const index = binaryFindNearest(
-        this.chart.series[i],
-        _configSpaceCursor[0],
-        tolerance
-      );
+    for (const serie of this.chart.series) {
+      const index = binaryFindNearest(serie, _configSpaceCursor[0], tolerance);
 
       if (index !== null) {
         matches.push({
-          name: this.chart.series[i].name,
-          type: this.chart.series[i].type,
-          lineColor: this.chart.series[i].lineColor,
-          fillColor: this.chart.series[i].fillColor,
-          points: [this.chart.series[i].points[index]],
+          name: serie.name,
+          type: serie.type,
+          lineColor: serie.lineColor,
+          fillColor: serie.fillColor,
+          points: [serie.points[index]!],
         });
       }
     }
@@ -171,13 +168,12 @@ export class FlamegraphChartRenderer {
     vec3.transformMat3(space, space, configViewToPhysicalSpace);
 
     // Draw series
-    for (let i = 0; i < this.chart.series.length; i++) {
+    for (const serie of this.chart.series) {
       this.context.lineWidth = 1 * window.devicePixelRatio;
-      this.context.fillStyle = this.chart.series[i].fillColor;
-      this.context.strokeStyle = this.chart.series[i].lineColor;
+      this.context.fillStyle = serie.fillColor;
+      this.context.strokeStyle = serie.lineColor;
       this.context.lineCap = 'round';
       this.context.beginPath();
-      const serie = this.chart.series[i];
 
       let start = lowerBound(configView.left, serie.points, a => a.x);
       let end = upperBound(configView.right, serie.points, a => a.x);
@@ -193,7 +189,7 @@ export class FlamegraphChartRenderer {
       }
 
       for (let j = start; j < end; j++) {
-        const point = serie.points[j];
+        const point = serie.points[j]!;
 
         const r = vec3.fromValues(point.x, point.y, 1);
         vec3.transformMat3(r, r, configViewToPhysicalSpace);
@@ -210,7 +206,7 @@ export class FlamegraphChartRenderer {
         // this.context.arc(r[0], r[1], 2, 0, 2 * Math.PI);
       }
 
-      if (this.chart.series[i].type === 'line') {
+      if (serie.type === 'line') {
         this.context.stroke();
       } else {
         this.context.fill();
@@ -222,8 +218,8 @@ export class FlamegraphChartRenderer {
     this.context.fillStyle = this.theme.COLORS.CHART_LABEL_COLOR;
     let lastIntervalTxt: string | undefined = undefined;
     for (let i = 0; i < intervals.length; i++) {
-      const interval = vec3.fromValues(configView.left, intervals[i], 1);
-      const text = this.chart.formatter(intervals[i]);
+      const interval = vec3.fromValues(configView.left, intervals[i]!, 1);
+      const text = this.chart.formatter(intervals[i]!);
 
       if (text === lastIntervalTxt) {
         continue;

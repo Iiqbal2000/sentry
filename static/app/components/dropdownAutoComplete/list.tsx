@@ -2,11 +2,11 @@ import {Fragment} from 'react';
 import {AutoSizer, List as ReactVirtualizedList} from 'react-virtualized';
 
 import Row from './row';
-import {ItemsAfterFilter} from './types';
+import type {ItemsAfterFilter} from './types';
 
 type RowProps = Pick<
   React.ComponentProps<typeof Row>,
-  'itemSize' | 'inputValue' | 'getItemProps' | 'registerVisibleItem'
+  'itemSize' | 'getItemProps' | 'registerVisibleItem'
 >;
 
 type Props = {
@@ -82,7 +82,7 @@ function List({
             onScroll={onScroll}
             rowCount={items.length}
             rowHeight={({index}) =>
-              items[index].groupLabel && virtualizedLabelHeight
+              items[index]!.groupLabel && virtualizedLabelHeight
                 ? virtualizedLabelHeight
                 : virtualizedHeight
             }
@@ -90,8 +90,8 @@ function List({
               <Row
                 key={key}
                 style={style}
-                item={items[index]}
-                isHighlighted={items[index].index === highlightedIndex}
+                item={items[index]!}
+                isHighlighted={items[index]!.index === highlightedIndex}
                 {...rowProps}
               />
             )}

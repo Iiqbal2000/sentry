@@ -1,5 +1,10 @@
-import type {PlatformKey} from 'sentry/types';
-import {Organization} from 'sentry/types';
+// This file contains the analytic events for the performance landing page.
+// The analytic events for the insights modules are stored separately in
+// analytics/insightAnalyticsEvents.tsx
+import type {FieldValue} from 'sentry/components/forms/model';
+import type {Organization} from 'sentry/types/organization';
+import type {PlatformKey} from 'sentry/types/project';
+import type {LandingDisplayField} from 'sentry/views/performance/landing/utils';
 
 type SampleTransactionParam = {
   platform?: PlatformKey;
@@ -15,42 +20,23 @@ type PageLayoutParams = {
 };
 
 export type PerformanceEventParameters = {
-  'performance_views.all_events.open_in_discover': {};
-  'performance_views.anomalies.anomalies_tab_clicked': PageLayoutParams;
+  'performance_views.all_events.open_in_discover': Record<string, unknown>;
   'performance_views.change_view': {
     project_platforms: string;
     view_name: string;
   };
   'performance_views.create_sample_transaction': SampleTransactionParam;
-  'performance_views.event_details.anchor_span': {
-    span_id: string;
-  };
-  'performance_views.event_details.filter_by_op': {
-    operation: string;
-  };
-  'performance_views.event_details.json_button_click': {};
-  'performance_views.event_details.open_span_details': {
-    operation: string;
-    origin: string;
-    project_platform: string;
-  };
-  'performance_views.event_details.search_query': {};
   'performance_views.events.events_tab_clicked': PageLayoutParams;
   'performance_views.filter_dropdown.selection': {
     action: string;
   };
-  'performance_views.landing.table.seen': {};
+  'performance_views.landing.table.seen': Record<string, unknown>;
   'performance_views.landing.table.unparameterized': {
     first_event: 'none' | '14d' | '30d' | '>30d';
     hit_multi_project_cap: boolean;
     sent_transaction: boolean;
     single_project: boolean;
     stats_period: string;
-  };
-  'performance_views.landingv2.display.filter_change': {
-    field: string;
-    max_value: number;
-    min_value: number;
   };
   'performance_views.landingv2.transactions.sort': {
     direction?: string;
@@ -88,10 +74,14 @@ export type PerformanceEventParameters = {
   'performance_views.overview.change_chart': {
     metric: string;
   };
+  'performance_views.overview.has_data': {
+    table_data_state: 'has_data' | 'no_data' | 'onboarding';
+    tab?: LandingDisplayField;
+  };
   'performance_views.overview.navigate.summary': {
     project_platforms: string;
   };
-  'performance_views.overview.search': {};
+  'performance_views.overview.search': Record<string, unknown>;
   'performance_views.performance_change_explorer.function_link_clicked': {
     function: string;
     package: string;
@@ -124,9 +114,27 @@ export type PerformanceEventParameters = {
     key: string;
     to: string;
   };
-  'performance_views.project_transaction_threshold.clear': {};
+  'performance_views.project_transaction_threshold.clear': Record<string, unknown>;
   'performance_views.relative_breakdown.selection': {
     action: string;
+  };
+  'performance_views.sample_spans.filter_updated': {
+    filter: string;
+    new_state: FieldValue;
+    organization: Organization;
+    source: string;
+  };
+  'performance_views.sample_spans.opened': {
+    organization: Organization;
+    source: string;
+  };
+  'performance_views.sample_spans.span_clicked': {
+    organization: Organization;
+    source: string;
+  };
+  'performance_views.sample_spans.try_different_samples_clicked': {
+    organization: Organization;
+    source: string;
   };
   'performance_views.span_summary.change_chart': {
     change_to_display: string;
@@ -138,17 +146,16 @@ export type PerformanceEventParameters = {
     sort_column?: string;
   };
   'performance_views.spans.spans_tab_clicked': PageLayoutParams;
-  'performance_views.summary.create_alert_clicked': {};
-  'performance_views.summary.open_issues': {};
-  'performance_views.summary.tag_explorer.cell_action': {};
-  'performance_views.summary.tag_explorer.change_page': {};
+  'performance_views.summary.create_alert_clicked': Record<string, unknown>;
+  'performance_views.summary.open_issues': Record<string, unknown>;
+  'performance_views.summary.tag_explorer.cell_action': Record<string, unknown>;
+  'performance_views.summary.tag_explorer.change_page': Record<string, unknown>;
   'performance_views.summary.tag_explorer.sort': {
     direction?: string;
     field?: string;
   };
-  'performance_views.summary.tag_explorer.tag_value': {};
-  'performance_views.summary.tag_explorer.visit_tag_key': {};
-  'performance_views.summary.view_in_transaction_events': {};
+  'performance_views.summary.tag_explorer.visit_tag_key': Record<string, unknown>;
+  'performance_views.summary.view_in_transaction_events': Record<string, unknown>;
   'performance_views.tags.change_aggregate_column': {
     value: string;
   };
@@ -157,21 +164,25 @@ export type PerformanceEventParameters = {
     is_other_tag: boolean;
     to_tag: string;
   };
-  'performance_views.tags.interaction': {};
-  'performance_views.tags.jump_to_release': {};
+  'performance_views.tags.interaction': Record<string, unknown>;
+  'performance_views.tags.jump_to_release': Record<string, unknown>;
   'performance_views.tags.tags_tab_clicked': PageLayoutParams;
   'performance_views.team_key_transaction.set': {
     action: string;
   };
   'performance_views.tour.advance': PerformanceTourParams;
   'performance_views.tour.close': PerformanceTourParams;
-  'performance_views.tour.start': {};
-  'performance_views.trace_view.open_in_discover': {};
+  'performance_views.tour.start': Record<string, unknown>;
+  'performance_views.trace_view.open_in_discover': Record<string, unknown>;
   'performance_views.trace_view.open_transaction_details': {
     operation: string;
     transaction: string;
   };
-  'performance_views.trace_view.view': {};
+  'performance_views.trace_view.view': Record<string, unknown>;
+  'performance_views.trace_view_v1_page_load': {
+    organization: Organization;
+    source: string;
+  };
   'performance_views.transactionEvents.cellaction': {
     action: string;
   };
@@ -192,7 +203,7 @@ export type PerformanceEventParameters = {
   'performance_views.transaction_summary.status_breakdown_click': {
     status: string;
   };
-  'performance_views.transaction_summary.view': {};
+  'performance_views.transaction_summary.view': Record<string, unknown>;
   'performance_views.trends.change_duration': {
     value: string;
     widget_type: string;
@@ -219,8 +230,7 @@ export type PerformanceEventParameters = {
   };
   'performance_views.vitals.filter_changed': {value: string};
   'performance_views.vitals.open_all_events': {vital: string};
-  'performance_views.vitals.open_in_discover': {vital: string};
-  'performance_views.vitals.reset_view': {};
+  'performance_views.vitals.reset_view': Record<string, unknown>;
   'performance_views.vitals.vitals_tab_clicked': PageLayoutParams;
 };
 
@@ -234,8 +244,6 @@ export const performanceEventMap: Record<PerformanceEventKey, string | null> = {
   'performance_views.change_view': 'Performance Views: Change View',
   'performance_views.landingv2.transactions.sort':
     'Performance Views: Landing Transactions Sorted',
-  'performance_views.landingv2.display.filter_change':
-    'Performance Views: Landing v2 Display Filter Change',
   'performance_views.overview.navigate.summary':
     'Performance Views: Overview view summary',
   'performance_views.overview.cellaction': 'Performance Views: Cell Action Clicked',
@@ -243,20 +251,28 @@ export const performanceEventMap: Record<PerformanceEventKey, string | null> = {
     'Performance Views: Landing Widget Interaction',
   'performance_views.landingv3.widget.switch':
     'Performance Views: Landing Widget Switched',
+  'performance_views.trace_view_v1_page_load':
+    'Performance Views: Trace View v1 Page Load',
   'performance_views.landingv3.batch_queries':
     'Performance Views: Landing Query Batching',
   'performance_views.landingv3.display_change': 'Performance Views: Switch Landing Tabs',
   'performance_views.landingv3.table_pagination':
     'Performance Views: Landing Page Transactions Table Page Changed',
   'performance_views.overview.change_chart': 'Performance Views: Change Overview Chart',
+  'performance_views.overview.has_data':
+    'Performance Views: Transaction overview with data present',
+  'performance_views.sample_spans.opened': 'Performance Views: Sample spans panel opened',
+  'performance_views.sample_spans.span_clicked': 'Performance Views: Sample span clicked',
+  'performance_views.sample_spans.try_different_samples_clicked':
+    'Performance Views: Try Different Samples clicked',
+  'performance_views.sample_spans.filter_updated':
+    'Performance Views: Sample spans panel filter updated',
   'performance_views.span_summary.change_chart':
     'Performance Views: Span Summary displayed chart changed',
   'performance_views.spans.change_op': 'Performance Views: Change span operation name',
   'performance_views.spans.change_sort': 'Performance Views: Change span sort column',
   'performance_views.summary.create_alert_clicked':
     'Performance Views: Create alert clicked',
-  'performance_views.summary.tag_explorer.tag_value':
-    'Performance Views: Tag Explorer Value Clicked',
   'performance_views.summary.tag_explorer.cell_action':
     'Performance Views: Tag Explorer Cell Action Clicked',
   'performance_views.summary.tag_explorer.visit_tag_key':
@@ -301,16 +317,6 @@ export const performanceEventMap: Record<PerformanceEventKey, string | null> = {
     'Performance Views: Trends Widget Page Changed',
   'performance_views.trends.change_duration':
     'Performance Views: Trends Widget Duration Changed',
-  'performance_views.event_details.filter_by_op':
-    'Performance Views: Event Details page operation filter applied',
-  'performance_views.event_details.search_query':
-    'Performance Views: Event Details search query',
-  'performance_views.event_details.open_span_details':
-    'Performance Views: Event Details span details opened',
-  'performance_views.event_details.anchor_span':
-    'Performance Views: Event Details span anchored',
-  'performance_views.event_details.json_button_click':
-    'Performance Views: Event Details JSON button clicked',
   'performance_views.transactionEvents.cellaction':
     'Performance Views: Transaction Events Tab Cell Action Clicked',
   'performance_views.transactionEvents.sort':
@@ -329,8 +335,6 @@ export const performanceEventMap: Record<PerformanceEventKey, string | null> = {
   'performance_views.tags.tags_tab_clicked': 'Performance Views: Tags tab clicked',
   'performance_views.events.events_tab_clicked': 'Performance Views: Events tab clicked',
   'performance_views.spans.spans_tab_clicked': 'Performance Views: Spans tab clicked',
-  'performance_views.anomalies.anomalies_tab_clicked':
-    'Performance Views: Anomalies tab clicked',
   'performance_views.summary.view_in_transaction_events':
     'Performance Views: View in All Events from Transaction Summary',
   'performance_views.summary.open_issues':
@@ -340,8 +344,6 @@ export const performanceEventMap: Record<PerformanceEventKey, string | null> = {
   'performance_views.vitals.reset_view': 'Performance Views: Reset vitals view',
   'performance_views.trends.change_parameter': 'Performance Views: Change Parameter',
   'performance_views.trends.change_function': 'Performance Views: Change Function',
-  'performance_views.vitals.open_in_discover':
-    'Performance Views: Open vitals in discover',
   'performance_views.vitals.open_all_events':
     'Performance Views: Open vitals in all events',
   'performance_views.landing.table.unparameterized':

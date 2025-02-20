@@ -1,135 +1,143 @@
-import {Fragment} from 'react';
+import {Fragment, useEffect, useRef} from 'react';
+import {useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
+import {openNavigateToExternalLinkModal} from 'sentry/actionCreators/modal';
+import AnalyticsArea from 'sentry/components/analyticsArea';
 import ErrorBoundary from 'sentry/components/errorBoundary';
-import DeleteButton from 'sentry/components/feedback/feedbackItem/deleteButton';
+import CrashReportSection from 'sentry/components/feedback/feedbackItem/crashReportSection';
+import FeedbackActivitySection from 'sentry/components/feedback/feedbackItem/feedbackActivitySection';
+import FeedbackItemHeader from 'sentry/components/feedback/feedbackItem/feedbackItemHeader';
 import Section from 'sentry/components/feedback/feedbackItem/feedbackItemSection';
-import FeedbackItemUsername from 'sentry/components/feedback/feedbackItem/feedbackItemUsername';
-import FeedbackViewers from 'sentry/components/feedback/feedbackItem/feedbackViewers';
-import ReplaySection from 'sentry/components/feedback/feedbackItem/replaySection';
-import ResolveButton from 'sentry/components/feedback/feedbackItem/resolveButton';
+import FeedbackReplay from 'sentry/components/feedback/feedbackItem/feedbackReplay';
+import MessageSection from 'sentry/components/feedback/feedbackItem/messageSection';
 import TagsSection from 'sentry/components/feedback/feedbackItem/tagsSection';
-import ObjectInspector from 'sentry/components/objectInspector';
+import TraceDataSection from 'sentry/components/feedback/feedbackItem/traceDataSection';
 import PanelItem from 'sentry/components/panels/panelItem';
-import {Flex} from 'sentry/components/profiling/flex';
+import QuestionTooltip from 'sentry/components/questionTooltip';
 import TextCopyInput from 'sentry/components/textCopyInput';
-import {IconJson, IconLink} from 'sentry/icons';
+import {IconChat, IconFire, IconLink, IconTag} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import type {HydratedFeedbackItem} from 'sentry/utils/feedback/item/types';
+import type {Event} from 'sentry/types/event';
+import type {Group} from 'sentry/types/group';
+import type {FeedbackIssue} from 'sentry/utils/feedback/types';
 import useOrganization from 'sentry/utils/useOrganization';
 
 interface Props {
-  feedbackItem: HydratedFeedbackItem;
+  eventData: Event | undefined;
+  feedbackItem: FeedbackIssue;
+  tags: Record<string, string>;
 }
 
-export default function FeedbackItem({feedbackItem}: Props) {
+export default function FeedbackItem({feedbackItem, eventData, tags}: Props) {
   const organization = useOrganization();
+  const url =
+    eventData?.contexts?.feedback?.url ??
+    eventData?.tags?.find(tag => tag.key === 'url')?.value;
+  const crashReportId = eventData?.contexts?.feedback?.associated_event_id;
+  const theme = useTheme();
+
+  const overflowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setTimeout(() => {
+      overflowRef.current?.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }, 100);
+  }, [feedbackItem.id, overflowRef]);
+
+  const URL_NOT_FOUND = t('URL not found');
+  const displayUrl =
+    eventData?.contexts?.feedback || eventData?.tags ? url ?? URL_NOT_FOUND : '';
+  const urlIsLink = displayUrl.length && displayUrl !== URL_NOT_FOUND;
 
   return (
     <Fragment>
-      <HeaderPanelItem>
-        <Flex gap={space(2)} justify="space-between">
-          <Flex gap={space(1)} align="center">
-            <FeedbackItemUsername feedbackItem={feedbackItem} />
-            {feedbackItem.contact_email ? (
-              <CopyToClipboardButton
-                size="xs"
-                iconSize="xs"
-                text={feedbackItem.contact_email}
-              />
-            ) : null}
-          </Flex>
+      <AnalyticsArea name="details">
+        <FeedbackItemHeader eventData={eventData} feedbackItem={feedbackItem} />
+        <OverflowPanelItem ref={overflowRef}>
+          <Section>
+            <MessageSection eventData={eventData} feedbackItem={feedbackItem} />
+          </Section>
 
-          <Flex gap={space(1)} align="center">
-            <ErrorBoundary mini>
-              <FeedbackViewers feedbackItem={feedbackItem} />
-            </ErrorBoundary>
-            <ErrorBoundary mini>
-              <ResolveButton feedbackItem={feedbackItem} />
-            </ErrorBoundary>
-            <ErrorBoundary mini>
-              <DeleteButton feedbackItem={feedbackItem} />
-            </ErrorBoundary>
-          </Flex>
-        </Flex>
-      </HeaderPanelItem>
-      <OverflowPanelItem>
-        <Section title={t('Description')}>
-          <Blockquote>
-            <pre>{feedbackItem.message}</pre>
-          </Blockquote>
-        </Section>
+          {!crashReportId || (crashReportId && url) ? (
+            <Section icon={<IconLink size="xs" />} title={t('URL')}>
+              <TextCopyInput
+                style={urlIsLink ? {color: theme.blue400} : undefined}
+                onClick={
+                  urlIsLink
+                    ? e => {
+                        e.preventDefault();
+                        openNavigateToExternalLinkModal({linkText: displayUrl});
+                      }
+                    : () => {}
+                }
+              >
+                {displayUrl}
+              </TextCopyInput>
+            </Section>
+          ) : null}
 
-        <Section icon={<IconLink size="xs" />} title={t('Url')}>
-          <ErrorBoundary mini>
-            <TextCopyInput size="sm">{feedbackItem.url}</TextCopyInput>
-          </ErrorBoundary>
-        </Section>
+          {crashReportId && feedbackItem.project ? (
+            <Section icon={<IconFire size="xs" />} title={t('Linked Error')}>
+              <ErrorBoundary mini>
+                <CrashReportSection
+                  organization={organization}
+                  crashReportId={crashReportId}
+                  projectSlug={feedbackItem.project.slug}
+                />
+              </ErrorBoundary>
+            </Section>
+          ) : null}
 
-        {feedbackItem.replay_id ? (
-          <ReplaySection organization={organization} replayId={feedbackItem.replay_id} />
-        ) : null}
-
-        <TagsSection tags={feedbackItem.tags} />
-
-        <Section icon={<IconJson size="xs" />} title={t('Raw')}>
-          <ObjectInspector
-            data={feedbackItem}
-            expandLevel={3}
-            theme={{
-              TREENODE_FONT_SIZE: '0.7rem',
-              ARROW_FONT_SIZE: '0.5rem',
-            }}
+          <FeedbackReplay
+            eventData={eventData}
+            feedbackItem={feedbackItem}
+            organization={organization}
           />
-        </Section>
-      </OverflowPanelItem>
+
+          {eventData ? (
+            <ErrorBoundary mini>
+              <TraceDataSection eventData={eventData} crashReportId={crashReportId} />
+            </ErrorBoundary>
+          ) : null}
+
+          <Section icon={<IconTag size="xs" />} title={t('Tags')}>
+            <TagsSection tags={tags} />
+          </Section>
+
+          {feedbackItem.project ? (
+            <Section
+              icon={<IconChat size="xs" />}
+              title={
+                <Fragment>
+                  {t('Internal Activity')}
+                  <QuestionTooltip
+                    size="xs"
+                    title={t(
+                      'Use this section to post comments that are visible only to your organization. It will also automatically update when someone resolves or assigns the feedback.'
+                    )}
+                  />
+                </Fragment>
+              }
+            >
+              <FeedbackActivitySection feedbackItem={feedbackItem as unknown as Group} />
+            </Section>
+          ) : null}
+        </OverflowPanelItem>
+      </AnalyticsArea>
     </Fragment>
   );
 }
 
-const HeaderPanelItem = styled(PanelItem)`
-  display: grid;
-  padding: ${space(1)} ${space(2)};
-`;
-
+// 0 padding-bottom because <ActivitySection> has space(2) built-in.
 const OverflowPanelItem = styled(PanelItem)`
-  overflow: scroll;
+  overflow: auto;
 
   flex-direction: column;
   flex-grow: 1;
-  gap: ${space(3)};
-`;
-
-const Blockquote = styled('blockquote')`
-  margin: 0 ${space(4)};
-  position: relative;
-
-  &::before {
-    position: absolute;
-    color: ${p => p.theme.purple300};
-    content: '❝';
-    font-size: ${space(4)};
-    left: -${space(4)};
-    top: -0.4rem;
-  }
-  &::after {
-    position: absolute;
-    border: 1px solid ${p => p.theme.purple300};
-    bottom: 0;
-    content: '';
-    left: -${space(1)};
-    top: 0;
-  }
-
-  & > pre {
-    margin: 0;
-    background: none;
-    font-family: inherit;
-    font-size: ${p => p.theme.fontSizeMedium};
-    line-height: 1.6;
-    padding: 0;
-    word-break: break-word;
-  }
+  gap: ${space(2)};
+  padding: ${space(2)} ${space(2)} 0 ${space(2)};
 `;

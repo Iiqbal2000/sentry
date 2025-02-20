@@ -1,14 +1,15 @@
 import {Component, forwardRef} from 'react';
-import ReactSelect from 'react-select';
 import debounce from 'lodash/debounce';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
 import {Client} from 'sentry/api';
+import type {ReactSelect} from 'sentry/components/forms/controls/reactSelectWrapper';
 import {t} from 'sentry/locale';
 import {handleXhrErrorResponse} from 'sentry/utils/handleXhrErrorResponse';
-import RequestError from 'sentry/utils/requestError/requestError';
+import type RequestError from 'sentry/utils/requestError/requestError';
 
-import SelectControl, {ControlProps, GeneralSelectValue} from './selectControl';
+import type {ControlProps, GeneralSelectValue} from './selectControl';
+import SelectControl from './selectControl';
 
 export type Result = {
   label: string;
@@ -16,9 +17,9 @@ export type Result = {
 };
 
 export interface SelectAsyncControlProps {
-  forwardedRef: React.Ref<ReactSelect<GeneralSelectValue>>;
+  forwardedRef: React.Ref<typeof ReactSelect<GeneralSelectValue>>;
   // TODO(ts): Improve data type
-  onQuery: (query: string | undefined) => {};
+  onQuery: (query: string | undefined) => Record<string, unknown>;
   onResults: (data: any) => Result[];
   url: string;
   value: ControlProps['value'];
@@ -38,7 +39,7 @@ class SelectAsyncControl extends Component<SelectAsyncControlProps> {
     defaultOptions: true,
   };
 
-  constructor(props) {
+  constructor(props: any) {
     super(props);
     this.api = new Client();
     this.state = {
@@ -80,7 +81,7 @@ class SelectAsyncControl extends Component<SelectAsyncControlProps> {
 
   handleLoadOptions = () =>
     new Promise((resolve, reject) => {
-      this.doQuery((err, result) => {
+      this.doQuery((err: any, result: any) => {
         if (err) {
           reject(err);
         } else {
@@ -100,7 +101,7 @@ class SelectAsyncControl extends Component<SelectAsyncControlProps> {
       }
     );
 
-  handleInputChange = query => {
+  handleInputChange = (query: any) => {
     this.setState({query});
   };
 
@@ -124,7 +125,7 @@ class SelectAsyncControl extends Component<SelectAsyncControlProps> {
   }
 }
 
-function RefForwarder(p, ref) {
+function RefForwarder(p: any, ref: any) {
   return <SelectAsyncControl {...p} forwardedRef={ref} />;
 }
 RefForwarder.displayName = 'SelectAsyncControl';

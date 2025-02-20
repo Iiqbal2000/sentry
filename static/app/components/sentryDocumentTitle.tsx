@@ -25,6 +25,10 @@ const DEFAULT_PAGE_TITLE = 'Sentry';
 
 const DocumentTitleContext = createContext(DEFAULT_PAGE_TITLE);
 
+export function useDocumentTitle() {
+  return useContext(DocumentTitleContext);
+}
+
 /**
  * Assigns the document title. The deepest nested version of this title will be
  * the one which is assigned.
@@ -67,7 +71,7 @@ function SentryDocumentTitle({
   }, [noSuffix, pageTitle]);
 
   // NOTE: We do this OUTSIDE of a use effect so that the update order is
-  // correct, otherwsie the inner most SentryDocumentTitle will have it's
+  // correct, otherwsie the inner most SentryDocumentTitle will have its
   // useEffect called first followed by the parents, which will cause the wrong
   // title be set.
   if (document.title !== documentTitle) {

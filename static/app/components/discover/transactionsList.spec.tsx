@@ -1,19 +1,13 @@
 import {initializeOrg} from 'sentry-test/initializeOrg';
-import {
-  render,
-  RenderResult,
-  screen,
-  userEvent,
-  waitFor,
-} from 'sentry-test/reactTestingLibrary';
+import type {RenderResult} from 'sentry-test/reactTestingLibrary';
+import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import TransactionsList from 'sentry/components/discover/transactionsList';
-import {t} from 'sentry/locale';
 import EventView from 'sentry/utils/discover/eventView';
 import {MEPSettingProvider} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
 import {OrganizationContext} from 'sentry/views/organizationContext';
 
-function WrapperComponent(props) {
+function WrapperComponent(props: any) {
   return (
     <OrganizationContext.Provider value={props.organization}>
       <MEPSettingProvider>
@@ -24,14 +18,14 @@ function WrapperComponent(props) {
 }
 
 describe('TransactionsList', function () {
-  let api;
-  let location;
-  let context;
-  let organization;
-  let project;
-  let eventView;
-  let options;
-  let handleDropdownChange;
+  let api: any;
+  let location: any;
+  let context: any;
+  let organization: any;
+  let project: any;
+  let eventView: any;
+  let options: any;
+  let handleDropdownChange: any;
 
   const initialize = (config = {}) => {
     context = initializeOrg(config);
@@ -50,10 +44,9 @@ describe('TransactionsList', function () {
   });
 
   describe('Basic', function () {
-    let generateLink, routerContext;
+    let generateLink: any;
 
     beforeEach(function () {
-      routerContext = TestStubs.routerContext([{organization}]);
       initialize();
       eventView = EventView.fromSavedQuery({
         id: '',
@@ -66,19 +59,19 @@ describe('TransactionsList', function () {
         {
           sort: {kind: 'asc', field: 'transaction'},
           value: 'name',
-          label: t('Transactions'),
+          label: 'Transactions',
         },
         {
           sort: {kind: 'desc', field: 'count'},
           value: 'count',
-          label: t('Failing Transactions'),
+          label: 'Failing Transactions',
         },
       ];
       generateLink = {
-        transaction: (org, row, query) => ({
+        transaction: (org: any, row: any) => ({
           pathname: `/${org.slug}`,
           query: {
-            ...query,
+            ...location.query,
             transaction: row.transaction,
             count: row.count,
             'count()': row['count()'],
@@ -166,10 +159,7 @@ describe('TransactionsList', function () {
           selected={options[0]}
           options={options}
           handleDropdownChange={handleDropdownChange}
-        />,
-        {
-          context: routerContext,
-        }
+        />
       );
 
       expect(await screen.findByTestId('transactions-table')).toBeInTheDocument();
@@ -194,7 +184,7 @@ describe('TransactionsList', function () {
       options.push({
         sort: {kind: 'desc', field: 'trend_percentage()'},
         value: 'regression',
-        label: t('Trending Regressions'),
+        label: 'Trending Regressions',
         trendType: 'regression',
       });
       render(
@@ -206,10 +196,7 @@ describe('TransactionsList', function () {
           selected={options[2]}
           options={options}
           handleDropdownChange={handleDropdownChange}
-        />,
-        {
-          context: routerContext,
-        }
+        />
       );
 
       expect(await screen.findByTestId('transactions-table')).toBeInTheDocument();
@@ -266,10 +253,7 @@ describe('TransactionsList', function () {
           selected={options[0]}
           options={options}
           handleDropdownChange={handleDropdownChange}
-        />,
-        {
-          context: routerContext,
-        }
+        />
       );
 
       expect(await screen.findByTestId('transactions-table')).toBeInTheDocument();
@@ -289,10 +273,7 @@ describe('TransactionsList', function () {
           options={options}
           handleDropdownChange={handleDropdownChange}
           titles={['foo', 'bar']}
-        />,
-        {
-          context: routerContext,
-        }
+        />
       );
 
       expect(await screen.findByTestId('transactions-table')).toBeInTheDocument();
@@ -304,8 +285,8 @@ describe('TransactionsList', function () {
     it('allows users to change the sort in the dropdown', async function () {
       let component: RenderResult | null = null;
 
-      const handleDropdown = value => {
-        const selected = options.find(option => option.value === value);
+      const handleDropdown = (value: any) => {
+        const selected = options.find((option: any) => option.value === value);
         if (selected && component) {
           component.rerender(
             <WrapperComponent
@@ -329,10 +310,7 @@ describe('TransactionsList', function () {
           selected={options[0]}
           options={options}
           handleDropdownChange={handleDropdown}
-        />,
-        {
-          context: routerContext,
-        }
+        />
       );
 
       expect(await screen.findByTestId('transactions-table')).toBeInTheDocument();
@@ -352,16 +330,14 @@ describe('TransactionsList', function () {
         'Failing Transactions',
       ]);
 
-      await userEvent.click(menuOptions[1]); // Failing transactions is 'count' as per the test options
+      // Failing transactions is 'count' as per the test options
+      await userEvent.click(screen.getByRole('option', {name: 'Failing Transactions'}));
 
-      waitFor(() => {
+      await waitFor(() => {
         // now the sort is descending by count
-        expect(screen.getAllByTestId('grid-cell').map(e => e.textContent)).toEqual([
-          '/a',
-          '100',
-          '/b',
-          '1000',
-        ]);
+        expect(
+          screen.getAllByTestId('grid-cell').map(e => e.textContent?.trim())
+        ).toEqual(['/b', '1000', '/a', '100']);
       });
     });
 
@@ -376,8 +352,7 @@ describe('TransactionsList', function () {
           options={options}
           handleDropdownChange={handleDropdownChange}
           generateLink={generateLink}
-        />,
-        {context: routerContext}
+        />
       );
 
       expect(await screen.findByTestId('transactions-table')).toBeInTheDocument();
@@ -405,8 +380,7 @@ describe('TransactionsList', function () {
           options={options}
           handleDropdownChange={handleDropdownChange}
           forceLoading
-        />,
-        {context: routerContext}
+        />
       );
 
       expect(await screen.findByTestId('loading-indicator')).toBeInTheDocument();

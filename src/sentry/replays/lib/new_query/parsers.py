@@ -2,6 +2,8 @@
 
 Functions in this module coerce external types to internal types.  Else they die.
 """
+
+import ipaddress
 import uuid
 
 from sentry.replays.lib.new_query.errors import CouldNotParseValue
@@ -17,7 +19,24 @@ def parse_float(value: str) -> float:
 
 def parse_int(value: str) -> int:
     """Coerce to int or fail."""
-    return int(parse_float(value))
+    try:
+        return int(parse_float(value))
+    except (ValueError, CouldNotParseValue):
+        raise CouldNotParseValue("Failed to parse int.")
+
+
+def parse_duration(value: str) -> int:
+    """
+    Assert that second resolution is given. The input and output of this fx is still in milliseconds, to match the
+    output of api.event_search.parse_search_query
+    """
+    milliseconds = parse_int(value)
+    if milliseconds % 1000:
+        # TODO: remove once we support milliseconds.
+        raise CouldNotParseValue(
+            f"Replays only supports second-resolution timestamps at this time. Try '{milliseconds // 1000}s' instead."
+        )
+    return milliseconds
 
 
 def parse_str(value: str) -> str:
@@ -25,12 +44,19 @@ def parse_str(value: str) -> str:
     return value
 
 
+def parse_ipv4(value: str) -> str | None:
+    """Validates an IPv4 address"""
+    if value == "":
+        return None
+    try:
+        ipaddress.IPv4Address(value)
+        return value
+    except ipaddress.AddressValueError:
+        raise CouldNotParseValue("Invalid IPv4")
+
+
 def parse_uuid(value: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
     except ValueError:
-        # Return an empty uuid. This emulates current behavior where inability to parse a UUID
-        # leads to an empty result-set rather than an error.
-        #
-        # TODO: Probably raise an error here...
-        return uuid.UUID("00000000000000000000000000000000")
+        raise CouldNotParseValue("Failed to parse uuid.")

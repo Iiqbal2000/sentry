@@ -1,39 +1,45 @@
 import {CallTreeNode} from 'sentry/utils/profiling/callTreeNode';
 
+import {assertValidProfilingUnit} from '../units/units';
+
 import {Frame} from './../frame';
 import {Profile} from './profile';
-import {createFrameIndex, resolveFlamegraphSamplesProfileIds} from './utils';
+import type {createFrameIndex} from './utils';
+import {resolveFlamegraphSamplesProfileIds} from './utils';
 
 function sortStacks(
-  a: {stack: number[]; weight: number},
-  b: {stack: number[]; weight: number}
+  a: {stack: number[]; weight: number | undefined},
+  b: {stack: number[]; weight: number | undefined}
 ) {
   const max = Math.max(a.stack.length, b.stack.length);
 
   for (let i = 0; i < max; i++) {
-    if (a.stack[i] === undefined) {
+    const aStackI = a.stack[i];
+    const bStackI = b.stack[i];
+    if (aStackI === undefined) {
       return -1;
     }
-    if (b.stack[i] === undefined) {
+    if (bStackI === undefined) {
       return 1;
     }
-    if (a.stack[i] === b.stack[i]) {
+    if (aStackI === bStackI) {
       continue;
     }
-    return a.stack[i] - b.stack[i];
+    return aStackI - bStackI;
   }
   return 0;
 }
 
 function stacksWithWeights(
   profile: Readonly<Profiling.SampledProfile>,
-  profileIds: Readonly<string[][]> = [],
+  profileIds: Profiling.ProfileReference[][] = [],
   frameFilter?: (i: number) => boolean
 ) {
   return profile.samples.map((stack, index) => {
     return {
       stack: frameFilter ? stack.filter(frameFilter) : stack,
       weight: profile.weights[index],
+      aggregate_sample_duration: profile.sample_durations_ns?.[index] ?? 0,
       profileIds: profileIds[index],
     };
   });
@@ -41,10 +47,28 @@ function stacksWithWeights(
 
 function sortSamples(
   profile: Readonly<Profiling.SampledProfile>,
-  profileIds: Readonly<string[][]> = [],
+  profileIds: Profiling.ProfileReference[][] = [],
   frameFilter?: (i: number) => boolean
-): {stack: number[]; weight: number}[] {
+): Array<{
+  aggregate_sample_duration: number;
+  stack: number[];
+  weight: number | undefined;
+}> {
   return stacksWithWeights(profile, profileIds, frameFilter).sort(sortStacks);
+}
+
+function mergeProfileExamples(
+  profileIds: Readonly<Profiling.SampledProfile['samples_profiles']>,
+  profileReferences: Readonly<Profiling.SampledProfile['samples_examples']>
+): number[][] {
+  const merged: number[][] = [];
+
+  const l = Math.max(profileIds?.length ?? 0, profileReferences?.length ?? 0);
+  for (let i = 0; i < l; i++) {
+    merged[i] = (profileIds?.[i] ?? []).concat(profileReferences?.[i] ?? []);
+  }
+
+  return merged;
 }
 
 // We should try and remove these as we adopt our own profile format and only rely on the sampled format.
@@ -55,9 +79,12 @@ export class SampledProfile extends Profile {
     options: {
       type: 'flamechart' | 'flamegraph';
       frameFilter?: (frame: Frame) => boolean;
-      profileIds?: Readonly<string[]>;
+      profileIds?:
+        | Profiling.Schema['shared']['profile_ids']
+        | Profiling.Schema['shared']['profiles'];
     }
   ): Profile {
+    assertValidProfilingUnit(sampledProfile.unit);
     const profile = new SampledProfile({
       duration: sampledProfile.endValue - sampledProfile.startValue,
       startedAt: sampledProfile.startValue,
@@ -74,19 +101,22 @@ export class SampledProfile extends Profile {
       );
     }
 
-    let resolvedProfileIds: string[][] = [];
+    let resolvedProfileIds: Profiling.ProfileReference[][] = [];
     if (
       options.type === 'flamegraph' &&
-      sampledProfile.samples_profiles &&
+      (sampledProfile.samples_profiles || sampledProfile.samples_examples) &&
       options.profileIds
     ) {
       resolvedProfileIds = resolveFlamegraphSamplesProfileIds(
-        sampledProfile.samples_profiles,
-        options.profileIds
+        mergeProfileExamples(
+          sampledProfile.samples_profiles,
+          sampledProfile.samples_examples
+        ),
+        options.profileIds as Profiling.ProfileReference[]
       );
     }
 
-    function resolveFrame(index) {
+    function resolveFrame(index: number) {
       const resolvedFrame = frameIndex[index];
       if (!resolvedFrame) {
         throw new Error(`Could not resolve frame ${index} in frame index`);
@@ -120,8 +150,9 @@ export class SampledProfile extends Profile {
     let frame: Frame | null = null;
 
     for (let i = 0; i < samples.length; i++) {
-      const stack = samples[i].stack;
-      let weight = samples[i].weight;
+      const stack = samples[i]!.stack;
+      let weight = samples[i]!.weight!;
+      let aggregate_duration_ns = samples[i]!.aggregate_sample_duration;
 
       const isGCStack =
         options.type === 'flamechart' &&
@@ -132,15 +163,16 @@ export class SampledProfile extends Profile {
         // and when that happens, we do not want to enter this case as the GC will already
         // be placed at the top of the previous stack and the new stack length will be > 2
         stack.length <= 2 &&
-        frameIndex[stack[stack.length - 1]]?.name === '(garbage collector) [native code]';
+        frameIndex[stack[stack.length - 1]!]?.name ===
+          '(garbage collector) [native code]';
 
       if (isGCStack) {
         // The next stack we will process will be the previous stack + our new gc frame.
         // We write the GC frame on top of the previous stack and set the size to the new stack length.
-        frame = resolveFrame(stack[stack.length - 1]);
+        frame = resolveFrame(stack[stack.length - 1]!);
         if (frame) {
-          resolvedStack[samples[i - 1].stack.length] =
-            frameIndex[stack[stack.length - 1]];
+          resolvedStack[samples[i - 1]!.stack.length] =
+            frameIndex[stack[stack.length - 1]!]!;
           size += 1; // size of previous stack + new gc frame
 
           // Now collect all weights of all the consecutive gc frames and skip the samples
@@ -151,19 +183,20 @@ export class SampledProfile extends Profile {
             // There is a good chance that this logic will at some point live on the backend
             // and when that happens, we do not want to enter this case as the GC will already
             // be placed at the top of the previous stack and the new stack length will be > 2
-            samples[i + 1].stack.length <= 2 &&
-            frameIndex[samples[i + 1].stack[samples[i + 1].stack.length - 1]]?.name ===
+            samples[i + 1]!.stack.length <= 2 &&
+            frameIndex[samples[i + 1]!.stack[samples[i + 1]!.stack.length - 1]!]?.name ===
               '(garbage collector) [native code]'
           ) {
-            weight += samples[++i].weight;
+            weight += samples[++i]!.weight!;
+            aggregate_duration_ns += samples[i]!.aggregate_sample_duration;
           }
         }
       } else {
         size = 0;
         // If we are using the current stack, then we need to resolve the frames,
         // else the processed frames will be the frames that were previously resolved
-        for (let j = 0; j < stack.length; j++) {
-          frame = resolveFrame(stack[j]);
+        for (const index of stack) {
+          frame = resolveFrame(index);
           if (!frame) {
             continue;
           }
@@ -171,7 +204,13 @@ export class SampledProfile extends Profile {
         }
       }
 
-      profile.appendSampleWithWeight(resolvedStack, weight, size, resolvedProfileIds[i]);
+      profile.appendSampleWithWeight(
+        resolvedStack,
+        weight,
+        size,
+        resolvedProfileIds[i],
+        aggregate_duration_ns
+      );
     }
 
     return profile.build();
@@ -209,7 +248,8 @@ export class SampledProfile extends Profile {
     stack: Frame[],
     weight: number,
     end: number,
-    resolvedProfileIds?: string[]
+    resolvedProfileIds?: Profiling.ProfileReference[] | string[],
+    aggregate_duration_ns?: number
   ): void {
     // Keep track of discarded samples and ones that may have negative weights
     this.trackSampleStats(weight);
@@ -221,9 +261,8 @@ export class SampledProfile extends Profile {
 
     let node = this.callTree;
     const framesInStack: CallTreeNode[] = [];
-
     for (let i = 0; i < end; i++) {
-      const frame = stack[i];
+      const frame = stack[i]!;
       const last = node.children[node.children.length - 1];
       // Find common frame between two stacks
       if (last && !last.isLocked() && last.frame === frame) {
@@ -238,16 +277,17 @@ export class SampledProfile extends Profile {
       }
 
       node.totalWeight += weight;
+      node.aggregate_duration_ns += aggregate_duration_ns ?? 0;
 
       // TODO: This is On^2, because we iterate over all frames in the stack to check if our
       // frame is a recursive frame. We could do this in O(1) by keeping a map of frames in the stack
       // We check the stack in a top-down order to find the first recursive frame.
       let start = framesInStack.length - 1;
       while (start >= 0) {
-        if (framesInStack[start].frame === node.frame) {
+        if (framesInStack[start]!.frame === node.frame) {
           // The recursion edge is bidirectional
-          framesInStack[start].recursive = node;
-          node.recursive = framesInStack[start];
+          framesInStack[start]!.recursive = node;
+          node.recursive = framesInStack[start]!;
           break;
         }
         start--;
@@ -270,12 +310,13 @@ export class SampledProfile extends Profile {
 
     for (const stackNode of framesInStack) {
       stackNode.frame.totalWeight += weight;
+      stackNode.frame.aggregateDuration += aggregate_duration_ns ?? 0;
       stackNode.count++;
     }
 
     // If node is the same as the previous sample, add the weight to the previous sample
     if (node === this.samples[this.samples.length - 1]) {
-      this.weights[this.weights.length - 1] += weight;
+      this.weights[this.weights.length - 1]! += weight;
     } else {
       this.samples.push(node);
       this.weights.push(weight);

@@ -29,10 +29,9 @@ VALID_FIELD_SET = (
     "clicks",
     "info_ids",
     "warning_ids",
-    "new_error_ids",
-    "new_count_errors",
     "count_warnings",
     "count_infos",
+    "has_viewed",
 )
 
 
@@ -75,6 +74,13 @@ UTC ISO8601 or epoch seconds. Use along with `start` instead of `statsPeriod`.
     query = serializers.CharField(
         help_text="A structured query string to filter the output by.", required=False
     )
+    per_page = serializers.IntegerField(
+        help_text="Limit the number of rows to return in the result.", required=False
+    )
+    cursor = serializers.CharField(
+        help_text="The cursor parameter is used to paginate results. See [here](https://docs.sentry.io/api/pagination/) for how to use this query parameter",
+        required=False,
+    )
 
 
 class ReplaySelectorValidator(serializers.Serializer):
@@ -100,6 +106,8 @@ class ReplaySelectorValidator(serializers.Serializer):
         required=False,
     )
     project = serializers.ListField(
-        required=False, help_text="The ID of the projects to filter by."
+        required=False,
+        help_text="The ID of the projects to filter by.",
+        child=serializers.IntegerField(),
     )
     sort = serializers.CharField(help_text="The field to sort the output by.", required=False)

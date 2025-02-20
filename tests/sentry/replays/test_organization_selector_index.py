@@ -6,12 +6,10 @@ from django.urls import reverse
 from sentry.replays.testutils import mock_replay, mock_replay_click
 from sentry.testutils.cases import APITestCase, ReplaysSnubaTestCase
 from sentry.testutils.helpers.features import apply_feature_flag_on_cls
-from sentry.testutils.silo import region_silo_test
 
 REPLAYS_FEATURES = {"organizations:session-replay": True}
 
 
-@region_silo_test
 @apply_feature_flag_on_cls("organizations:global-views")
 class OrganizationSelectorIndexTest(APITestCase, ReplaysSnubaTestCase):
     endpoint = "sentry-api-0-organization-replay-selectors-index"
@@ -40,16 +38,16 @@ class OrganizationSelectorIndexTest(APITestCase, ReplaysSnubaTestCase):
         """Test replays conform to the interchange format."""
         project = self.create_project(teams=[self.team])
 
-        replay1_id = uuid.uuid4().hex
+        replay_id = uuid.uuid4().hex
         seq1_timestamp = datetime.datetime.now() - datetime.timedelta(seconds=22)
         seq2_timestamp = datetime.datetime.now() - datetime.timedelta(seconds=5)
-        self.store_replays(mock_replay(seq1_timestamp, project.id, replay1_id))
-        self.store_replays(mock_replay(seq2_timestamp, project.id, replay1_id))
+        self.store_replays(mock_replay(seq1_timestamp, project.id, replay_id))
+        self.store_replays(mock_replay(seq2_timestamp, project.id, replay_id))
         self.store_replays(
             mock_replay_click(
                 seq2_timestamp,
                 project.id,
-                replay1_id,
+                replay_id,
                 node_id=1,
                 tag="div",
                 id="myid",
@@ -62,17 +60,18 @@ class OrganizationSelectorIndexTest(APITestCase, ReplaysSnubaTestCase):
                 is_dead=1,
                 is_rage=1,
                 text="Hello",
+                component_name="SignUpForm",
             )
         )
         self.store_replays(
             mock_replay_click(
                 seq2_timestamp,
                 project.id,
-                replay1_id,
+                replay_id,
                 node_id=1,
                 tag="div",
                 id="myid",
-                class_=["class1", "class2"],
+                class_=["class1", "class2", ""],
                 role="button",
                 testid="1",
                 alt="Alt",
@@ -81,6 +80,7 @@ class OrganizationSelectorIndexTest(APITestCase, ReplaysSnubaTestCase):
                 is_dead=1,
                 is_rage=0,
                 text="Hello",
+                component_name="SignUpForm",
             )
         )
 
@@ -95,7 +95,7 @@ class OrganizationSelectorIndexTest(APITestCase, ReplaysSnubaTestCase):
             assert response_data["data"][0]["project_id"] == project.id
             assert (
                 response_data["data"][0]["dom_element"]
-                == 'div#myid.class1.class2[role="button"][alt="Alt"][testid="1"][aria="AriaLabel"][title="MyTitle"]'
+                == 'div#myid.class1.class2[role="button"][alt="Alt"][testid="1"][aria="AriaLabel"][title="MyTitle"][component_name="SignUpForm"]'
             )
             assert response_data["data"][0]["count_dead_clicks"] == 2
             assert response_data["data"][0]["count_rage_clicks"] == 1
@@ -107,3 +107,67 @@ class OrganizationSelectorIndexTest(APITestCase, ReplaysSnubaTestCase):
             assert response_data["data"][0]["element"]["tag"] == "div"
             assert response_data["data"][0]["element"]["testid"] == "1"
             assert response_data["data"][0]["element"]["title"] == "MyTitle"
+            assert response_data["data"][0]["element"]["component_name"] == "SignUpForm"
+
+    def test_get_replays_filter_clicks(self):
+        """Test replays conform to the interchange format."""
+        replay_id = uuid.uuid4().hex
+        seq1_timestamp = datetime.datetime.now() - datetime.timedelta(seconds=22)
+        seq2_timestamp = datetime.datetime.now() - datetime.timedelta(seconds=5)
+
+        self.store_replays(mock_replay(seq1_timestamp, self.project.id, replay_id))
+        self.store_replays(
+            mock_replay_click(
+                seq2_timestamp,
+                self.project.id,
+                replay_id,
+                node_id=1,
+                tag="div",
+                id="id1",
+                class_=["class1", "class2"],
+                role="button",
+                testid="1",
+                alt="Alt",
+                aria_label="AriaLabel",
+                title="MyTitle",
+                text="Hello",
+                component_name="SignUpForm",
+                is_dead=True,
+                is_rage=False,
+            )
+        )
+        self.store_replays(
+            mock_replay_click(
+                seq2_timestamp,
+                self.project.id,
+                replay_id,
+                node_id=1,
+                tag="div",
+                id="id1",
+                class_=["class1", "class2"],
+                role="button",
+                testid="1",
+                alt="Alt",
+                aria_label="AriaLabel",
+                title="MyTitle",
+                text="Hello",
+                component_name="SignUpForm",
+                is_dead=True,
+                is_rage=True,
+            )
+        )
+
+        with self.feature(REPLAYS_FEATURES):
+            queries = ["count_dead_clicks:2", "count_rage_clicks:1"]
+            for query in queries:
+                response = self.client.get(self.url + f"?query={query}")
+                assert response.status_code == 200, query
+                response_data = response.json()
+                assert len(response_data["data"]) == 1, query
+
+            queries = ["count_dead_clicks:1", "count_rage_clicks:2"]
+            for query in queries:
+                response = self.client.get(self.url + f"?query={query}")
+                assert response.status_code == 200, query
+                response_data = response.json()
+                assert len(response_data["data"]) == 0, query

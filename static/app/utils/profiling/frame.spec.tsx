@@ -20,6 +20,34 @@ describe('Frame', () => {
       });
     }
   );
+  it('marks frame as extension', () => {
+    for (const prefix of ['@moz-extension://', 'chrome-extension://']) {
+      expect(
+        new Frame(
+          {
+            key: 0,
+            name: 'foo',
+            line: undefined,
+            column: undefined,
+            file: `${prefix}foo/bar.js`,
+          },
+          'javascript'
+        ).is_browser_extension
+      ).toBe(true);
+    }
+    expect(
+      new Frame(
+        {
+          key: 0,
+          name: 'foo',
+          line: undefined,
+          column: undefined,
+          file: `bar.js`,
+        },
+        'javascript'
+      ).is_browser_extension
+    ).toBe(false);
+  });
   describe('pulls package from path for web|node platforms', () => {
     it('file in node modules', () => {
       expect(
@@ -33,7 +61,7 @@ describe('Frame', () => {
           },
           'node'
         ).module
-      ).toBe(undefined);
+      ).toBeUndefined();
     });
     it.each([
       ['node:internal/crypto/hash', 'node:internal/crypto'],
@@ -64,5 +92,33 @@ describe('Frame', () => {
         ).module
       ).toBe(expected);
     });
+  });
+
+  it('formats getSourceLocation', () => {
+    const frame = new Frame(
+      {
+        key: 0,
+        name: 'testFunction',
+        file: 'test.js',
+        line: 10,
+        column: 5,
+      },
+      'javascript'
+    );
+    expect(frame.getSourceLocation()).toBe('test.js:10:5');
+  });
+
+  it('formats getSourceLocation when file is unknown', () => {
+    const frame = new Frame(
+      {
+        key: 0,
+        name: 'testFunction',
+        file: undefined,
+        line: undefined,
+        column: undefined,
+      },
+      'javascript'
+    );
+    expect(frame.getSourceLocation()).toBe('<unknown>:<unknown line>:<unknown column>');
   });
 });

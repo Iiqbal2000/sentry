@@ -1,21 +1,21 @@
 import {Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import FieldGroup from 'sentry/components/forms/fieldGroup';
-import FieldHelp from 'sentry/components/forms/fieldGroup/fieldHelp';
+import {FieldHelp} from 'sentry/components/forms/fieldGroup/fieldHelp';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Link from 'sentry/components/links/link';
 import TextCopyInput from 'sentry/components/textCopyInput';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {ProjectKey} from 'sentry/types/project';
 import getDynamicText from 'sentry/utils/getDynamicText';
 import recreateRoute from 'sentry/utils/recreateRoute';
-import {ProjectKey} from 'sentry/views/settings/project/projectKeys/types';
 
 type Props = {
   projectKey: ProjectKey;
-} & Pick<RouteComponentProps<{}, {}>, 'routes' | 'location' | 'params'>;
+} & Pick<RouteComponentProps, 'routes' | 'location' | 'params'>;
 
 export function LoaderScript({projectKey, routes, params, location}: Props) {
   const loaderLink = getDynamicText({

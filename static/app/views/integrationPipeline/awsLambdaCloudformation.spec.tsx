@@ -1,13 +1,13 @@
-import selectEvent from 'react-select-event';
 import * as qs from 'query-string';
-import {Organization} from 'sentry-fixture/organization';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
 import AwsLambdaCloudformation from 'sentry/views/integrationPipeline/awsLambdaCloudformation';
 
 describe('AwsLambdaCloudformation', () => {
-  let windowAssignMock;
+  let windowAssignMock!: jest.Mock;
 
   beforeEach(() => {
     windowAssignMock = jest.fn();
@@ -18,7 +18,7 @@ describe('AwsLambdaCloudformation', () => {
   it('submit arn', async () => {
     render(
       <AwsLambdaCloudformation
-        organization={Organization()}
+        organization={OrganizationFixture()}
         baseCloudformationUrl="https://console.aws.amazon.com/cloudformation/home#/stacks/create/review"
         templateUrl="https://example.com/file.json"
         stackName="Sentry-Monitoring-Stack"
@@ -34,7 +34,7 @@ describe('AwsLambdaCloudformation', () => {
 
     // Fill out fields
     await userEvent.type(
-      screen.getByRole('textbox', {name: 'AWS Account Number'}),
+      screen.getByRole('textbox', {name: 'AWS Account ID'}),
       '599817902985'
     );
 

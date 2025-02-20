@@ -1,6 +1,5 @@
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
-import theme from 'sentry/utils/theme';
 import EventIdField from 'sentry/views/settings/components/dataScrubbing/modals/form/eventIdField';
 import {EventIdStatus} from 'sentry/views/settings/components/dataScrubbing/types';
 
@@ -62,7 +61,7 @@ describe('EventIdField', function () {
 
     expect(screen.queryByLabelText('Clear event ID')).not.toBeInTheDocument();
 
-    expect(screen.getByTestId('icon-check-mark')).toHaveAttribute('fill', theme.green400);
+    expect(screen.getByTestId('icon-check-mark')).toBeInTheDocument();
   });
 
   it('ERROR status', async function () {
@@ -86,7 +85,7 @@ describe('EventIdField', function () {
     ).toBeInTheDocument();
   });
 
-  it('INVALID status', function () {
+  it('INVALID status', async function () {
     render(
       <EventIdField
         onUpdateEventId={jest.fn()}
@@ -94,12 +93,12 @@ describe('EventIdField', function () {
       />
     );
 
-    expect(screen.getByRole('textbox')).toHaveValue(eventIdValue);
+    expect(await screen.findByRole('textbox')).toHaveValue(eventIdValue);
 
     expect(screen.getByText('This event ID is invalid')).toBeInTheDocument();
   });
 
-  it('NOTFOUND status', function () {
+  it('NOTFOUND status', async function () {
     render(
       <EventIdField
         onUpdateEventId={jest.fn()}
@@ -107,7 +106,7 @@ describe('EventIdField', function () {
       />
     );
 
-    expect(screen.getByRole('textbox')).toHaveValue(eventIdValue);
+    expect(await screen.findByRole('textbox')).toHaveValue(eventIdValue);
 
     expect(
       screen.getByText('The chosen event ID was not found in projects you have access to')

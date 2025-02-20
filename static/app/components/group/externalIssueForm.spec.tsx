@@ -1,5 +1,7 @@
 import styled from '@emotion/styled';
-import {Organization} from 'sentry-fixture/organization';
+import {GitHubIntegrationFixture} from 'sentry-fixture/githubIntegration';
+import {GroupFixture} from 'sentry-fixture/group';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
@@ -9,8 +11,8 @@ import ExternalIssueForm from 'sentry/components/group/externalIssueForm';
 jest.mock('lodash/debounce', () => {
   const debounceMap = new Map();
   const mockDebounce =
-    (fn, timeout) =>
-    (...args) => {
+    (fn: (...args: any[]) => void, timeout: number) =>
+    (...args: any[]) => {
       if (debounceMap.has(fn)) {
         clearTimeout(debounceMap.get(fn));
       }
@@ -26,12 +28,14 @@ jest.mock('lodash/debounce', () => {
 });
 
 describe('ExternalIssueForm', () => {
-  let group, integration, formConfig;
+  let group!: ReturnType<typeof GroupFixture>;
+  let integration!: ReturnType<typeof GitHubIntegrationFixture>;
+  let formConfig!: any;
   const onChange = jest.fn();
   beforeEach(() => {
     MockApiClient.clearMockResponses();
-    group = TestStubs.Group();
-    integration = TestStubs.GitHubIntegration({externalIssues: []});
+    group = GroupFixture();
+    integration = GitHubIntegrationFixture({externalIssues: []});
   });
 
   afterEach(() => {
@@ -46,12 +50,12 @@ describe('ExternalIssueForm', () => {
       match: [MockApiClient.matchQuery({action: 'create'})],
     });
 
-    const styledWrapper = styled(c => c.children);
+    const styledWrapper = styled<any>((c: {children: React.ReactNode}) => c.children);
     const wrapper = render(
       <ExternalIssueForm
         Body={styledWrapper()}
         Footer={styledWrapper()}
-        organization={Organization()}
+        organization={OrganizationFixture()}
         Header={c => <span>{c.children}</span>}
         group={group}
         integration={integration}
@@ -98,7 +102,8 @@ describe('ExternalIssueForm', () => {
     });
   });
   describe('link', () => {
-    let externalIssueField, getFormConfigRequest;
+    let externalIssueField!: any;
+    let getFormConfigRequest!: jest.Mock;
     beforeEach(() => {
       externalIssueField = {
         name: 'externalIssue',

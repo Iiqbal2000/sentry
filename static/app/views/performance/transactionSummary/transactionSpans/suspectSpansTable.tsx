@@ -1,22 +1,23 @@
-import {ReactNode} from 'react';
-import {Location} from 'history';
+import type {ReactNode} from 'react';
+import type {Location} from 'history';
 
-import GridEditable, {
-  COL_WIDTH_UNDEFINED,
-  GridColumnOrder,
-} from 'sentry/components/gridEditable';
+import type {GridColumnOrder} from 'sentry/components/gridEditable';
+import GridEditable, {COL_WIDTH_UNDEFINED} from 'sentry/components/gridEditable';
 import SortLink from 'sentry/components/gridEditable/sortLink';
 import Link from 'sentry/components/links/link';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
 import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
-import {ColumnType, fieldAlignment} from 'sentry/utils/discover/fields';
+import type {ColumnType} from 'sentry/utils/discover/fields';
+import {fieldAlignment} from 'sentry/utils/discover/fields';
 import {Container as TableCellContainer} from 'sentry/utils/discover/styles';
-import {SuspectSpans} from 'sentry/utils/performance/suspectSpans/types';
+import type {SuspectSpans} from 'sentry/utils/performance/suspectSpans/types';
 
 import {spanDetailsRouteWithQuery} from './spanDetails/utils';
-import {SpanSort, SpanSortOthers, SpanSortPercentiles, SpansTotalValues} from './types';
+import type {SpanSort, SpansTotalValues} from './types';
+import {SpanSortOthers, SpanSortPercentiles} from './types';
 
 type Props = {
   isLoading: boolean;
@@ -49,7 +50,7 @@ export default function SuspectSpansTable(props: Props) {
       // Frequency is computed using the `uniq` function in ClickHouse.
       // Because it is an approximation, it can occasionally exceed the number of events.
       defined(suspectSpan.frequency) && defined(totals?.['count()'])
-        ? Math.min(1, suspectSpan.frequency / totals!['count()'])
+        ? Math.min(1, suspectSpan.frequency / totals['count()'])
         : null,
     avgOccurrences: suspectSpan.avgOccurrences,
     p50ExclusiveTime: suspectSpan.p50ExclusiveTime,
@@ -74,7 +75,6 @@ export default function SuspectSpansTable(props: Props) {
           project
         ),
       }}
-      location={location}
     />
   );
 }
@@ -106,7 +106,7 @@ function renderBodyCellWithMeta(
 
     if (column.key === 'description') {
       const target = spanDetailsRouteWithQuery({
-        orgSlug: organization.slug,
+        organization,
         transaction: transactionName,
         query: location.query,
         spanSlug: {op: dataRow.operation, group: dataRow.group},

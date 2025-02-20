@@ -1,4 +1,5 @@
-import {Layout} from 'react-grid-layout';
+import type {Layout} from 'react-grid-layout';
+// @ts-expect-error TS(7016): Could not find a declaration file for module 'reac... Remove this comment to see the full error message
 import {compact} from 'react-grid-layout/build/utils';
 import pickBy from 'lodash/pickBy';
 import sortBy from 'lodash/sortBy';
@@ -8,9 +9,11 @@ import {defined} from 'sentry/utils';
 import {uniqueId} from 'sentry/utils/guid';
 
 import {NUM_DESKTOP_COLS} from './dashboard';
-import {DisplayType, Widget, WidgetLayout} from './types';
+import type {Widget, WidgetLayout} from './types';
+import {DisplayType} from './types';
 
 export const DEFAULT_WIDGET_WIDTH = 2;
+export const METRIC_WIDGET_MIN_SIZE = {minH: 2, h: 2, w: 2};
 
 const WIDGET_PREFIX = 'grid-item';
 
@@ -57,7 +60,7 @@ export function getMobileLayout(desktopLayout: Layout[], widgets: Widget[]) {
     return [];
   }
 
-  const layoutWidgetPairs = zip(desktopLayout, widgets) as [Layout, Widget][];
+  const layoutWidgetPairs = zip(desktopLayout, widgets) as Array<[Layout, Widget]>;
 
   // Sort by y and then subsort by x
   const sorted = sortBy(layoutWidgetPairs, ['0.y', '0.x']);
@@ -106,7 +109,7 @@ export function getInitialColumnDepths() {
  * Creates an array from layouts where each column stores how deep it is.
  */
 export function calculateColumnDepths(
-  layouts: Pick<Layout, 'h' | 'w' | 'x' | 'y'>[]
+  layouts: Array<Pick<Layout, 'h' | 'w' | 'x' | 'y'>>
 ): number[] {
   const depths = getInitialColumnDepths();
 
@@ -142,7 +145,7 @@ export function getNextAvailablePosition(
   // we get the top-most available spot
   for (let currDepth = 0; currDepth <= maxColumnDepth; currDepth++) {
     for (let start = 0; start <= columnDepths.length - DEFAULT_WIDGET_WIDTH; start++) {
-      if (columnDepths[start] > currDepth) {
+      if (columnDepths[start]! > currDepth) {
         // There are potentially widgets in the way here, so skip
         continue;
       }
@@ -184,7 +187,12 @@ export function assignDefaultLayout<T extends Pick<Widget, 'displayType' | 'layo
 
     return {
       ...widget,
-      layout: {...nextPosition, h: height, minH: height, w: DEFAULT_WIDGET_WIDTH},
+      layout: {
+        ...nextPosition,
+        h: height,
+        minH: height,
+        w: DEFAULT_WIDGET_WIDTH,
+      },
     };
   });
   return newWidgets;
@@ -213,10 +221,14 @@ export function generateWidgetsAfterCompaction(widgets: Widget[]) {
   // single widget change would affect other widget positions, e.g. deletion
   const nextLayout = compact(getDashboardLayout(widgets), 'vertical', NUM_DESKTOP_COLS);
   return widgets.map(widget => {
-    const layout = nextLayout.find(({i}) => i === constructGridItemKey(widget));
+    const layout = nextLayout.find(({i}: any) => i === constructGridItemKey(widget));
     if (!layout) {
       return widget;
     }
     return {...widget, layout};
   });
+}
+
+export function isValidLayout(layout: Layout) {
+  return !isNaN(layout.x) && !isNaN(layout.y) && layout.w > 0 && layout;
 }

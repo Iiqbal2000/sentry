@@ -6,19 +6,21 @@ import {
 import {navigateTo} from 'sentry/actionCreators/navigation';
 import {hasEveryAccess} from 'sentry/components/acl/access';
 import GuideAnchor from 'sentry/components/assistant/guideAnchor';
-import {Button, ButtonProps} from 'sentry/components/button';
+import type {ButtonProps} from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import Link from 'sentry/components/links/link';
 import {IconSiren} from 'sentry/icons';
 import type {SVGIconProps} from 'sentry/icons/svgIcon';
 import {t, tct} from 'sentry/locale';
-import type {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import type EventView from 'sentry/utils/discover/eventView';
 import useApi from 'sentry/utils/useApi';
+import useProjects from 'sentry/utils/useProjects';
 import useRouter from 'sentry/utils/useRouter';
-import withProjects from 'sentry/utils/withProjects';
+import {makeAlertsPathname} from 'sentry/views/alerts/pathnames';
+import type {AlertType, AlertWizardAlertNames} from 'sentry/views/alerts/wizard/options';
 import {
-  AlertType,
-  AlertWizardAlertNames,
   AlertWizardRuleTemplates,
   DEFAULT_WIZARD_TEMPLATE,
 } from 'sentry/views/alerts/wizard/options';
@@ -69,11 +71,15 @@ function CreateAlertFromViewButton({
   }
 
   const alertTemplate = alertType
-    ? AlertWizardRuleTemplates[alertType]
+    ? // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      AlertWizardRuleTemplates[alertType]
     : DEFAULT_WIZARD_TEMPLATE;
 
   const to = {
-    pathname: `/organizations/${organization.slug}/alerts/new/metric/`,
+    pathname: makeAlertsPathname({
+      path: '/new/metric/',
+      organization,
+    }),
     query: {
       ...queryParams,
       createFromDiscover: true,
@@ -92,7 +98,6 @@ function CreateAlertFromViewButton({
   return (
     <CreateAlertButton
       organization={organization}
-      projects={projects}
       onClick={handleClick}
       to={to}
       aria-label={t('Create Alert')}
@@ -103,7 +108,6 @@ function CreateAlertFromViewButton({
 
 type CreateAlertButtonProps = {
   organization: Organization;
-  projects: Project[];
   alertOption?: keyof typeof AlertWizardAlertNames;
   hideIcon?: boolean;
   iconProps?: SVGIconProps;
@@ -118,9 +122,8 @@ type CreateAlertButtonProps = {
   showPermissionGuide?: boolean;
 } & ButtonProps;
 
-function CreateAlertButton({
+export default function CreateAlertButton({
   organization,
-  projects,
   projectSlug,
   iconProps,
   referrer,
@@ -132,6 +135,7 @@ function CreateAlertButton({
 }: CreateAlertButtonProps) {
   const router = useRouter();
   const api = useApi();
+  const {projects} = useProjects();
   const createAlertUrl = (providedProj: string): string => {
     const params = new URLSearchParams();
     if (referrer) {
@@ -143,7 +147,12 @@ function CreateAlertButton({
     if (alertOption) {
       params.append('alert_option', alertOption);
     }
-    return `/organizations/${organization.slug}/alerts/wizard/?${params.toString()}`;
+    return (
+      makeAlertsPathname({
+        path: '/wizard/',
+        organization,
+      }) + `?${params.toString()}`
+    );
   };
 
   function handleClickWithoutProject(event: React.MouseEvent) {
@@ -213,4 +222,3 @@ function CreateAlertButton({
 }
 
 export {CreateAlertFromViewButton};
-export default withProjects(CreateAlertButton);

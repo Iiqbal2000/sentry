@@ -52,10 +52,7 @@ class WebHooksPluginTest(TestCase):
             content_type="application/json",
         )
 
-        try:
-            self.plugin.notify(self.notification)
-        except Exception as exc:
-            assert False, f"'self.plugin.notify' raised an exception {exc}"
+        self.plugin.notify(self.notification)  # does not raise!
 
         assert len(responses.calls) == 1
         assert responses.calls[0].response.status_code == 200
@@ -67,10 +64,7 @@ class WebHooksPluginTest(TestCase):
             responses.POST, "http://example.com", body="null", content_type="application/json"
         )
 
-        try:
-            self.plugin.notify(self.notification)
-        except Exception as exc:
-            assert False, f"'self.plugin.notify' raised an exception {exc}"
+        self.plugin.notify(self.notification)  # does not raise!
 
         assert len(responses.calls) == 1
         assert responses.calls[0].response.status_code == 200
@@ -82,10 +76,7 @@ class WebHooksPluginTest(TestCase):
             responses.POST, "http://example.com", body="1", content_type="application/json"
         )
 
-        try:
-            self.plugin.notify(self.notification)
-        except Exception as exc:
-            assert False, f"'self.plugin.notify' raised an exception {exc}"
+        self.plugin.notify(self.notification)  # does not raise!
 
         assert len(responses.calls) == 1
         assert responses.calls[0].response.status_code == 200
@@ -98,7 +89,7 @@ class WebHooksPluginTest(TestCase):
         form.is_valid()
 
         with pytest.raises(PluginError):
-            validate_urls(form.cleaned_data.get("urls"))
+            validate_urls(form.cleaned_data["urls"])
 
     @responses.activate
     def test_moved_permanently(self):
@@ -106,10 +97,7 @@ class WebHooksPluginTest(TestCase):
 
         responses.add(responses.POST, "http://example.com", body="<moved permanently", status=301)
 
-        try:
-            self.plugin.notify(self.notification)
-        except Exception:
-            assert False, "ValueError: Received unexpected plaintext response for code 301"
+        self.plugin.notify(self.notification)  # does not raise!
 
         assert len(responses.calls) == 1
         assert responses.calls[0].response.status_code == 301

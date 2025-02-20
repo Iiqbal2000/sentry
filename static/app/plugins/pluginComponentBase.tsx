@@ -18,7 +18,7 @@ const callbackWithArgs = function (context: any, callback: any, ...args: any) {
 
 type GenericFieldProps = Parameters<typeof GenericField>[0];
 
-type Props = {};
+type Props = Record<string, unknown>;
 
 type State = {state: FormState};
 
@@ -37,6 +37,7 @@ class PluginComponentBase<
       'onSaveError',
       'onSaveComplete',
       'renderField',
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     ].map(method => (this[method] = this[method].bind(this)));
 
     if (this.fetchData) {
@@ -69,7 +70,7 @@ class PluginComponentBase<
     // Allow children to implement this
   }
 
-  onLoad(callback, ...args) {
+  onLoad(callback: any, ...args: any[]) {
     this.setState(
       {
         state: FormState.LOADING,
@@ -84,7 +85,7 @@ class PluginComponentBase<
     });
   }
 
-  onLoadError(callback, ...args) {
+  onLoadError(callback: any, ...args: any[]) {
     this.setState(
       {
         state: FormState.ERROR,
@@ -94,7 +95,7 @@ class PluginComponentBase<
     addErrorMessage(t('An error occurred.'));
   }
 
-  onSave(callback, ...args) {
+  onSave(callback: any, ...args: any[]) {
     if (this.state.state === FormState.SAVING) {
       return;
     }
@@ -105,18 +106,18 @@ class PluginComponentBase<
       },
       () => {
         addLoadingMessage(t('Saving changes\u2026'));
-        callback && callback();
+        callback?.();
       }
     );
   }
 
-  onSaveSuccess(callback, ...args) {
+  onSaveSuccess(callback: any, ...args: any[]) {
     callback = callbackWithArgs(this, callback, ...args);
     this.setState(
       {
         state: FormState.READY,
       },
-      () => callback && callback()
+      () => callback?.()
     );
 
     window.clearTimeout(this.successMessageTimeout);
@@ -125,13 +126,13 @@ class PluginComponentBase<
     }, 0);
   }
 
-  onSaveError(callback, ...args) {
+  onSaveError(callback: any, ...args: any[]) {
     callback = callbackWithArgs(this, callback, ...args);
     this.setState(
       {
         state: FormState.ERROR,
       },
-      () => callback && callback()
+      () => callback?.()
     );
 
     window.clearTimeout(this.errorMessageTimeout);
@@ -140,10 +141,10 @@ class PluginComponentBase<
     }, 0);
   }
 
-  onSaveComplete(callback, ...args) {
+  onSaveComplete(callback: any, ...args: any[]) {
     clearIndicators();
     callback = callbackWithArgs(this, callback, ...args);
-    callback && callback();
+    callback?.();
   }
 
   renderField(props: Omit<GenericFieldProps, 'formState'>): React.ReactNode {

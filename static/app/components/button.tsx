@@ -1,15 +1,19 @@
 import {forwardRef as reactForwardRef, useCallback} from 'react';
 import isPropValid from '@emotion/is-prop-valid';
-import {css, Theme} from '@emotion/react';
+import type {Theme} from '@emotion/react';
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
+import type {LocationDescriptor} from 'history';
 
-import InteractionStateLayer from 'sentry/components/interactionStateLayer';
-import ExternalLink from 'sentry/components/links/externalLink';
-import Link from 'sentry/components/links/link';
-import {Tooltip, TooltipProps} from 'sentry/components/tooltip';
+import type {SVGIconProps} from 'sentry/icons/svgIcon';
+import {IconDefaultsProvider} from 'sentry/icons/useIconDefaults';
 import HookStore from 'sentry/stores/hookStore';
 import {space} from 'sentry/styles/space';
 import mergeRefs from 'sentry/utils/mergeRefs';
+
+import Link from './links/link';
+import InteractionStateLayer from './interactionStateLayer';
+import {Tooltip, type TooltipProps} from './tooltip';
 
 /**
  * The button can actually also be an anchor or React router Link (which seems
@@ -52,10 +56,6 @@ interface CommonButtonProps {
    * interactions with the button.
    */
   disabled?: boolean;
-  /**
-   * The button is an external link. Similar to the `Link` `external` property.
-   */
-  external?: boolean;
   /**
    * The icon to render inside of the button. The size will be set
    * appropriately based on the size of the button.
@@ -102,14 +102,11 @@ type ElementProps<E> = Omit<React.ButtonHTMLAttributes<E>, 'label' | 'size' | 't
 
 interface BaseButtonProps extends CommonButtonProps, ElementProps<ButtonElement> {
   /**
-   * For use with `href` and `data:` or `blob:` schemes. Tells the browser to
-   * download the contents.
+   * The button is an external link. Similar to the `Link` `external` property.
    *
-   * See: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/a#attr-download
-   *
-   * @deprecated Use LnikButton instead
+   * @deprecated Use LinkButton instead
    */
-  download?: HTMLAnchorElement['download'];
+  external?: boolean;
   /**
    * @internal Used in the Button forwardRef
    */
@@ -122,11 +119,15 @@ interface BaseButtonProps extends CommonButtonProps, ElementProps<ButtonElement>
    */
   href?: string;
   /**
+   * @deprecated Use LinkButton instead
+   */
+  replace?: boolean;
+  /**
    * Similar to `href`, but for internal links within the app.
    *
    * @deprecated Use LinkButton instead
    */
-  to?: string | object;
+  to?: string | LocationDescriptor;
 }
 
 interface ButtonPropsWithoutAriaLabel extends BaseButtonProps {
@@ -151,7 +152,9 @@ interface ToLinkButtonProps extends BaseLinkButtonProps {
   /**
    * Similar to `href`, but for internal links within the app.
    */
-  to: string | object;
+  to: string | LocationDescriptor;
+  external?: never;
+  replace?: boolean;
 }
 
 interface HrefLinkButtonProps extends BaseLinkButtonProps {
@@ -167,6 +170,10 @@ interface HrefLinkButtonProps extends BaseLinkButtonProps {
    * See: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/a#attr-download
    */
   download?: HTMLAnchorElement['download'];
+  /**
+   * The button is an external link. Similar to the `Link` `external` property.
+   */
+  external?: boolean;
 }
 
 interface ToLinkButtonPropsWithChildren extends ToLinkButtonProps {
@@ -193,9 +200,21 @@ type LinkButtonProps =
   | HrefLinkButtonPropsWithChildren
   | HrefLinkButtonPropsWithAriaLabel;
 
+/**
+ * Default sizes to use for SVGIcon
+ */
+const ICON_SIZES: Partial<
+  Record<NonNullable<BaseButtonProps['size']>, SVGIconProps['size']>
+> = {
+  xs: 'xs',
+  sm: 'sm',
+  md: 'sm',
+};
+
 function BaseButton({
   size = 'md',
   to,
+  replace,
   busy,
   href,
   title,
@@ -267,8 +286,8 @@ function BaseButton({
   );
 
   const hasChildren = Array.isArray(children)
-    ? children.some(child => !!child)
-    : !!children;
+    ? children.some(child => !isEmptyChild(child))
+    : !isEmptyChild(children);
 
   // Buttons come in 4 flavors: <Link>, <ExternalLink>, <a>, and <button>.
   // Let's use props to determine which to serve up, so we don't have to think about it.
@@ -281,6 +300,7 @@ function BaseButton({
       disabled={disabled}
       to={!disabled ? to : undefined}
       href={!disabled ? href : undefined}
+      replace={replace}
       size={size}
       priority={priority}
       borderless={borderless}
@@ -297,7 +317,7 @@ function BaseButton({
       <ButtonLabel size={size} borderless={borderless}>
         {icon && (
           <Icon size={size} hasChildren={hasChildren}>
-            {icon}
+            <IconDefaultsProvider size={ICON_SIZES[size]}>{icon}</IconDefaultsProvider>
           </Icon>
         )}
         {children}
@@ -426,13 +446,13 @@ const getColors = ({
         border-color: ${borderless || priority === 'link' ? 'transparent' : borderActive};
       }
 
-      &.focus-visible {
+      &:focus-visible {
         color: ${colorActive || color};
         border-color: ${borderActive};
       }
     `}
 
-    &.focus-visible {
+    &:focus-visible {
       ${getFocusState()}
       z-index: 1;
     }
@@ -468,6 +488,7 @@ const StyledButton = styled(
         title: _title,
         external,
         to,
+        replace,
         href,
         disabled,
         ...props
@@ -482,11 +503,22 @@ const StyledButton = styled(
       // Get component to use based on existence of `to` or `href` properties
       // Can be react-router `Link`, `a`, or `button`
       if (to) {
-        return <Link {...props} ref={ref} to={to} disabled={disabled} />;
+        return (
+          <Link {...props} ref={ref} to={to} replace={replace} disabled={disabled} />
+        );
       }
 
       if (href && external) {
-        return <ExternalLink {...props} ref={ref} href={href} disabled={disabled} />;
+        return (
+          <a
+            {...props}
+            ref={ref}
+            href={href}
+            aria-disabled={disabled}
+            target="_blank"
+            rel="noreferrer noopener"
+          />
+        );
       }
 
       if (href) {
@@ -505,6 +537,7 @@ const StyledButton = styled(
     shouldForwardProp: prop =>
       prop === 'forwardRef' ||
       prop === 'external' ||
+      prop === 'replace' ||
       (typeof prop === 'string' && isPropValid(prop)),
   }
 )<ButtonProps>`
@@ -512,7 +545,7 @@ const StyledButton = styled(
   display: inline-block;
   border-radius: ${p => p.theme.borderRadius};
   text-transform: none;
-  font-weight: 600;
+  font-weight: ${p => p.theme.fontWeightBold};
   ${getColors};
   ${getSizeStyles};
   ${getBoxShadow};
@@ -567,6 +600,20 @@ const getIconMargin = ({size, hasChildren}: ChildrenIconProps) => {
   }
 };
 
+function isEmptyChild(child: React.ReactNode) {
+  // truthy values are non empty
+  if (child) {
+    return false;
+  }
+
+  // out of the falsey values, 0 is the only one that takes space
+  if (child === 0) {
+    return false;
+  }
+
+  return true;
+}
+
 interface IconProps extends ChildrenIconProps, Omit<StyledButtonProps, 'theme'> {}
 const Icon = styled('span')<IconProps>`
   display: flex;
@@ -579,12 +626,10 @@ const LinkButton = Button as React.ComponentType<LinkButtonProps>;
 
 export {
   Button,
-  ButtonProps,
-  BaseButtonProps,
   LinkButton,
-  LinkButtonProps,
-
-  // Also export these styled components so we can use them as selectors
   StyledButton,
   ButtonLabel,
+  type ButtonProps,
+  type BaseButtonProps,
+  type LinkButtonProps,
 };

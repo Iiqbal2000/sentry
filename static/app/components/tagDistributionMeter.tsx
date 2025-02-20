@@ -1,9 +1,9 @@
 import {Fragment} from 'react';
 import isPropValid from '@emotion/is-prop-valid';
 import styled from '@emotion/styled';
-import {LocationDescriptor} from 'history';
+import type {LocationDescriptor} from 'history';
 
-import {TagSegment} from 'sentry/actionCreators/events';
+import type {TagSegment} from 'sentry/actionCreators/events';
 import Link from 'sentry/components/links/link';
 import {Tooltip} from 'sentry/components/tooltip';
 import Version from 'sentry/components/version';
@@ -55,7 +55,7 @@ function TagDistributionMeter({
       );
     }
 
-    const largestSegment = segments[0];
+    const largestSegment = segments[0]!;
     const pct = percent(largestSegment.count, totalValues);
     const pctLabel = Math.floor(pct);
     const renderLabel = () => {
@@ -140,7 +140,7 @@ function TagDistributionMeter({
                 {value.isOther ? (
                   <OtherSegment
                     aria-label={t('Other')}
-                    color={colors[colors.length - 1]}
+                    color={colors[colors.length - 1]!}
                   />
                 ) : (
                   <Segment
@@ -149,7 +149,7 @@ function TagDistributionMeter({
                       title,
                       value.value
                     )}
-                    color={colors[index]}
+                    color={colors[index]!}
                     {...segmentProps}
                   />
                 )}
@@ -216,7 +216,7 @@ const Title = styled('div')`
 
 const TitleType = styled('div')`
   color: ${p => p.theme.textColor};
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   ${p => p.theme.overflowEllipsis};
 `;
 
@@ -232,7 +232,7 @@ const Label = styled('div')`
 `;
 
 const Percent = styled('div')`
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   font-variant-numeric: tabular-nums;
   padding-left: ${space(0.5)};
   color: ${p => p.theme.textColor};

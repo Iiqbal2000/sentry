@@ -1,48 +1,44 @@
-import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
+import {Fragment, useCallback, useMemo} from 'react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import omit from 'lodash/omit';
 
-import DatePageFilter from 'sentry/components/datePageFilter';
-import TransactionsList, {
-  DropdownOption,
-} from 'sentry/components/discover/transactionsList';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
-import SearchBar from 'sentry/components/events/searchBar';
+import type {DropdownOption} from 'sentry/components/discover/transactionsList';
+import TransactionsList from 'sentry/components/discover/transactionsList';
 import * as Layout from 'sentry/components/layouts/thirds';
+import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import PageFilterBar from 'sentry/components/organizations/pageFilterBar';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
+import {TransactionSearchQueryBuilder} from 'sentry/components/performance/transactionSearchQueryBuilder';
 import {SuspectFunctionsTable} from 'sentry/components/profiling/suspectFunctions/suspectFunctionsTable';
-import {ActionBarItem} from 'sentry/components/smartSearchBar';
 import {Tooltip} from 'sentry/components/tooltip';
-import {MAX_QUERY_LENGTH} from 'sentry/constants';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {defined, generateQueryWithTag} from 'sentry/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import {
   formatTagKey,
   isRelativeSpanOperationBreakdownField,
   SPAN_OP_BREAKDOWN_FIELDS,
   SPAN_OP_RELATIVE_BREAKDOWN_FIELD,
 } from 'sentry/utils/discover/fields';
-import {QueryError} from 'sentry/utils/discover/genericDiscoverQuery';
-import {
-  MetricsEnhancedPerformanceDataContext,
-  useMEPDataContext,
-} from 'sentry/utils/performance/contexts/metricsEnhancedPerformanceDataContext';
+import type {QueryError} from 'sentry/utils/discover/genericDiscoverQuery';
+import {useMEPDataContext} from 'sentry/utils/performance/contexts/metricsEnhancedPerformanceDataContext';
 import {decodeScalar} from 'sentry/utils/queryString';
 import projectSupportsReplay from 'sentry/utils/replays/projectSupportsReplay';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import {useRoutes} from 'sentry/utils/useRoutes';
 import withProjects from 'sentry/utils/withProjects';
-import {Actions, updateQuery} from 'sentry/views/discover/table/cellAction';
-import {TableColumn} from 'sentry/views/discover/table/types';
+import type {Actions} from 'sentry/views/discover/table/cellAction';
+import {updateQuery} from 'sentry/views/discover/table/cellAction';
+import type {TableColumn} from 'sentry/views/discover/table/types';
 import Tags from 'sentry/views/discover/tags';
-import {TransactionPercentage} from 'sentry/views/performance/transactionSummary/transactionOverview/transactionPercentage';
+import {useDomainViewFilters} from 'sentry/views/insights/pages/useFilters';
 import {canUseTransactionMetricsData} from 'sentry/views/performance/transactionSummary/transactionOverview/utils';
 import {
   PERCENTILE as VITAL_PERCENTILE,
@@ -60,7 +56,7 @@ import {
   generateProfileLink,
   generateReplayLink,
   generateTraceLink,
-  generateTransactionLink,
+  generateTransactionIdLink,
   normalizeSearchConditions,
   SidebarSpacer,
   TransactionFilterOptions,
@@ -87,7 +83,6 @@ type Props = {
   spanOperationBreakdownFilter: SpanOperationBreakdownFilter;
   totalValues: Record<string, number> | null;
   transactionName: string;
-  unfilteredTotalValues?: Record<string, number> | null;
 };
 
 function SummaryContent({
@@ -102,25 +97,29 @@ function SummaryContent({
   projectId,
   transactionName,
   onChangeFilter,
-  unfilteredTotalValues,
 }: Props) {
   const routes = useRoutes();
+  const navigate = useNavigate();
   const mepDataContext = useMEPDataContext();
+  const domainViewFilters = useDomainViewFilters();
 
-  function handleSearch(query: string) {
-    const queryParams = normalizeDateTimeParams({
-      ...(location.query || {}),
-      query,
-    });
+  const handleSearch = useCallback(
+    (query: string) => {
+      const queryParams = normalizeDateTimeParams({
+        ...(location.query || {}),
+        query,
+      });
 
-    // do not propagate pagination when making a new search
-    const searchQueryParams = omit(queryParams, 'cursor');
+      // do not propagate pagination when making a new search
+      const searchQueryParams = omit(queryParams, 'cursor');
 
-    browserHistory.push({
-      pathname: location.pathname,
-      query: searchQueryParams,
-    });
-  }
+      navigate({
+        pathname: location.pathname,
+        query: searchQueryParams,
+      });
+    },
+    [location, navigate]
+  );
 
   function generateTagUrl(key: string, value: string) {
     const query = generateQueryWithTag(location.query, {key: formatTagKey(key), value});
@@ -137,7 +136,7 @@ function SummaryContent({
 
       updateQuery(searchConditions, action, column, value);
 
-      browserHistory.push({
+      navigate({
         pathname: location.pathname,
         query: {
           ...location.query,
@@ -154,7 +153,7 @@ function SummaryContent({
       query: {...location.query, showTransactions: value, transactionCursor: undefined},
     };
 
-    browserHistory.push(target);
+    navigate(target);
   }
 
   function handleAllEventsViewClick() {
@@ -187,47 +186,23 @@ function SummaryContent({
     return sortedEventView;
   }
 
-  function generateActionBarItems(
-    _org: Organization,
-    _location: Location,
-    _mepDataContext: MetricsEnhancedPerformanceDataContext
-  ) {
-    let items: ActionBarItem[] | undefined = undefined;
-    if (!canUseTransactionMetricsData(_org, _mepDataContext)) {
-      items = [
-        {
-          key: 'alert',
-          makeAction: () => ({
-            Button: () => (
-              <Tooltip
-                title={t(
-                  'Based on your search criteria and sample rate, the events available may be limited.'
-                )}
-              >
-                <StyledIconWarning
-                  data-test-id="search-metrics-fallback-warning"
-                  size="sm"
-                  color="warningText"
-                />
-              </Tooltip>
-            ),
-            menuItem: {
-              key: 'alert',
-            },
-          }),
-        },
-      ];
+  const trailingItems = useMemo(() => {
+    if (!canUseTransactionMetricsData(organization, mepDataContext)) {
+      return <MetricsWarningIcon />;
     }
 
-    return items;
-  }
+    return null;
+  }, [organization, mepDataContext]);
 
   const hasPerformanceChartInterpolation = organization.features.includes(
     'performance-chart-interpolation'
   );
 
-  const query = decodeScalar(location.query.query, '');
-  const totalCount = totalValues === null ? null : totalValues['count()'];
+  const query = useMemo(() => {
+    return decodeScalar(location.query.query, '');
+  }, [location]);
+
+  const totalCount = totalValues === null ? null : totalValues['count()']!;
 
   // NOTE: This is not a robust check for whether or not a transaction is a front end
   // transaction, however it will suffice for now.
@@ -267,15 +242,25 @@ function SummaryContent({
   }
 
   if (
-    organization.features.includes('profiling') &&
-    project &&
     // only show for projects that already sent a profile
     // once we have a more compact design we will show this for
     // projects that support profiling as well
-    project.hasProfiles
+    project?.hasProfiles &&
+    (organization.features.includes('profiling') ||
+      organization.features.includes('continuous-profiling'))
   ) {
     transactionsListTitles.push(t('profile'));
-    fields.push({field: 'profile.id'});
+
+    if (organization.features.includes('profiling')) {
+      fields.push({field: 'profile.id'});
+    }
+
+    if (organization.features.includes('continuous-profiling')) {
+      fields.push({field: 'profiler.id'});
+      fields.push({field: 'thread.id'});
+      fields.push({field: 'precise.start_ts'});
+      fields.push({field: 'precise.finish_ts'});
+    }
   }
 
   // update search conditions
@@ -334,6 +319,26 @@ function SummaryContent({
     handleOpenAllEventsClick: handleAllEventsViewClick,
   };
 
+  const hasNewSpansUIFlag =
+    organization.features.includes('performance-spans-new-ui') &&
+    organization.features.includes('insights-initial-modules');
+
+  const projectIds = useMemo(() => eventView.project.slice(), [eventView.project]);
+
+  function renderSearchBar() {
+    return (
+      <TransactionSearchQueryBuilder
+        projects={projectIds}
+        initialQuery={query}
+        onSearch={handleSearch}
+        searchSource="transaction_summary"
+        disableLoadingTags // already loaded by the parent component
+        filterKeyMenuWidth={420}
+        trailingItems={trailingItems}
+      />
+    );
+  }
+
   return (
     <Fragment>
       <Layout.Main>
@@ -345,22 +350,9 @@ function SummaryContent({
           />
           <PageFilterBar condensed>
             <EnvironmentPageFilter />
-            <DatePageFilter alignDropdown="left" />
+            <DatePageFilter />
           </PageFilterBar>
-          <StyledSearchBar
-            searchSource="transaction_summary"
-            organization={organization}
-            projectIds={eventView.project}
-            query={query}
-            fields={eventView.fields}
-            onSearch={handleSearch}
-            maxQueryLength={MAX_QUERY_LENGTH}
-            actionBarItems={generateActionBarItems(
-              organization,
-              location,
-              mepDataContext
-            )}
-          />
+          <StyledSearchBarWrapper>{renderSearchBar()}</StyledSearchBarWrapper>
         </FilterActions>
         <PerformanceAtScaleContextProvider>
           <TransactionSummaryCharts
@@ -387,8 +379,11 @@ function SummaryContent({
             titles={transactionsListTitles}
             handleDropdownChange={handleTransactionsListSortChange}
             generateLink={{
-              id: generateTransactionLink(transactionName),
-              trace: generateTraceLink(eventView.normalizeDateSelection(location)),
+              id: generateTransactionIdLink(transactionName, domainViewFilters.view),
+              trace: generateTraceLink(
+                eventView.normalizeDateSelection(location),
+                domainViewFilters.view
+              ),
               replayId: generateReplayLink(routes),
               'profile.id': generateProfileLink(),
             }}
@@ -397,23 +392,28 @@ function SummaryContent({
               p95: totalValues?.['p95()'] ?? 0,
               spanOperationBreakdownFilter,
             })}
+            domainViewFilters={domainViewFilters}
             forceLoading={isLoading}
             referrer="performance.transactions_summary"
+            supportsInvestigationRule
           />
         </PerformanceAtScaleContextProvider>
 
-        <SuspectSpans
-          location={location}
-          organization={organization}
-          eventView={eventView}
-          totals={
-            defined(totalValues?.['count()'])
-              ? {'count()': totalValues!['count()']}
-              : null
-          }
-          projectId={projectId}
-          transactionName={transactionName}
-        />
+        {!hasNewSpansUIFlag && (
+          <SuspectSpans
+            location={location}
+            organization={organization}
+            eventView={eventView}
+            totals={
+              defined(totalValues?.['count()'])
+                ? {'count()': totalValues['count()']}
+                : null
+            }
+            projectId={projectId}
+            transactionName={transactionName}
+          />
+        )}
+
         <TagExplorer
           eventView={eventView}
           organization={organization}
@@ -421,12 +421,13 @@ function SummaryContent({
           projects={projects}
           transactionName={transactionName}
           currentFilter={spanOperationBreakdownFilter}
+          domainViewFilters={domainViewFilters}
         />
 
         <SuspectFunctionsTable
-          project={project}
-          transaction={transactionName}
+          eventView={eventView}
           analyticsPageSource="performance_transaction"
+          project={project}
         />
         <RelatedIssues
           organization={organization}
@@ -438,12 +439,6 @@ function SummaryContent({
         />
       </Layout.Main>
       <Layout.Side>
-        <TransactionPercentage
-          isLoading={isLoading}
-          error={error}
-          totals={totalValues}
-          unfilteredTotals={unfilteredTotalValues}
-        />
         <UserStats
           organization={organization}
           location={location}
@@ -498,7 +493,7 @@ function getFilterOptions({
         label: t('Fastest Transactions'),
       },
       {
-        query: [['transaction.duration', `<=${p95.toFixed(0)}`]],
+        query: p95 > 0 ? [['transaction.duration', `<=${p95.toFixed(0)}`]] : undefined,
         sort: {kind: 'desc', field: 'transaction.duration'},
         value: TransactionFilterOptions.SLOW,
         label: t('Slow Transactions (p95)'),
@@ -526,7 +521,7 @@ function getFilterOptions({
       label: t('Fastest %s Operations', operationName),
     },
     {
-      query: [['transaction.duration', `<=${p95.toFixed(0)}`]],
+      query: p95 > 0 ? [['transaction.duration', `<=${p95.toFixed(0)}`]] : undefined,
       sort: {kind: 'desc', field},
       value: TransactionFilterOptions.SLOW,
       label: t('Slow %s Operations (p95)', operationName),
@@ -553,8 +548,24 @@ function getTransactionsListSort(
     location.query.showTransactions,
     TransactionFilterOptions.SLOW
   );
-  const selectedSort = sortOptions.find(opt => opt.value === urlParam) || sortOptions[0];
+  const selectedSort = sortOptions.find(opt => opt.value === urlParam) || sortOptions[0]!;
   return {selected: selectedSort, options: sortOptions};
+}
+
+function MetricsWarningIcon() {
+  return (
+    <Tooltip
+      title={t(
+        'Based on your search criteria and sample rate, the events available may be limited.'
+      )}
+    >
+      <StyledIconWarning
+        data-test-id="search-metrics-fallback-warning"
+        size="sm"
+        color="warningText"
+      />
+    </Tooltip>
+  );
 }
 
 const FilterActions = styled('div')`
@@ -571,7 +582,7 @@ const FilterActions = styled('div')`
   }
 `;
 
-const StyledSearchBar = styled(SearchBar)`
+const StyledSearchBarWrapper = styled('div')`
   @media (min-width: ${p => p.theme.breakpoints.small}) {
     order: 1;
     grid-column: 1/4;

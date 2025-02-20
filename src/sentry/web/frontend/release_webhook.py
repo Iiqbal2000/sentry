@@ -15,10 +15,12 @@ from sentry.models.options.project_option import ProjectOption
 from sentry.models.project import Project
 from sentry.plugins.base import plugins
 from sentry.utils import json
+from sentry.web.frontend.base import region_silo_view
 
 logger = logging.getLogger("sentry.webhooks")
 
 
+@region_silo_view
 class ReleaseWebhookView(View):
     def verify(self, plugin_id, project_id, token, signature):
         return constant_time_compare(
@@ -66,6 +68,8 @@ class ReleaseWebhookView(View):
     def post(self, request: HttpRequest, plugin_id, project_id, signature) -> HttpResponse:
         try:
             project = Project.objects.get_from_cache(id=project_id)
+        except ValueError:
+            return HttpResponse(status=404)
         except Project.DoesNotExist:
             logger.warning(
                 "release-webhook.invalid-project",

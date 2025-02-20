@@ -1,26 +1,30 @@
 import {Fragment} from 'react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {Alert} from 'sentry/components/alert';
+import {Alert} from 'sentry/components/core/alert';
 import Link from 'sentry/components/links/link';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import NotAvailable from 'sentry/components/notAvailable';
 import PanelItem from 'sentry/components/panels/panelItem';
-import PanelTable from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import {IconArrow} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, ReleaseProject} from 'sentry/types';
-import DiscoverQuery, {TableData} from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
+import type {Organization} from 'sentry/types/organization';
+import type {ReleaseProject} from 'sentry/types/release';
+import type {TableData} from 'sentry/utils/discover/discoverQuery';
+import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
+import type EventView from 'sentry/utils/discover/eventView';
 import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
+import {SavedQueryDatasets} from 'sentry/utils/discover/types';
 import {MobileVital, WebVital} from 'sentry/utils/fields';
 import {
   MOBILE_VITAL_DETAILS,
   WEB_VITAL_DETAILS,
 } from 'sentry/utils/performance/vitals/constants';
+import {hasDatasetSelector} from 'sentry/views/dashboards/utils';
 import {ProjectPerformanceType} from 'sentry/views/performance/utils';
 
 type PerformanceCardTableProps = {
@@ -29,7 +33,7 @@ type PerformanceCardTableProps = {
   isLoading: boolean;
   location: Location;
   organization: Organization;
-  performanceType: string;
+  performanceType: ProjectPerformanceType;
   project: ReleaseProject;
   releaseEventView: EventView;
   thisReleaseTableData: TableData | null;
@@ -116,7 +120,15 @@ function PerformanceCardTable({
       ]);
       return (
         <SubTitle key={idx}>
-          <Link to={newView.getResultsViewUrlTarget(organization.slug)}>
+          <Link
+            to={newView.getResultsViewUrlTarget(
+              organization,
+              false,
+              hasDatasetSelector(organization)
+                ? SavedQueryDatasets.TRANSACTIONS
+                : undefined
+            )}
+          >
             {WEB_VITAL_DETAILS[vital.title].name} (
             {WEB_VITAL_DETAILS[vital.title].acronym})
           </Link>
@@ -130,7 +142,15 @@ function PerformanceCardTable({
       ]);
       return (
         <SubTitle key={idx}>
-          <Link to={newView.getResultsViewUrlTarget(organization.slug)}>
+          <Link
+            to={newView.getResultsViewUrlTarget(
+              organization,
+              false,
+              hasDatasetSelector(organization)
+                ? SavedQueryDatasets.TRANSACTIONS
+                : undefined
+            )}
+          >
             {span.title}
           </Link>
         </SubTitle>
@@ -182,6 +202,7 @@ function PerformanceCardTable({
         <StyledPanelItem>
           <TitleSpace />
           {webVitals.map((vital, index) => (
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             <MultipleEmptySubText key={vital[index]}>
               <StyledNotAvailable tooltip={t('No results found')} />
             </MultipleEmptySubText>
@@ -190,6 +211,7 @@ function PerformanceCardTable({
         <StyledPanelItem>
           <TitleSpace />
           {spans.map((span, index) => (
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             <MultipleEmptySubText key={span[index]}>
               <StyledNotAvailable tooltip={t('No results found')} />
             </MultipleEmptySubText>
@@ -218,11 +240,11 @@ function PerformanceCardTable({
                 organization,
                 location,
               });
-              const allReleasesWebVitals = webVitalsRenderer?.map(
-                renderer => renderer?.(dataRow, {organization, location})
+              const allReleasesWebVitals = webVitalsRenderer?.map(renderer =>
+                renderer?.(dataRow, {organization, location})
               );
-              const allReleasesSpans = spansRenderer?.map(
-                renderer => renderer?.(dataRow, {organization, location})
+              const allReleasesSpans = spansRenderer?.map(renderer =>
+                renderer?.(dataRow, {organization, location})
               );
 
               return (
@@ -246,11 +268,11 @@ function PerformanceCardTable({
                 organization,
                 location,
               });
-              const thisReleasesWebVitals = webVitalsRenderer?.map(
-                renderer => renderer?.(dataRow, {organization, location})
+              const thisReleasesWebVitals = webVitalsRenderer?.map(renderer =>
+                renderer?.(dataRow, {organization, location})
               );
-              const thisReleasesSpans = spansRenderer?.map(
-                renderer => renderer?.(dataRow, {organization, location})
+              const thisReleasesSpans = spansRenderer?.map(renderer =>
+                renderer?.(dataRow, {organization, location})
               );
 
               return (
@@ -308,7 +330,15 @@ function PerformanceCardTable({
       ]);
       return (
         <SubTitle key={idx}>
-          <Link to={newView.getResultsViewUrlTarget(organization.slug)}>
+          <Link
+            to={newView.getResultsViewUrlTarget(
+              organization,
+              false,
+              hasDatasetSelector(organization)
+                ? SavedQueryDatasets.TRANSACTIONS
+                : undefined
+            )}
+          >
             {span.title}
           </Link>
         </SubTitle>
@@ -363,6 +393,7 @@ function PerformanceCardTable({
         <StyledPanelItem>
           <TitleSpace />
           {spans.map((span, index) => (
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             <MultipleEmptySubText key={span[index]}>
               <StyledNotAvailable tooltip={t('No results found')} />
             </MultipleEmptySubText>
@@ -390,8 +421,8 @@ function PerformanceCardTable({
                 location,
               });
               const allReleasesApdex = apdexRenderer?.(dataRow, {organization, location});
-              const allReleasesSpans = spansRenderer?.map(
-                renderer => renderer?.(dataRow, {organization, location})
+              const allReleasesSpans = spansRenderer?.map(renderer =>
+                renderer?.(dataRow, {organization, location})
               );
 
               return (
@@ -416,8 +447,8 @@ function PerformanceCardTable({
                 organization,
                 location,
               });
-              const thisReleasesSpans = spansRenderer?.map(
-                renderer => renderer?.(dataRow, {organization, location})
+              const thisReleasesSpans = spansRenderer?.map(renderer =>
+                renderer?.(dataRow, {organization, location})
               );
 
               return (
@@ -513,8 +544,8 @@ function PerformanceCardTable({
                 organization,
                 location,
               });
-              const allReleasesMobile = mobileVitalsRenderer?.map(
-                renderer => renderer?.(dataRow, {organization, location})
+              const allReleasesMobile = mobileVitalsRenderer?.map(renderer =>
+                renderer?.(dataRow, {organization, location})
               );
 
               return (
@@ -533,8 +564,8 @@ function PerformanceCardTable({
                 organization,
                 location,
               });
-              const thisReleasesMobile = mobileVitalsRenderer?.map(
-                renderer => renderer?.(dataRow, {organization, location})
+              const thisReleasesMobile = mobileVitalsRenderer?.map(renderer =>
+                renderer?.(dataRow, {organization, location})
               );
 
               return (
@@ -611,7 +642,9 @@ function PerformanceCardTable({
 
   const loader = <StyledLoadingIndicator />;
 
-  const platformPerformanceRender = {
+  const platformPerformanceRender: Partial<
+    Record<ProjectPerformanceType, {section: React.ReactNode; title: string}>
+  > = {
     [ProjectPerformanceType.FRONTEND]: {
       title: t('Frontend Performance'),
       section: renderFrontendPerformance(),
@@ -635,7 +668,7 @@ function PerformanceCardTable({
   return (
     <Fragment>
       <HeadCellContainer>
-        {platformPerformanceRender[performanceType].title}
+        {platformPerformanceRender[performanceType]?.title}
       </HeadCellContainer>
       {isUnknownPlatform && (
         <StyledAlert type="warning" showIcon system>
@@ -671,7 +704,7 @@ function PerformanceCardTable({
         loader={loader}
         disableTopBorder={isUnknownPlatform}
       >
-        {platformPerformanceRender[performanceType].section}
+        {platformPerformanceRender[performanceType]?.section}
       </StyledPanelTable>
     </Fragment>
   );
@@ -681,7 +714,7 @@ interface Props {
   allReleasesEventView: EventView;
   location: Location;
   organization: Organization;
-  performanceType: string;
+  performanceType: ProjectPerformanceType;
   project: ReleaseProject;
   releaseEventView: EventView;
 }
@@ -727,7 +760,7 @@ function PerformanceCardTableWrapper({
 
 export default PerformanceCardTableWrapper;
 
-const emptyFieldCss = p => css`
+const emptyFieldCss = (p: any) => css`
   color: ${p.theme.chartOther};
   text-align: right;
 `;
@@ -797,7 +830,6 @@ const StyledAlert = styled(Alert)`
   border-top: 1px solid ${p => p.theme.border};
   border-right: 1px solid ${p => p.theme.border};
   border-left: 1px solid ${p => p.theme.border};
-  margin-bottom: 0;
 `;
 
 const StyledNotAvailable = styled(NotAvailable)`
@@ -809,12 +841,12 @@ const SubText = styled('div')`
   text-align: right;
 `;
 
-const TrendText = styled('div')<{color: string}>`
+const TrendText = styled('div')<{color: 'success' | 'error'}>`
   color: ${p => p.theme[p.color]};
   text-align: right;
 `;
 
-const StyledIconArrow = styled(IconArrow)<{color: string}>`
+const StyledIconArrow = styled(IconArrow)<{color: 'success' | 'error'}>`
   color: ${p => p.theme[p.color]};
   margin-left: ${space(0.5)};
 `;

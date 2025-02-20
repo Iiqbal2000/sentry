@@ -1,24 +1,26 @@
-import {useCallback, useMemo, useRef} from 'react';
-import {createFilter} from 'react-select';
-import {Theme} from '@emotion/react';
+import {useCallback, useEffect, useMemo, useRef} from 'react';
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 import debounce from 'lodash/debounce';
 
 import {openCreateTeamModal} from 'sentry/actionCreators/modal';
 import {addTeamToProject} from 'sentry/actionCreators/projects';
 import {Button} from 'sentry/components/button';
-import SelectControl, {
+import {createFilter} from 'sentry/components/forms/controls/reactSelectWrapper';
+import type {
   ControlProps,
   GeneralSelectValue,
   StylesConfig,
 } from 'sentry/components/forms/controls/selectControl';
+import SelectControl from 'sentry/components/forms/controls/selectControl';
 import IdBadge from 'sentry/components/idBadge';
 import {Tooltip} from 'sentry/components/tooltip';
 import {DEFAULT_DEBOUNCE_DURATION} from 'sentry/constants';
 import {IconAdd, IconUser} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, Project, Team} from 'sentry/types';
+import type {Organization, Team} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import useApi from 'sentry/utils/useApi';
 import {useTeams} from 'sentry/utils/useTeams';
 import withOrganization from 'sentry/utils/withOrganization';
@@ -54,7 +56,7 @@ const optionFilter = createFilter({
   stringify: option => `${option.label} ${option.value}`,
 });
 
-const filterOption = (canditate, input) =>
+const filterOption = (canditate: any, input: any) =>
   // Never filter out the create team option
   canditate.data.value === CREATE_TEAM_VALUE || optionFilter(canditate, input);
 
@@ -110,6 +112,10 @@ type Props = {
    * Controls whether the dropdown allows to create a new team
    */
   allowCreate?: boolean;
+  /**
+   * Flag that indicates whether to filter teams to only show teams that the user is a member of
+   */
+  filterByUserMembership?: boolean;
   includeUnassigned?: boolean;
   /**
    * Can be used to restrict teams to a certain project and allow for new teams to be add to that project
@@ -123,6 +129,10 @@ type Props = {
    * Controls whether the value in the dropdown is a team id or team slug
    */
   useId?: boolean;
+  /**
+   * Flag that lets the caller decide to use the team value by default if there is only one option
+   */
+  useTeamDefaultIfOnlyOne?: boolean;
 } & ControlProps;
 
 type TeamActor = {
@@ -140,14 +150,21 @@ function TeamSelector(props: Props) {
   const {
     allowCreate,
     includeUnassigned,
+    filterByUserMembership = false,
     styles: stylesProp,
     onChange,
+    useTeamDefaultIfOnlyOne = false,
     ...extraProps
   } = props;
   const {teamFilter, organization, project, multiple, value, useId} = props;
 
   const api = useApi();
-  const {teams, fetching, onSearch} = useTeams();
+  const {teams: initialTeams, fetching, onSearch} = useTeams();
+
+  let teams = initialTeams;
+  if (filterByUserMembership) {
+    teams = initialTeams.filter(team => team.isMember);
+  }
 
   // TODO(ts) This type could be improved when react-select types are better.
   const selectRef = useRef<any>(null);
@@ -297,6 +314,7 @@ function TeamSelector(props: Props) {
 
   function getOptions() {
     const filteredTeams = teamFilter ? teams.filter(teamFilter) : teams;
+
     const createOption = {
       value: CREATE_TEAM_VALUE,
       label: t('Create team'),
@@ -342,7 +360,7 @@ function TeamSelector(props: Props) {
     createTeamOutsideProjectOption,
   ]);
 
-  const handleInputCHange = useMemo(
+  const handleInputChange = useMemo(
     () => debounce(val => void onSearch(val), DEFAULT_DEBOUNCE_DURATION),
     [onSearch]
   );
@@ -356,11 +374,28 @@ function TeamSelector(props: Props) {
     [includeUnassigned, multiple, stylesProp]
   );
 
+  useEffect(() => {
+    // Only take action after we've finished loading the teams
+    if (fetching) {
+      return;
+    }
+
+    // If there is only one team, and our flow wants to enable using that team as a default, update the parent state
+    if (options.length === 1 && useTeamDefaultIfOnlyOne) {
+      const castedValue = multiple
+        ? (options as TeamOption[])
+        : (options[0] as TeamOption);
+      handleChange(castedValue);
+    }
+    // We only want to do this once when the component is finished loading for teams and mounted.
+    // If the user decides they do not want the default, we should not add the default value back.
+  }, [fetching, useTeamDefaultIfOnlyOne]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <SelectControl
       ref={selectRef}
       options={options}
-      onInputChange={handleInputCHange}
+      onInputChange={handleInputChange}
       getOptionValue={getOptionValue}
       filterOption={filterOption}
       styles={styles}

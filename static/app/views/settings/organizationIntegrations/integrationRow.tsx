@@ -1,19 +1,20 @@
 import styled from '@emotion/styled';
 import startCase from 'lodash/startCase';
 
-import {Alert} from 'sentry/components/alert';
-import {Button} from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
+import {Alert} from 'sentry/components/core/alert';
 import Link from 'sentry/components/links/link';
 import PanelItem from 'sentry/components/panels/panelItem';
 import {t} from 'sentry/locale';
 import PluginIcon from 'sentry/plugins/components/pluginIcon';
 import {space} from 'sentry/styles/space';
-import {
+import type {
   IntegrationInstallationStatus,
-  Organization,
   PluginWithProjectList,
   SentryApp,
-} from 'sentry/types';
+  SentryAppStatus,
+} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
 import {
   convertIntegrationTypeToSnakeCase,
   trackIntegrationAnalytics,
@@ -28,7 +29,7 @@ type Props = {
   configurations: number;
   displayName: string;
   organization: Organization;
-  publishStatus: 'unpublished' | 'published' | 'internal';
+  publishStatus: SentryAppStatus;
   slug: string;
   type: 'plugin' | 'firstParty' | 'sentryApp' | 'docIntegration';
   /**
@@ -118,27 +119,29 @@ function IntegrationRow(props: Props) {
       </FlexContainer>
       {alertText && (
         <AlertContainer>
-          <Alert
-            type="warning"
-            showIcon
-            trailingItems={
-              <ResolveNowButton
-                href={`${baseUrl}?tab=configurations&referrer=directory_resolve_now`}
-                size="xs"
-                onClick={() =>
-                  trackIntegrationAnalytics('integrations.resolve_now_clicked', {
-                    integration_type: convertIntegrationTypeToSnakeCase(type),
-                    integration: slug,
-                    organization,
-                  })
-                }
-              >
-                {resolveText || t('Resolve Now')}
-              </ResolveNowButton>
-            }
-          >
-            {alertText}
-          </Alert>
+          <Alert.Container>
+            <Alert
+              type="warning"
+              showIcon
+              trailingItems={
+                <ResolveNowButton
+                  href={`${baseUrl}?tab=configurations&referrer=directory_resolve_now`}
+                  size="xs"
+                  onClick={() =>
+                    trackIntegrationAnalytics('integrations.resolve_now_clicked', {
+                      integration_type: convertIntegrationTypeToSnakeCase(type),
+                      integration: slug,
+                      organization,
+                    })
+                  }
+                >
+                  {resolveText || t('Resolve Now')}
+                </ResolveNowButton>
+              }
+            >
+              {alertText}
+            </Alert>
+          </Alert.Container>
         </AlertContainer>
       )}
       {customAlert}
@@ -178,7 +181,7 @@ const TagsContainer = styled('div')`
 `;
 
 const IntegrationName = styled(Link)`
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
 `;
 
 const IntegrationDetails = styled('div')`
@@ -214,7 +217,7 @@ const PublishStatus = styled(({status, ...props}: PublishStatusProps) => (
     content: '|';
     color: ${p => p.theme.gray200};
     margin-right: ${space(0.75)};
-    font-weight: normal;
+    font-weight: ${p => p.theme.fontWeightNormal};
   }
 `;
 
@@ -241,7 +244,7 @@ const CategoryTag = styled(
   color: ${p => (p.priority ? p.theme.white : p.theme.gray500)};
 `;
 
-const ResolveNowButton = styled(Button)`
+const ResolveNowButton = styled(LinkButton)`
   color: ${p => p.theme.subText};
   float: right;
 `;

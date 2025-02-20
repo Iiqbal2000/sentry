@@ -1,3 +1,4 @@
+import {forwardRef} from 'react';
 import styled from '@emotion/styled';
 
 import {Button} from 'sentry/components/button';
@@ -5,7 +6,7 @@ import NotAvailable from 'sentry/components/notAvailable';
 import {Tooltip} from 'sentry/components/tooltip';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Image, ImageStatus} from 'sentry/types/debugImage';
+import type {ImageWithCombinedStatus} from 'sentry/types/debugImage';
 
 import layout from '../layout';
 import {getFileName, getImageAddress} from '../utils';
@@ -14,24 +15,23 @@ import Processings from './processings';
 import Status from './status';
 
 type Props = {
-  image: Image & {status: ImageStatus};
-  onOpenImageDetailsModal: (
-    code_id: Image['code_id'],
-    debug_id: Image['debug_id']
-  ) => void;
+  image: ImageWithCombinedStatus;
+  onOpenImageDetailsModal: (image: ImageWithCombinedStatus) => void;
   style?: React.CSSProperties;
 };
 
-function DebugImage({image, onOpenImageDetailsModal, style}: Props) {
-  const {unwind_status, debug_status, debug_file, debug_id, code_file, code_id, status} =
-    image;
+const DebugImage = forwardRef<HTMLDivElement, Props>(function DebugImage(
+  {image, onOpenImageDetailsModal, style},
+  ref
+) {
+  const {unwind_status, debug_status, debug_file, code_file, status} = image;
 
   const codeFilename = getFileName(code_file);
   const debugFilename = getFileName(debug_file);
   const imageAddress = getImageAddress(image);
 
   return (
-    <Wrapper style={style}>
+    <Wrapper ref={ref} style={style}>
       <StatusColumn>
         <Status status={status} />
       </StatusColumn>
@@ -56,13 +56,13 @@ function DebugImage({image, onOpenImageDetailsModal, style}: Props) {
         )}
       </Column>
       <DebugFilesColumn>
-        <Button size="xs" onClick={() => onOpenImageDetailsModal(code_id, debug_id)}>
+        <Button size="xs" onClick={() => onOpenImageDetailsModal(image)}>
           {t('View')}
         </Button>
       </DebugFilesColumn>
     </Wrapper>
   );
-}
+});
 
 export default DebugImage;
 

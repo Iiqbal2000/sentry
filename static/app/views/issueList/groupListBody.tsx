@@ -1,19 +1,21 @@
-import {IndexedMembersByProject} from 'sentry/actionCreators/members';
+import {useTheme} from '@emotion/react';
+
+import type {IndexedMembersByProject} from 'sentry/actionCreators/members';
+import type {GroupListColumn} from 'sentry/components/issues/groupList';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import PanelBody from 'sentry/components/panels/panelBody';
-import IssuesReplayCountProvider from 'sentry/components/replays/issuesReplayCountProvider';
 import StreamGroup from 'sentry/components/stream/group';
 import GroupStore from 'sentry/stores/groupStore';
-import {Group} from 'sentry/types';
-import theme from 'sentry/utils/theme';
+import type {Group} from 'sentry/types/group';
 import useApi from 'sentry/utils/useApi';
 import useMedia from 'sentry/utils/useMedia';
 import useOrganization from 'sentry/utils/useOrganization';
 import {useSyncedLocalStorageState} from 'sentry/utils/useSyncedLocalStorageState';
+import type {IssueUpdateData} from 'sentry/views/issueList/types';
 
 import NoGroupsHandler from './noGroupsHandler';
-import {IssueSortOptions, SAVED_SEARCHES_SIDEBAR_OPEN_LOCALSTORAGE_KEY} from './utils';
+import {SAVED_SEARCHES_SIDEBAR_OPEN_LOCALSTORAGE_KEY} from './utils';
 
 type GroupListBodyProps = {
   displayReprocessingLayout: boolean;
@@ -22,10 +24,10 @@ type GroupListBodyProps = {
   groupStatsPeriod: string;
   loading: boolean;
   memberList: IndexedMembersByProject;
+  onActionTaken: (itemIds: string[], data: IssueUpdateData) => void;
   query: string;
   refetchGroups: () => void;
   selectedProjectIds: number[];
-  sort: string;
 };
 
 type GroupListProps = {
@@ -33,21 +35,21 @@ type GroupListProps = {
   groupIds: string[];
   groupStatsPeriod: string;
   memberList: IndexedMembersByProject;
+  onActionTaken: (itemIds: string[], data: IssueUpdateData) => void;
   query: string;
-  sort: string;
 };
 
 function GroupListBody({
   groupIds,
   memberList,
   query,
-  sort,
   displayReprocessingLayout,
   groupStatsPeriod,
   loading,
   error,
   refetchGroups,
   selectedProjectIds,
+  onActionTaken,
 }: GroupListBodyProps) {
   const api = useApi();
   const organization = useOrganization();
@@ -73,16 +75,14 @@ function GroupListBody({
   }
 
   return (
-    <IssuesReplayCountProvider groupIds={groupIds}>
-      <GroupList
-        groupIds={groupIds}
-        memberList={memberList}
-        query={query}
-        sort={sort}
-        displayReprocessingLayout={displayReprocessingLayout}
-        groupStatsPeriod={groupStatsPeriod}
-      />
-    </IssuesReplayCountProvider>
+    <GroupList
+      groupIds={groupIds}
+      memberList={memberList}
+      query={query}
+      displayReprocessingLayout={displayReprocessingLayout}
+      groupStatsPeriod={groupStatsPeriod}
+      onActionTaken={onActionTaken}
+    />
   );
 }
 
@@ -90,21 +90,34 @@ function GroupList({
   groupIds,
   memberList,
   query,
-  sort,
   displayReprocessingLayout,
   groupStatsPeriod,
+  onActionTaken,
 }: GroupListProps) {
+  const organization = useOrganization();
+  const theme = useTheme();
   const [isSavedSearchesOpen] = useSyncedLocalStorageState(
     SAVED_SEARCHES_SIDEBAR_OPEN_LOCALSTORAGE_KEY,
     false
   );
   const topIssue = groupIds[0];
-  const showInboxTime = sort === IssueSortOptions.INBOX;
   const canSelect = !useMedia(
     `(max-width: ${
-      isSavedSearchesOpen ? theme.breakpoints.large : theme.breakpoints.small
+      isSavedSearchesOpen ? theme.breakpoints.xlarge : theme.breakpoints.medium
     })`
   );
+
+  const columns: GroupListColumn[] = [
+    'graph',
+    ...(organization.features.includes('issue-stream-table-layout')
+      ? ['firstSeen' as const, 'lastSeen' as const]
+      : []),
+    'event',
+    'users',
+    'priority',
+    'assignee',
+    'lastTriggered',
+  ];
 
   return (
     <PanelBody>
@@ -123,9 +136,10 @@ function GroupList({
             memberList={group?.project ? memberList[group.project.slug] : undefined}
             displayReprocessingLayout={displayReprocessingLayout}
             useFilteredStats
-            showInboxTime={showInboxTime}
             canSelect={canSelect}
             narrowGroups={isSavedSearchesOpen}
+            onPriorityChange={priority => onActionTaken([id], {priority})}
+            withColumns={columns}
           />
         );
       })}

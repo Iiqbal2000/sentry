@@ -10,12 +10,11 @@ from rest_framework.response import Response
 
 from fixtures.integrations.stub_service import StubService
 from sentry.integrations.jira.webhooks.base import JiraTokenError, JiraWebhookBase
-from sentry.integrations.mixins import IssueSyncMixin
-from sentry.integrations.utils import AtlassianConnectValidationError
-from sentry.models.integrations.integration import Integration
-from sentry.services.hybrid_cloud.integration.serial import serialize_integration
-from sentry.services.hybrid_cloud.organization.serial import serialize_rpc_organization
-from sentry.shared_integrations.exceptions.base import ApiError
+from sentry.integrations.mixins.issues import IssueSyncIntegration
+from sentry.integrations.services.integration.serial import serialize_integration
+from sentry.integrations.utils.atlassian_connect import AtlassianConnectValidationError
+from sentry.organizations.services.organization.serial import serialize_rpc_organization
+from sentry.shared_integrations.exceptions import ApiError
 from sentry.testutils.cases import APITestCase, TestCase
 
 TOKEN = "JWT anexampletoken"
@@ -27,7 +26,9 @@ class JiraIssueUpdatedWebhookTest(APITestCase):
 
     def setUp(self):
         super().setUp()
-        integration = Integration.objects.create(
+        integration, _ = self.create_provider_integration_for(
+            organization=self.organization,
+            user=self.user,
             provider="jira",
             name="Example Jira",
             metadata={
@@ -37,7 +38,7 @@ class JiraIssueUpdatedWebhookTest(APITestCase):
                 "domain_name": "example.atlassian.net",
             },
         )
-        integration.add_organization(self.organization, self.user)
+        # Ensure this is region safe, and doesn't require the ORM integration model
         self.integration = serialize_integration(integration=integration)
 
     @patch("sentry.integrations.jira.utils.api.sync_group_assignee_inbound")
@@ -127,7 +128,7 @@ class JiraIssueUpdatedWebhookTest(APITestCase):
                 self.integration, None, "APP-123", assign=False
             )
 
-    @patch.object(IssueSyncMixin, "sync_status_inbound")
+    @patch.object(IssueSyncIntegration, "sync_status_inbound")
     def test_simple_status_sync_inbound(self, mock_sync_status_inbound):
         with patch(
             "sentry.integrations.jira.webhooks.issue_updated.get_integration_from_jwt",
@@ -171,7 +172,7 @@ class JiraIssueUpdatedWebhookTest(APITestCase):
             data = StubService.get_stub_data("jira", "edit_issue_assignee_payload.json")
             self.get_success_response(**data, extra_headers=dict(HTTP_AUTHORIZATION=TOKEN))
 
-            mock_set_tag.assert_called_with("integration_id", self.integration.id)
+            mock_set_tag.assert_any_call("integration_id", self.integration.id)
             mock_bind_org_context.assert_called_with(serialize_rpc_organization(self.organization))
 
     def test_missing_changelog(self):
@@ -210,7 +211,7 @@ class JiraWebhookBaseTest(TestCase):
             request = self.make_request(method="GET")
             response = mock_endpoint(request)
 
-            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert response.status_code == status.HTTP_409_CONFLICT
             # This kind of error shouldn't be sent to Sentry
             assert mock_capture_exception.call_count == 0
 
@@ -219,13 +220,12 @@ class JiraWebhookBaseTest(TestCase):
     def test_atlassian_pen_testing_bot(
         self, mock_capture_exception: MagicMock, mock_logger: MagicMock
     ):
-
         mock_endpoint = MockErroringJiraEndpoint.as_view(error=MethodNotAllowed("GET"))
 
         request = self.make_request(method="GET")
-        request.META[
-            "HTTP_USER_AGENT"
-        ] = "CSRT (github.com/atlassian-labs/connect-security-req-tester)"
+        request.META["HTTP_USER_AGENT"] = (
+            "CSRT (github.com/atlassian-labs/connect-security-req-tester)"
+        )
         response = mock_endpoint(request)
 
         assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
@@ -236,7 +236,7 @@ class JiraWebhookBaseTest(TestCase):
         # This kind of error shouldn't be sent to Sentry
         assert mock_capture_exception.call_count == 0
 
-    @patch("sentry.api.base.Endpoint.handle_exception", return_value=Response())
+    @patch("sentry.api.base.Endpoint.handle_exception_with_details", return_value=Response())
     def test_APIError_host_and_path_added_as_tags(self, mock_super_handle_exception: MagicMock):
         handler_error = ApiError("", url="http://maiseycharlie.jira.com/rest/api/3/dogs/tricks")
         mock_endpoint = MockErroringJiraEndpoint.as_view(error=handler_error)
@@ -244,7 +244,7 @@ class JiraWebhookBaseTest(TestCase):
         request = self.make_request(method="GET")
         mock_endpoint(request)
 
-        # signature is super().handle_exception(request, error, handler_context, scope)
+        # signature is super().handle_exception_with_details(request, error, handler_context, scope)
         assert (
             mock_super_handle_exception.call_args.args[3]._tags["jira.host"]
             == "maiseycharlie.jira.com"
@@ -254,7 +254,7 @@ class JiraWebhookBaseTest(TestCase):
             == "/rest/api/3/dogs/tricks"
         )
 
-    @patch("sentry.api.base.Endpoint.handle_exception", return_value=Response())
+    @patch("sentry.api.base.Endpoint.handle_exception_with_details", return_value=Response())
     def test_handles_xml_as_error_message(self, mock_super_handle_exception: MagicMock):
         """Moves the XML to `handler_context` and replaces it with a human-friendly message"""
         xml_string = '<?xml version="1.0"?><status><code>500</code><message>PSQLException: too many connections</message></status>'
@@ -267,12 +267,12 @@ class JiraWebhookBaseTest(TestCase):
         request = self.make_request(method="GET")
         mock_endpoint(request)
 
-        # signature is super().handle_exception(request, error, handler_context, scope)
+        # signature is super().handle_exception_with_details(request, error, handler_context, scope)
         assert mock_super_handle_exception.call_args.args[1] == handler_error
         assert str(handler_error) == "Unknown error when requesting /rest/api/3/dogs/tricks"
         assert mock_super_handle_exception.call_args.args[2]["xml_response"] == xml_string
 
-    @patch("sentry.api.base.Endpoint.handle_exception", return_value=Response())
+    @patch("sentry.api.base.Endpoint.handle_exception_with_details", return_value=Response())
     def test_handles_html_as_error_message(self, mock_super_handle_exception: MagicMock):
         """Moves the HTML to `handler_context` and replaces it with a human-friendly message"""
         html_strings = [
@@ -291,12 +291,12 @@ class JiraWebhookBaseTest(TestCase):
             request = self.make_request(method="GET")
             mock_endpoint(request)
 
-            # signature is super().handle_exception(request, error, handler_context, scope)
+            # signature is super().handle_exception_with_details(request, error, handler_context, scope)
             assert mock_super_handle_exception.call_args.args[1] == handler_error
             assert str(handler_error) == "Unknown error when requesting /rest/api/3/dogs/tricks"
             assert mock_super_handle_exception.call_args.args[2]["html_response"] == html_string
 
-    @patch("sentry.api.base.Endpoint.handle_exception", return_value=Response())
+    @patch("sentry.api.base.Endpoint.handle_exception_with_details", return_value=Response())
     def test_replacement_error_messages(self, mock_super_handle_exception: MagicMock):
         replacement_messages_by_code = {
             429: "Rate limit hit when requesting /rest/api/3/dogs/tricks",
@@ -316,12 +316,12 @@ class JiraWebhookBaseTest(TestCase):
             request = self.make_request(method="GET")
             mock_endpoint(request)
 
-            # signature is super().handle_exception(request, error, handler_context, scope)
+            # signature is super().handle_exception_with_details(request, error, handler_context, scope)
             assert mock_super_handle_exception.call_args.args[1] == handler_error
             assert str(handler_error) == new_message
 
     @patch("sentry.integrations.jira.webhooks.base.logger")
-    @patch("sentry.api.base.Endpoint.handle_exception", return_value=Response())
+    @patch("sentry.api.base.Endpoint.handle_exception_with_details", return_value=Response())
     def test_unexpected_jira_errors(
         self, mock_super_handle_exception: MagicMock, mock_logger: MagicMock
     ):
@@ -350,4 +350,4 @@ class JiraWebhookBaseTest(TestCase):
 
             assert mock_super_handle_exception.call_args.args[1] == unknown_error
             assert str(unknown_error) == expected_error_message
-            assert mock_logger.exception.call_args.args[0] == "Unclear JIRA exception"
+            assert mock_logger.error.call_args.args[0] == "Unclear JIRA exception"

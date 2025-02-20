@@ -1,7 +1,7 @@
 import {Component} from 'react';
 
 import SentryAppComponentsStore from 'sentry/stores/sentryAppComponentsStore';
-import {SentryAppComponent} from 'sentry/types';
+import type {SentryAppComponent} from 'sentry/types/integrations';
 import getDisplayName from 'sentry/utils/getDisplayName';
 
 type InjectedAppComponentsProps = {
@@ -46,7 +46,8 @@ function withSentryAppComponents<P extends InjectedAppComponentsProps>(
 
       const components = propComponents ?? storeComponents;
 
-      return <WrappedComponent {...({components, ...props} as P)} />;
+      // TODO(any): HoC prop types not working w/ emotion https://github.com/emotion-js/emotion/issues/3261
+      return <WrappedComponent {...({components, ...props} as P as any)} />;
     }
   }
   return WithSentryAppComponents;

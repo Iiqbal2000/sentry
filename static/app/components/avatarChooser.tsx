@@ -2,7 +2,7 @@ import {Component} from 'react';
 import styled from '@emotion/styled';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import Avatar from 'sentry/components/avatar';
 import {AvatarUploader} from 'sentry/components/avatarUploader';
 import {Button} from 'sentry/components/button';
@@ -16,7 +16,9 @@ import PanelHeader from 'sentry/components/panels/panelHeader';
 import Well from 'sentry/components/well';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {AvatarUser, Organization, SentryApp, Team} from 'sentry/types';
+import type {SentryApp, SentryAppAvatarPhotoType} from 'sentry/types/integrations';
+import type {Organization, Team} from 'sentry/types/organization';
+import type {AvatarUser} from 'sentry/types/user';
 import withApi from 'sentry/utils/withApi';
 
 export type Model = Pick<AvatarUser, 'avatar'>;
@@ -41,6 +43,7 @@ type DefaultProps = {
   allowUpload?: boolean;
   defaultChoice?: DefaultChoice;
   type?: AvatarChooserType;
+  uploadDomain?: string;
 };
 
 type Props = {
@@ -71,6 +74,7 @@ class AvatarChooser extends Component<Props, State> {
     defaultChoice: {
       allowDefault: false,
     },
+    uploadDomain: '',
   };
 
   state: State = {
@@ -97,7 +101,9 @@ class AvatarChooser extends Component<Props, State> {
       return resp;
     }
     const isColor = type === 'sentryAppColor';
-    return {avatar: resp?.avatars?.find(({color}) => color === isColor) ?? undefined};
+    return {
+      avatar: resp?.avatars?.find(({color}: any) => color === isColor) ?? undefined,
+    };
   }
 
   handleError(msg: string) {
@@ -123,6 +129,7 @@ class AvatarChooser extends Component<Props, State> {
       avatar_photo?: string;
       avatar_type?: string;
       color?: boolean;
+      photoType?: SentryAppAvatarPhotoType;
     } = {avatar_type: avatarType};
 
     // If an image has been uploaded, then another option is selected, we should not submit the uploaded image
@@ -132,6 +139,7 @@ class AvatarChooser extends Component<Props, State> {
 
     if (type?.startsWith('sentryApp')) {
       data.color = type === 'sentryAppColor';
+      data.photoType = data.color ? 'logo' : 'icon';
     }
 
     api.request(endpoint, {
@@ -143,9 +151,11 @@ class AvatarChooser extends Component<Props, State> {
       },
       error: resp => {
         const avatarPhotoErrors = resp?.responseJSON?.avatar_photo || [];
-        avatarPhotoErrors.length
-          ? avatarPhotoErrors.map(this.handleError)
-          : this.handleError.bind(this, t('There was an error saving your preferences.'));
+        if (avatarPhotoErrors.length) {
+          avatarPhotoErrors.map(this.handleError);
+        } else {
+          this.handleError.bind(this, t('There was an error saving your preferences.'));
+        }
       },
     });
   };
@@ -170,6 +180,7 @@ class AvatarChooser extends Component<Props, State> {
       title,
       help,
       defaultChoice,
+      uploadDomain,
     } = this.props;
     const {hasError, model, dataUrl} = this.state;
 
@@ -189,7 +200,7 @@ class AvatarChooser extends Component<Props, State> {
     const isOrganization = type === 'organization';
     const isSentryApp = type?.startsWith('sentryApp');
 
-    const choices: [AvatarType, string][] = [];
+    const choices: Array<[AvatarType, string]> = [];
 
     if (allowDefault && preview) {
       choices.push(['default', defaultChoiceText ?? t('Use default avatar')]);
@@ -242,6 +253,7 @@ class AvatarChooser extends Component<Props, State> {
                   type={type!}
                   model={model}
                   savedDataUrl={savedDataUrl}
+                  uploadDomain={uploadDomain ?? ''}
                   updateDataUrlState={dataState => this.setState(dataState)}
                 />
               )}

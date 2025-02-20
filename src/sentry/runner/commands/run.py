@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 import os
 import signal
-import sys
+import time
 from multiprocessing import cpu_count
-from typing import Optional
+from typing import Any
 
 import click
+from django.utils import autoreload
 
 from sentry.bgtasks.api import managed_bgtasks
-from sentry.ingest.types import ConsumerType
 from sentry.runner.decorators import configuration, log_options
 from sentry.utils.kafka import run_processor_with_signals
 
@@ -18,8 +18,8 @@ DEFAULT_BLOCK_SIZE = int(32 * 1e6)
 
 
 def _address_validate(
-    ctx: click.Context, param: click.Parameter, value: str | None
-) -> tuple[str | None, int | None]:
+    ctx: object, param: object, value: str | None
+) -> tuple[None, None] | tuple[str, int | None]:
     if value is None:
         return (None, None)
 
@@ -35,7 +35,7 @@ def _address_validate(
 class QueueSetType(click.ParamType):
     name = "text"
 
-    def convert(self, value, param, ctx):
+    def convert(self, value: str | None, param: object, ctx: object) -> frozenset[str] | None:
         if value is None:
             return None
         # Providing a compatibility with splitting
@@ -68,90 +68,8 @@ class QueueSetType(click.ParamType):
 QueueSet = QueueSetType()
 
 
-def kafka_options(
-    consumer_group: str,
-    allow_force_cluster: bool = True,
-    include_batching_options: bool = False,
-    default_max_batch_size: Optional[int] = None,
-    default_max_batch_time_ms: Optional[int] = 1000,
-):
-
-    """
-    Basic set of Kafka options for a consumer.
-    """
-
-    def inner(f):
-        f = click.option(
-            "--consumer-group",
-            "group_id",
-            default=consumer_group,
-            help="Kafka consumer group for the consumer.",
-        )(f)
-
-        f = click.option(
-            "--auto-offset-reset",
-            "auto_offset_reset",
-            default="latest",
-            type=click.Choice(["earliest", "latest", "error"]),
-            help="Position in the commit log topic to begin reading from when no prior offset has been recorded.",
-        )(f)
-
-        if include_batching_options:
-            f = click.option(
-                "--max-batch-size",
-                "max_batch_size",
-                default=default_max_batch_size,
-                type=int,
-                help="Maximum number of messages to batch before flushing.",
-            )(f)
-
-            f = click.option(
-                "--max-batch-time-ms",
-                "max_batch_time",
-                default=default_max_batch_time_ms,
-                type=int,
-                help="Maximum time (in seconds) to wait before flushing a batch.",
-            )(f)
-
-        if allow_force_cluster:
-            f = click.option(
-                "--force-topic",
-                "force_topic",
-                default=None,
-                type=str,
-                help="Override the Kafka topic the consumer will read from.",
-            )(f)
-
-            f = click.option(
-                "--force-cluster",
-                "force_cluster",
-                default=None,
-                type=str,
-                help="Kafka cluster ID of the overridden topic. Configure clusters via KAFKA_CLUSTERS in server settings.",
-            )(f)
-
-        return f
-
-    return inner
-
-
-def strict_offset_reset_option():
-    return click.option(
-        "--strict-offset-reset/--no-strict-offset-reset",
-        default=True,
-        help=(
-            "--strict-offset-reset, the default, means that the kafka consumer "
-            "still errors in case the offset is out of range.\n\n"
-            "--no-strict-offset-reset will use the auto offset reset even in that case. "
-            "This is useful in development, but not desirable in production since expired "
-            "offsets mean data-loss.\n\n"
-            "Most consumers that do not have this option at all default to 'Not Strict'."
-        ),
-    )
-
-
 @click.group()
-def run():
+def run() -> None:
     "Run a service."
 
 
@@ -176,7 +94,13 @@ def run():
 )
 @log_options()
 @configuration
-def web(bind, workers, upgrade, with_lock, noinput):
+def web(
+    bind: tuple[None, None] | tuple[str, int | None],
+    workers: int,
+    upgrade: bool,
+    with_lock: bool,
+    noinput: bool,
+) -> None:
     "Run web service."
     if upgrade:
         click.echo("Performing upgrade before service startup...")
@@ -201,35 +125,7 @@ def web(bind, workers, upgrade, with_lock, noinput):
         SentryHTTPServer(host=bind[0], port=bind[1], workers=workers).run()
 
 
-@run.command()
-@click.option(
-    "--bind",
-    "-b",
-    default=None,
-    help="Bind address.",
-    metavar="ADDRESS",
-    callback=_address_validate,
-)
-@click.option("--upgrade", default=False, is_flag=True, help="Upgrade before starting.")
-@click.option(
-    "--noinput", default=False, is_flag=True, help="Do not prompt the user for input of any kind."
-)
-@configuration
-def smtp(bind, upgrade, noinput):
-    "Run inbound email service."
-    if upgrade:
-        click.echo("Performing upgrade before service startup...")
-        from sentry.runner import call_command
-
-        call_command("sentry.runner.commands.upgrade.upgrade", verbosity=0, noinput=noinput)
-
-    from sentry.services.smtp import SentrySMTPServer
-
-    with managed_bgtasks(role="smtp"):
-        SentrySMTPServer(host=bind[0], port=bind[1]).run()
-
-
-def run_worker(**options):
+def run_worker(**options: Any) -> None:
     """
     This is the inner function to actually start worker.
     """
@@ -261,13 +157,7 @@ def run_worker(**options):
             **options,
         )
         worker.start()
-        try:
-            sys.exit(worker.exitcode)
-        except AttributeError:
-            # `worker.exitcode` was added in a newer version of Celery:
-            # https://github.com/celery/celery/commit/dc28e8a5
-            # so this is an attempt to be forward compatible
-            pass
+        raise SystemExit(worker.exitcode)
 
 
 @run.command()
@@ -312,7 +202,7 @@ def run_worker(**options):
 @click.option("--ignore-unknown-queues", is_flag=True, default=False)
 @log_options()
 @configuration
-def worker(ignore_unknown_queues, **options):
+def worker(ignore_unknown_queues: bool, **options: Any) -> None:
     """Run background worker instance and autoreload if necessary."""
 
     from sentry.celery import app
@@ -342,11 +232,180 @@ def worker(ignore_unknown_queues, **options):
                 raise click.ClickException(message)
 
     if options["autoreload"]:
-        from django.utils import autoreload
-
         autoreload.run_with_reloader(run_worker, **options)
     else:
         run_worker(**options)
+
+
+@run.command()
+@click.option(
+    "--redis-cluster",
+    help="The rediscluster name to store run state in.",
+    default="default",
+)
+@log_options()
+@configuration
+def taskworker_scheduler(redis_cluster: str, **options: Any) -> None:
+    """
+    Run a scheduler for taskworkers
+
+    All tasks defined in settings.TASKWORKER_SCHEDULES will be scheduled as required.
+    """
+    from django.conf import settings
+
+    from sentry.taskworker.registry import taskregistry
+    from sentry.taskworker.scheduler.runner import RunStorage, ScheduleRunner
+    from sentry.utils.redis import redis_clusters
+
+    for module in settings.TASKWORKER_IMPORTS:
+        __import__(module)
+
+    run_storage = RunStorage(redis_clusters.get(redis_cluster))
+
+    with managed_bgtasks(role="taskworker-scheduler"):
+        runner = ScheduleRunner(taskregistry, run_storage)
+        for _, schedule_data in settings.TASKWORKER_SCHEDULES.items():
+            runner.add(schedule_data)
+
+        runner.log_startup()
+        while True:
+            sleep_time = runner.tick()
+            time.sleep(sleep_time)
+
+
+@run.command()
+@click.option("--rpc-host", help="The hostname for the taskworker-rpc", default="127.0.0.1:50051")
+@click.option(
+    "--num-brokers", help="Number of brokers available to connect to", default=None, type=int
+)
+@click.option("--autoreload", is_flag=True, default=False, help="Enable autoreloading.")
+@click.option(
+    "--max-task-count", help="Number of tasks this worker should run before exiting", default=10000
+)
+@click.option("--concurrency", help="Number of child worker processes to create.", default=1)
+@click.option(
+    "--prefetch-multiplier",
+    help="How many tasks to keep in the child worker Queue. Multiplied by --concurrency",
+    default=3,
+)
+@click.option(
+    "--namespace", help="The dedicated task namespace that taskworker operates on", default=None
+)
+@log_options()
+@configuration
+def taskworker(**options: Any) -> None:
+    """
+    Run a taskworker worker
+    """
+    if options["autoreload"]:
+        autoreload.run_with_reloader(run_taskworker, **options)
+    else:
+        run_taskworker(**options)
+
+
+def run_taskworker(
+    rpc_host: str,
+    num_brokers: int | None,
+    max_task_count: int,
+    namespace: str | None,
+    concurrency: int,
+    prefetch_multiplier: int,
+    **options: Any,
+) -> None:
+    """
+    taskworker factory that can be reloaded
+    """
+    from sentry.taskworker.worker import TaskWorker
+
+    with managed_bgtasks(role="taskworker"):
+        worker = TaskWorker(
+            rpc_host=rpc_host,
+            num_brokers=num_brokers,
+            max_task_count=max_task_count,
+            namespace=namespace,
+            concurrency=concurrency,
+            prefetch_multiplier=prefetch_multiplier,
+            **options,
+        )
+        exitcode = worker.start()
+        raise SystemExit(exitcode)
+
+
+@run.command()
+@log_options()
+@configuration
+@click.option(
+    "--repeat",
+    type=int,
+    help="Number of messages to send to the kafka topic",
+    default=1,
+    show_default=True,
+)
+@click.option(
+    "--kwargs",
+    type=str,
+    help="Task function keyword arguments",
+)
+@click.option(
+    "--args",
+    type=str,
+    help="Task function arguments",
+)
+@click.option(
+    "--task-function-path",
+    type=str,
+    help="The path to the function name of the task to execute",
+    required=True,
+)
+@click.option(
+    "--bootstrap-servers",
+    type=str,
+    help="The bootstrap servers to use for the kafka topic",
+    default="127.0.0.1:9092",
+)
+@click.option(
+    "--kafka-topic",
+    type=str,
+    help="The kafka topic to use for the task",
+    default=None,
+)
+@click.option(
+    "--namespace",
+    type=str,
+    help="The namespace that the task is registered in",
+    default=None,
+)
+def taskbroker_send_tasks(
+    task_function_path: str,
+    args: str,
+    kwargs: str,
+    repeat: int,
+    bootstrap_servers: str,
+    kafka_topic: str,
+    namespace: str,
+) -> None:
+    from sentry.conf.server import KAFKA_CLUSTERS, TASKWORKER_ROUTES
+    from sentry.utils.imports import import_string
+
+    KAFKA_CLUSTERS["default"]["common"]["bootstrap.servers"] = bootstrap_servers
+    if kafka_topic and namespace:
+        TASKWORKER_ROUTES[namespace] = kafka_topic
+
+    try:
+        func = import_string(task_function_path)
+    except Exception as e:
+        click.echo(f"Error: {e}")
+        raise click.Abort()
+    task_args = [] if not args else eval(args)
+    task_kwargs = {} if not kwargs else eval(kwargs)
+
+    checkmarks = {int(repeat * (i / 10)) for i in range(1, 10)}
+    for i in range(repeat):
+        func.delay(*task_args, **task_kwargs)
+        if i in checkmarks:
+            click.echo(message=f"{int((i / repeat) * 100)}% complete")
+
+    click.echo(message=f"Successfully sent {repeat} messages.")
 
 
 @run.command()
@@ -369,7 +428,7 @@ def worker(ignore_unknown_queues, **options):
 @click.option("--without-heartbeat", is_flag=True, default=False)
 @log_options()
 @configuration
-def cron(**options):
+def cron(**options: Any) -> None:
     "Run periodic task dispatcher."
     from django.conf import settings
 
@@ -387,272 +446,6 @@ def cron(**options):
             # without_heartbeat=True,
             **options
         ).run()
-
-
-@run.command("post-process-forwarder")
-@kafka_options("snuba-post-processor", allow_force_cluster=False)
-@strict_offset_reset_option()
-@click.option(
-    "--topic",
-    type=str,
-    help="Main topic with messages for post processing",
-)
-@click.option(
-    "--commit-log-topic",
-    default="snuba-commit-log",
-    help="Topic that the Snuba writer is publishing its committed offsets to.",
-)
-@click.option(
-    "--synchronize-commit-group",
-    default="snuba-consumers",
-    help="Consumer group that the Snuba writer is committing its offset as.",
-)
-@click.option(
-    "--concurrency",
-    default=5,
-    type=int,
-    help="Thread pool size for post process worker.",
-)
-@click.option(
-    "--entity",
-    type=click.Choice(["errors", "transactions", "search_issues"]),
-    help="The type of entity to process (errors, transactions, search_issues).",
-)
-@log_options()
-@configuration
-def post_process_forwarder(**options):
-    from sentry import eventstream
-    from sentry.eventstream.base import ForwarderNotRequired
-
-    try:
-        # TODO(markus): convert to use run_processor_with_signals -- can't yet because there's a custom shutdown handler
-        eventstream.backend.run_post_process_forwarder(
-            entity=options["entity"],
-            consumer_group=options["group_id"],
-            topic=options["topic"],
-            commit_log_topic=options["commit_log_topic"],
-            synchronize_commit_group=options["synchronize_commit_group"],
-            concurrency=options["concurrency"],
-            initial_offset_reset=options["auto_offset_reset"],
-            strict_offset_reset=options["strict_offset_reset"],
-        )
-    except ForwarderNotRequired:
-        sys.stdout.write(
-            "The configured event stream backend does not need a forwarder "
-            "process to enqueue post-process tasks. Exiting...\n"
-        )
-        return
-
-
-@run.command("query-subscription-consumer")
-@click.option(
-    "--group",
-    default="query-subscription-consumer",
-    help="Consumer group to track query subscription offsets. ",
-)
-@click.option("--topic", default=None, help="Topic to get subscription updates from.")
-@click.option(
-    "--initial-offset-reset",
-    default="latest",
-    type=click.Choice(["earliest", "latest"]),
-    help="Position in the commit log topic to begin reading from when no prior offset has been recorded.",
-)
-@click.option(
-    "--force-offset-reset",
-    default=None,
-    type=click.Choice(["earliest", "latest"]),
-    help="Force subscriptions to start from a particular offset",
-)
-@kafka_options(
-    "query-subscription-consumer",
-    include_batching_options=True,
-    allow_force_cluster=False,
-    default_max_batch_size=100,
-)
-@click.option(
-    "--processes",
-    default=1,
-    type=int,
-)
-@click.option("--input-block-size", type=int, default=DEFAULT_BLOCK_SIZE)
-@click.option("--output-block-size", type=int, default=DEFAULT_BLOCK_SIZE)
-@strict_offset_reset_option()
-@log_options()
-@configuration
-def query_subscription_consumer(**options):
-    from sentry.consumers import print_deprecation_warning
-    from sentry.snuba.query_subscriptions.constants import (
-        dataset_to_logical_topic,
-        topic_to_dataset,
-    )
-    from sentry.snuba.query_subscriptions.run import get_query_subscription_consumer
-
-    dataset = topic_to_dataset[options["topic"]]
-    logical_topic = dataset_to_logical_topic[dataset]
-    # name of new consumer == name of logical topic
-    print_deprecation_warning(logical_topic, options["group_id"])
-
-    subscriber = get_query_subscription_consumer(
-        topic=options["topic"],
-        group_id=options["group"],
-        strict_offset_reset=options["strict_offset_reset"],
-        initial_offset_reset=options["initial_offset_reset"],
-        max_batch_size=options["max_batch_size"],
-        # Our batcher expects the time in seconds
-        max_batch_time=int(options["max_batch_time"] / 1000),
-        num_processes=options["processes"],
-        input_block_size=options["input_block_size"],
-        output_block_size=options["output_block_size"],
-        multi_proc=True,
-    )
-    run_processor_with_signals(subscriber)
-
-
-@run.command("ingest-consumer")
-@log_options()
-@click.option(
-    "consumer_type",
-    "--consumer-type",
-    required=True,
-    help="Specify which type of consumer to create",
-    type=click.Choice(ConsumerType.all()),
-)
-@kafka_options("ingest-consumer", include_batching_options=True, default_max_batch_size=100)
-@strict_offset_reset_option()
-@configuration
-@click.option(
-    "--processes",
-    "num_processes",
-    default=1,
-    type=int,
-)
-@click.option("--input-block-size", type=int, default=DEFAULT_BLOCK_SIZE)
-@click.option("--output-block-size", type=int, default=DEFAULT_BLOCK_SIZE)
-def ingest_consumer(consumer_type, **options):
-    """
-    Runs an "ingest consumer" task.
-
-    The "ingest consumer" tasks read events from a kafka topic (coming from Relay) and schedules
-    process event celery tasks for them
-    """
-    from sentry.consumers import print_deprecation_warning
-
-    print_deprecation_warning(f"ingest-{consumer_type}", options["group_id"])
-
-    from arroyo import configure_metrics
-
-    from sentry.ingest.consumer.factory import get_ingest_consumer
-    from sentry.utils import metrics
-    from sentry.utils.arroyo import MetricsWrapper
-
-    configure_metrics(MetricsWrapper(metrics.backend, name=f"ingest_{consumer_type}"))
-
-    options["max_batch_time"] = options["max_batch_time"] / 1000
-    consumer = get_ingest_consumer(consumer_type, **options)
-    run_processor_with_signals(consumer)
-
-
-@run.command("occurrences-ingest-consumer")
-@kafka_options(
-    "occurrence-consumer",
-    include_batching_options=True,
-    allow_force_cluster=False,
-    default_max_batch_size=20,
-)
-@strict_offset_reset_option()
-@configuration
-@click.option(
-    "--processes",
-    "num_processes",
-    default=1,
-    type=int,
-)
-@click.option("--input-block-size", type=int, default=DEFAULT_BLOCK_SIZE)
-@click.option("--output-block-size", type=int, default=DEFAULT_BLOCK_SIZE)
-def occurrences_ingest_consumer(**options):
-    from sentry.consumers import print_deprecation_warning
-
-    print_deprecation_warning("ingest-occurrences", options["group_id"])
-    from django.conf import settings
-
-    from sentry.utils import metrics
-
-    consumer_type = settings.KAFKA_INGEST_OCCURRENCES
-
-    # Our batcher expects the time in seconds
-    options["max_batch_time"] = int(options["max_batch_time"] / 1000)
-
-    from sentry.issues.run import get_occurrences_ingest_consumer
-
-    with metrics.global_tags(ingest_consumer_types=consumer_type, _all_threads=True):
-        consumer = get_occurrences_ingest_consumer(consumer_type, **options)
-        run_processor_with_signals(consumer)
-
-
-@run.command("ingest-metrics-parallel-consumer")
-@log_options()
-@kafka_options("ingest-metrics-consumer", allow_force_cluster=False)
-@strict_offset_reset_option()
-@configuration
-@click.option(
-    "--processes",
-    default=1,
-    type=int,
-)
-@click.option("--input-block-size", type=int, default=DEFAULT_BLOCK_SIZE)
-@click.option("--output-block-size", type=int, default=DEFAULT_BLOCK_SIZE)
-@click.option("--ingest-profile", required=True)
-@click.option("--indexer-db", default="postgres")
-@click.option("max_msg_batch_size", "--max-msg-batch-size", type=int, default=50)
-@click.option("max_msg_batch_time", "--max-msg-batch-time-ms", type=int, default=10000)
-@click.option("max_parallel_batch_size", "--max-parallel-batch-size", type=int, default=50)
-@click.option("max_parallel_batch_time", "--max-parallel-batch-time-ms", type=int, default=10000)
-@click.option("--group-instance-id", type=str, default=None)
-def metrics_parallel_consumer(**options):
-    from sentry.sentry_metrics.consumers.indexer.parallel import get_parallel_metrics_consumer
-
-    streamer = get_parallel_metrics_consumer(**options)
-
-    from arroyo import configure_metrics
-
-    from sentry.utils.arroyo import MetricsWrapper
-    from sentry.utils.metrics import backend
-
-    metrics_wrapper = MetricsWrapper(backend, name="sentry_metrics.indexer")
-    configure_metrics(metrics_wrapper)
-
-    run_processor_with_signals(streamer)
-
-
-@run.command("billing-metrics-consumer")
-@log_options()
-@kafka_options("billing-metrics-consumer")
-@strict_offset_reset_option()
-@configuration
-def metrics_billing_consumer(**options):
-    from sentry.consumers import print_deprecation_warning
-
-    print_deprecation_warning("billing-metrics-consumer", options["group_id"])
-    from sentry.ingest.billing_metrics_consumer import get_metrics_billing_consumer
-
-    consumer = get_metrics_billing_consumer(**options)
-    run_processor_with_signals(consumer)
-
-
-@run.command("ingest-profiles")
-@log_options()
-@click.option("--topic", default="profiles", help="Topic to get profiles data from.")
-@kafka_options("ingest-profiles")
-@strict_offset_reset_option()
-@configuration
-def profiles_consumer(**options):
-    from sentry.consumers import print_deprecation_warning
-
-    print_deprecation_warning("ingest-profiles", options["group_id"])
-    from sentry.profiles.consumers import get_profiles_process_consumer
-
-    consumer = get_profiles_process_consumer(**options)
-    run_processor_with_signals(consumer)
 
 
 @run.command("consumer")
@@ -678,7 +471,7 @@ def profiles_consumer(**options):
 @click.option(
     "--auto-offset-reset",
     "auto_offset_reset",
-    default="latest",
+    default="earliest",
     type=click.Choice(["earliest", "latest", "error"]),
     help="Position in the commit log topic to begin reading from when no prior offset has been recorded.",
 )
@@ -706,13 +499,36 @@ def profiles_consumer(**options):
     help="A file to touch roughly every second to indicate that the consumer is still alive. See https://getsentry.github.io/arroyo/strategies/healthcheck.html for more information.",
 )
 @click.option(
+    "--enable-dlq/--disable-dlq",
+    help="Enable dlq to route invalid messages to the dlq topic. See https://getsentry.github.io/arroyo/dlqs.html#arroyo.dlq.DlqPolicy for more information.",
+    is_flag=True,
+    default=True,
+)
+@click.option(
+    "--stale-threshold-sec",
+    type=click.IntRange(min=120),
+    help="Enable backlog queue to route stale messages to the blq topic.",
+)
+@click.option(
     "--log-level",
     type=click.Choice(["debug", "info", "warning", "error", "critical"], case_sensitive=False),
     help="log level to pass to the arroyo consumer",
 )
-@strict_offset_reset_option()
+@click.option(
+    "--strict-offset-reset/--no-strict-offset-reset",
+    default=True,
+    help=(
+        "--strict-offset-reset, the default, means that the kafka consumer "
+        "still errors in case the offset is out of range.\n\n"
+        "--no-strict-offset-reset will use the auto offset reset even in that case. "
+        "This is useful in development, but not desirable in production since expired "
+        "offsets mean data-loss.\n\n"
+    ),
+)
 @configuration
-def basic_consumer(consumer_name, consumer_args, topic, **options):
+def basic_consumer(
+    consumer_name: str, consumer_args: tuple[str, ...], topic: str | None, **options: Any
+) -> None:
     """
     Launch a "new-style" consumer based on its "consumer name".
 
@@ -743,14 +559,14 @@ def basic_consumer(consumer_name, consumer_args, topic, **options):
     initialize_arroyo_main()
 
     processor = get_stream_processor(consumer_name, consumer_args, topic=topic, **options)
-    run_processor_with_signals(processor)
+    run_processor_with_signals(processor, consumer_name)
 
 
 @run.command("dev-consumer")
 @click.argument("consumer_names", nargs=-1)
 @log_options()
 @configuration
-def dev_consumer(consumer_names):
+def dev_consumer(consumer_names: tuple[str, ...]) -> None:
     """
     Launch multiple "new-style" consumers in the same thread.
 
@@ -776,13 +592,15 @@ def dev_consumer(consumer_names):
             max_poll_interval_ms=None,
             synchronize_commit_group=None,
             synchronize_commit_log_topic=None,
+            enable_dlq=False,
+            stale_threshold_sec=None,
             healthcheck_file_path=None,
-            validate_schema=True,
+            enforce_schema=True,
         )
         for consumer_name in consumer_names
     ]
 
-    def handler(signum, frame):
+    def handler(signum: object, frame: object) -> None:
         for processor in processors:
             processor.signal_shutdown()
 
@@ -794,65 +612,10 @@ def dev_consumer(consumer_names):
             processor._run_once()
 
 
-@run.command("ingest-replay-recordings")
-@log_options()
-@configuration
-@kafka_options("ingest-replay-recordings")
-@click.option(
-    "--topic", default="ingest-replay-recordings", help="Topic to get replay recording data from"
-)
-def replays_recordings_consumer(**options):
-    from sentry.consumers import print_deprecation_warning
-
-    print_deprecation_warning("ingest-replay-recordings", options["group_id"])
-    from sentry.replays.consumers import get_replays_recordings_consumer
-
-    consumer = get_replays_recordings_consumer(**options)
-    run_processor_with_signals(consumer)
-
-
-@run.command("ingest-monitors")
-@log_options()
-@click.option("--topic", default="ingest-monitors", help="Topic to get monitor check-in data from.")
-@kafka_options("ingest-monitors")
-@strict_offset_reset_option()
-@configuration
-def monitors_consumer(**options):
-    from sentry.consumers import print_deprecation_warning
-
-    print_deprecation_warning("ingest-monitors", options["group_id"])
-    from sentry.monitors.consumers import get_monitor_check_ins_consumer
-
-    consumer = get_monitor_check_ins_consumer(**options)
-    run_processor_with_signals(consumer)
-
-
-@run.command("indexer-last-seen-updater")
-@log_options()
-@configuration
-@kafka_options(
-    "indexer-last-seen-updater-consumer",
-    allow_force_cluster=False,
-    include_batching_options=True,
-    default_max_batch_size=100,
-)
-@strict_offset_reset_option()
-@click.option("--ingest-profile", required=True)
-@click.option("--indexer-db", default="postgres")
-def last_seen_updater(**options):
-    from sentry.sentry_metrics.consumers.last_seen_updater import get_last_seen_updater
-    from sentry.utils.metrics import global_tags
-
-    config, consumer = get_last_seen_updater(**options)
-
-    with global_tags(_all_threads=True, pipeline=config.internal_metrics_tag):
-        run_processor_with_signals(consumer)
-
-
 @run.command("backpressure-monitor")
 @log_options()
 @configuration
-def backpressure_monitor():
+def backpressure_monitor() -> None:
     from sentry.processing.backpressure.monitor import start_service_monitoring
 
     start_service_monitoring()

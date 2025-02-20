@@ -1,6 +1,10 @@
 import {Component, Fragment, useCallback} from 'react';
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 import iconAndroid from 'sentry-logos/logo-android.svg';
+import iconChrome from 'sentry-logos/logo-chrome.svg';
+import iconEdgeLegacy from 'sentry-logos/logo-edge-old.svg';
+import iconFirefox from 'sentry-logos/logo-firefox.svg';
 import iconIe from 'sentry-logos/logo-ie.svg';
 import iconOpera from 'sentry-logos/logo-opera.svg';
 import iconSafari from 'sentry-logos/logo-safari.svg';
@@ -11,10 +15,14 @@ import FeatureDisabled from 'sentry/components/acl/featureDisabled';
 import {Button} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import FieldFromConfig from 'sentry/components/forms/fieldFromConfig';
-import Form, {FormProps} from 'sentry/components/forms/form';
+import {FieldHelp} from 'sentry/components/forms/fieldGroup/fieldHelp';
+import {FieldLabel} from 'sentry/components/forms/fieldGroup/fieldLabel';
+import type {FormProps} from 'sentry/components/forms/form';
+import Form from 'sentry/components/forms/form';
 import FormField from 'sentry/components/forms/formField';
 import JsonForm from 'sentry/components/forms/jsonForm';
 import ExternalLink from 'sentry/components/links/externalLink';
+import Link from 'sentry/components/links/link';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import Panel from 'sentry/components/panels/panel';
@@ -30,7 +38,8 @@ import filterGroups, {
 import {t, tct} from 'sentry/locale';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import {space} from 'sentry/styles/space';
-import {Project} from 'sentry/types';
+import type {Project} from 'sentry/types/project';
+import {trackAnalytics} from 'sentry/utils/analytics';
 import {useApiQuery} from 'sentry/utils/queryClient';
 import useOrganization from 'sentry/utils/useOrganization';
 
@@ -51,7 +60,7 @@ const filterDescriptions = {
       'Filter transactions that match most [commonNamingPatterns:common naming patterns] for health checks.',
       {
         commonNamingPatterns: (
-          <ExternalLink href="https://docs.sentry.io/product/data-management-settings/filtering/#transactions-coming-from-healthcheck" />
+          <ExternalLink href="https://docs.sentry.io/concepts/data-management/filtering/#transactions-coming-from-health-check" />
         ),
       }
     ),
@@ -71,49 +80,109 @@ const filterDescriptions = {
 };
 
 const LEGACY_BROWSER_SUBFILTERS = {
-  ie_pre_9: {
-    icon: iconIe,
-    helpText: 'Version 8 and lower',
-    title: 'Internet Explorer',
+  chrome: {
+    icon: iconChrome,
+    title: 'Chrome',
+    helpText: 'Version 63 and lower',
+    legacy: false,
   },
-  ie9: {
-    icon: iconIe,
-    helpText: 'Version 9',
-    title: 'Internet Explorer',
-  },
-  ie10: {
-    icon: iconIe,
-    helpText: 'Version 10',
-    title: 'Internet Explorer',
-  },
-  ie11: {
-    icon: iconIe,
-    helpText: 'Version 11',
-    title: 'Internet Explorer',
+  safari: {
+    icon: iconSafari,
+    title: 'Safari',
+    helpText: 'Version 11 and lower',
+    legacy: false,
   },
   safari_pre_6: {
     icon: iconSafari,
-    helpText: 'Version 5 and lower',
+    helpText: '(Deprecated) Version 5 and lower',
     title: 'Safari',
+    legacy: true,
   },
-  opera_pre_15: {
-    icon: iconOpera,
-    helpText: 'Version 14 and lower',
-    title: 'Opera',
+  firefox: {
+    icon: iconFirefox,
+    title: 'Firefox',
+    helpText: 'Version 66 and lower',
+    legacy: false,
   },
-  opera_mini_pre_8: {
-    icon: iconOpera,
-    helpText: 'Version 8 and lower',
-    title: 'Opera Mini',
+  android: {
+    icon: iconAndroid,
+    title: 'Android',
+    helpText: 'Version 3 and lower',
+    legacy: false,
   },
   android_pre_4: {
     icon: iconAndroid,
-    helpText: 'Version 3 and lower',
+    helpText: '(Deprecated) Version 3 and lower',
     title: 'Android',
+    legacy: true,
+  },
+  edge: {
+    icon: iconEdgeLegacy,
+    title: 'Edge',
+    helpText: 'Version 78 and lower',
+    legacy: false,
+  },
+  edge_pre_79: {
+    icon: iconEdgeLegacy,
+    helpText: '(Deprecated) Version 18 and lower',
+    title: 'Edge (Legacy)',
+    legacy: true,
+  },
+  ie: {
+    icon: iconIe,
+    title: 'Internet Explorer',
+    helpText: 'Version 11 and lower',
+    legacy: false,
+  },
+  ie_pre_9: {
+    icon: iconIe,
+    helpText: '(Deprecated) Version 8 and lower',
+    title: 'Internet Explorer',
+    legacy: true,
+  },
+  ie9: {
+    icon: iconIe,
+    helpText: '(Deprecated) Version 9',
+    title: 'Internet Explorer',
+    legacy: true,
+  },
+  ie10: {
+    icon: iconIe,
+    helpText: '(Deprecated) Version 10',
+    title: 'Internet Explorer',
+    legacy: true,
+  },
+  ie11: {
+    icon: iconIe,
+    helpText: '(Deprecated) Version 11',
+    title: 'Internet Explorer',
+    legacy: true,
+  },
+  opera: {
+    icon: iconOpera,
+    title: 'Opera',
+    helpText: 'Version 50 and lower',
+    legacy: false,
+  },
+  opera_pre_15: {
+    icon: iconOpera,
+    helpText: '(Deprecated) Version 14 and lower',
+    title: 'Opera',
+    legacy: true,
+  },
+  opera_mini: {
+    icon: iconOpera,
+    title: 'Opera Mini',
+    helpText: 'Version 34 and lower',
+    legacy: false,
+  },
+  opera_mini_pre_8: {
+    icon: iconOpera,
+    helpText: '(Deprecated) Version 8 and lower',
+    title: 'Opera Mini',
+    legacy: true,
   },
 };
-
-const LEGACY_BROWSER_KEYS = Object.keys(LEGACY_BROWSER_SUBFILTERS);
 
 type FormFieldProps = React.ComponentProps<typeof FormField>;
 
@@ -136,13 +205,20 @@ type RowState = {
 };
 
 class LegacyBrowserFilterRow extends Component<RowProps, RowState> {
-  constructor(props) {
+  constructor(props: RowProps) {
     super(props);
-    let initialSubfilters;
+
+    let initialSubfilters: any;
     if (props.data.active === true) {
-      initialSubfilters = new Set(LEGACY_BROWSER_KEYS);
+      initialSubfilters = new Set(
+        Object.keys(LEGACY_BROWSER_SUBFILTERS).filter(
+          key =>
+            !LEGACY_BROWSER_SUBFILTERS[key as keyof typeof LEGACY_BROWSER_SUBFILTERS]
+              .legacy
+        )
+      );
     } else if (props.data.active === false) {
-      initialSubfilters = new Set();
+      initialSubfilters = new Set<string>();
     } else {
       initialSubfilters = new Set(props.data.active);
     }
@@ -154,11 +230,17 @@ class LegacyBrowserFilterRow extends Component<RowProps, RowState> {
     };
   }
 
-  handleToggleSubfilters = (subfilter, e) => {
+  handleToggleSubfilters = (subfilter: boolean, e: React.MouseEvent) => {
     let {subfilters} = this.state;
 
     if (subfilter === true) {
-      subfilters = new Set(LEGACY_BROWSER_KEYS);
+      subfilters = new Set(
+        Object.keys(LEGACY_BROWSER_SUBFILTERS).filter(
+          key =>
+            !LEGACY_BROWSER_SUBFILTERS[key as keyof typeof LEGACY_BROWSER_SUBFILTERS]
+              .legacy
+        )
+      );
     } else if (subfilter === false) {
       subfilters = new Set();
     } else if (subfilters.has(subfilter)) {
@@ -181,14 +263,17 @@ class LegacyBrowserFilterRow extends Component<RowProps, RowState> {
     const {disabled} = this.props;
     return (
       <div>
-        {!disabled && (
+        <div>
           <BulkFilter>
-            <BulkFilterLabel>{t('Filter')}:</BulkFilterLabel>
+            <FieldLabel disabled={disabled}>
+              {t('Filter out legacy browsers')}:
+            </FieldLabel>
             <ButtonBar gap={1}>
               <Button
                 priority="link"
                 borderless
                 onClick={this.handleToggleSubfilters.bind(this, true)}
+                disabled={disabled}
               >
                 {t('All')}
               </Button>
@@ -196,34 +281,51 @@ class LegacyBrowserFilterRow extends Component<RowProps, RowState> {
                 priority="link"
                 borderless
                 onClick={this.handleToggleSubfilters.bind(this, false)}
+                disabled={disabled}
               >
                 {t('None')}
               </Button>
             </ButtonBar>
           </BulkFilter>
-        )}
-
+          <FieldHelp>
+            {t(
+              'The browser versions filtered out will be periodically evaluated and updated.'
+            )}
+          </FieldHelp>
+        </div>
         <FilterGrid>
-          {LEGACY_BROWSER_KEYS.map(key => {
-            const subfilter = LEGACY_BROWSER_SUBFILTERS[key];
-            return (
-              <FilterGridItem key={key}>
-                <FilterGridIcon src={subfilter.icon} />
-                <div>
-                  <FilterTitle>{subfilter.title}</FilterTitle>
-                  <FilterDescription>{subfilter.helpText}</FilterDescription>
-                </div>
-                <Switch
-                  aria-label={`${subfilter.title} ${subfilter.helpText}`}
-                  isActive={this.state.subfilters.has(key)}
-                  isDisabled={disabled}
-                  css={{flexShrink: 0, marginLeft: 6}}
-                  toggle={this.handleToggleSubfilters.bind(this, key)}
-                  size="lg"
-                />
-              </FilterGridItem>
-            );
-          })}
+          {Object.keys(LEGACY_BROWSER_SUBFILTERS)
+            .filter(key => {
+              // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+              if (!LEGACY_BROWSER_SUBFILTERS[key].legacy) {
+                return true;
+              }
+              return this.state.subfilters.has(key);
+            })
+            .map(key => {
+              // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+              const subfilter = LEGACY_BROWSER_SUBFILTERS[key];
+              return (
+                <FilterGridItem key={key}>
+                  <FilterGridIcon src={subfilter.icon} />
+                  <div>
+                    <FilterTitle>{subfilter.title}</FilterTitle>
+                    <FilterDescription>{subfilter.helpText}</FilterDescription>
+                  </div>
+                  <Switch
+                    aria-label={`${subfilter.title} ${subfilter.helpText}`}
+                    isActive={this.state.subfilters.has(key)}
+                    isDisabled={disabled}
+                    css={css`
+                      flex-shrink: 0;
+                      margin-left: 6;
+                    `}
+                    toggle={this.handleToggleSubfilters.bind(this, key)}
+                    size="lg"
+                  />
+                </FilterGridItem>
+              );
+            })}
         </FilterGrid>
       </div>
     );
@@ -233,7 +335,7 @@ class LegacyBrowserFilterRow extends Component<RowProps, RowState> {
 function CustomFilters({project, disabled}: {disabled: boolean; project: Project}) {
   return (
     <Feature
-      features={['projects:custom-inbound-filters']}
+      features="projects:custom-inbound-filters"
       hookName="feature-disabled:custom-inbound-filters"
       project={project}
       renderDisabled={({children, ...props}) => {
@@ -279,7 +381,7 @@ function CustomFilters({project, disabled}: {disabled: boolean; project: Project
           {hasFeature && project.options?.['filters:error_messages'] && (
             <PanelAlert type="warning" data-test-id="error-message-disclaimer">
               {t(
-                "Minidumps, errors in the minified production build of React, and Internet Explorer's i18n errors cannot be filtered by message."
+                "Minidumps, obfuscated or minified exceptions (ProGuard, errors in the minified production build of React), and Internet Explorer's i18n errors cannot be filtered by message."
               )}
             </PanelAlert>
           )}
@@ -298,7 +400,7 @@ type Props = {
 };
 
 type Filter = {
-  active: boolean;
+  active: boolean | string[];
   description: string;
   hello: string;
   id: string;
@@ -308,17 +410,17 @@ type Filter = {
 export function ProjectFiltersSettings({project, params, features}: Props) {
   const organization = useOrganization();
   const {projectId: projectSlug} = params;
-
   const projectEndpoint = `/projects/${organization.slug}/${projectSlug}/`;
   const filtersEndpoint = `${projectEndpoint}filters/`;
 
   const {
     data: filterListData,
-    isLoading,
+    isPending,
     isError,
     refetch,
   } = useApiQuery<Filter[]>([`/projects/${organization.slug}/${projectSlug}/filters/`], {
-    staleTime: Infinity,
+    staleTime: 0,
+    gcTime: 0,
   });
 
   const filterList = filterListData ?? [];
@@ -341,7 +443,7 @@ export function ProjectFiltersSettings({project, params, features}: Props) {
     []
   );
 
-  if (isLoading) {
+  if (isPending) {
     return <LoadingIndicator />;
   }
 
@@ -360,6 +462,7 @@ export function ProjectFiltersSettings({project, params, features}: Props) {
                 const fieldProps = {
                   name: filter.id,
                   disabled: !hasAccess,
+                  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
                   ...filterDescriptions[filter.id],
                 };
 
@@ -374,6 +477,19 @@ export function ProjectFiltersSettings({project, params, features}: Props) {
                       apiEndpoint={`${filtersEndpoint}${filter.id}/`}
                       initialData={{[filter.id]: filter.active}}
                       saveOnBlur
+                      onFieldChange={(name, value) => {
+                        trackAnalytics('settings.inbound_filter_updated', {
+                          organization,
+                          project_id: parseInt(project.id, 10),
+                          filter: name,
+                          new_state:
+                            filter.id === 'legacy-browsers' && value instanceof Set
+                              ? [...value].sort().join(',')
+                              : value
+                                ? 'enabled'
+                                : 'disabled',
+                        });
+                      }}
                     >
                       {filter.id !== 'legacy-browsers' ? (
                         <FieldFromConfig
@@ -388,9 +504,11 @@ export function ProjectFiltersSettings({project, params, features}: Props) {
                         <FormField
                           inline={false}
                           {...fieldProps}
-                          getData={data => ({subfilters: [...data[filter.id]]})}
+                          getData={(data: any) => ({
+                            subfilters: [...data[filter.id]],
+                          })}
                         >
-                          {({onChange, onBlur}) => (
+                          {({onChange, onBlur}: any) => (
                             <LegacyBrowserFilterRow
                               key={filter.id}
                               data={filter}
@@ -415,6 +533,14 @@ export function ProjectFiltersSettings({project, params, features}: Props) {
                       project.options?.['filters:react-hydration-errors'],
                   }}
                   saveOnBlur
+                  onFieldChange={(name, value) => {
+                    trackAnalytics('settings.inbound_filter_updated', {
+                      organization,
+                      project_id: parseInt(project.id, 10),
+                      filter: name,
+                      new_state: value ? 'enabled' : 'disabled',
+                    });
+                  }}
                   onSubmitSuccess={(
                     response // This will update our project context
                   ) => ProjectsStore.onUpdateSuccess(response)}
@@ -425,8 +551,15 @@ export function ProjectFiltersSettings({project, params, features}: Props) {
                       type: 'boolean',
                       name: 'filters:react-hydration-errors',
                       label: t('Filter out hydration errors'),
-                      help: t(
-                        'React falls back to do a full re-render on a page and these errors are often not actionable.'
+                      help: tct(
+                        'React falls back to do a full re-render on a page. [replaySettings: Hydration Errors created from captured replays] are excluded from this setting.',
+                        {
+                          replaySettings: (
+                            <Link
+                              to={`/settings/${organization.slug}/projects/${project.slug}/replays/#sentry-replay_hydration_error_issues_help`}
+                            />
+                          ),
+                        }
                       ),
                       disabled: !hasAccess,
                     }}
@@ -442,6 +575,14 @@ export function ProjectFiltersSettings({project, params, features}: Props) {
                       project.options?.['filters:chunk-load-error'],
                   }}
                   saveOnBlur
+                  onFieldChange={(name, value) => {
+                    trackAnalytics('settings.inbound_filter_updated', {
+                      organization,
+                      project_id: parseInt(project.id, 10),
+                      filter: name,
+                      new_state: value ? 'enabled' : 'disabled',
+                    });
+                  }}
                   onSubmitSuccess={(
                     response // This will update our project context
                   ) => ProjectsStore.onUpdateSuccess(response)}
@@ -517,7 +658,7 @@ const FilterGridIcon = styled('img')`
 
 const FilterTitle = styled('div')`
   font-size: ${p => p.theme.fontSizeMedium};
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   white-space: nowrap;
 `;
 
@@ -531,9 +672,4 @@ const BulkFilter = styled('div')`
   display: flex;
   align-items: center;
   gap: ${space(0.5)};
-`;
-
-const BulkFilterLabel = styled('span')`
-  font-weight: bold;
-  margin-right: ${space(0.75)};
 `;
